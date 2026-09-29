@@ -997,6 +997,11 @@ void appBegin() {
   lastUserInputAt = millis();
   refreshSystemState();
 
+#if defined(WOKWI_SIMULATOR)
+  calibration.valid = true;
+  setupSettings.done = true;
+  Serial.println("[WOKWI] booting app preview; touch and onboarding are not simulated");
+#endif
   const onboarding::BootState bootState{calibration.valid, setupSettings.done};
   if (onboarding::needsCalibration(bootState)) {
     beginCalibration();
@@ -1005,6 +1010,9 @@ void appBegin() {
   } else {
     startStationIfConfigured();
     startAppUi();
+#if defined(WOKWI_SIMULATOR)
+    Serial.println("[WOKWI] APP_UI_READY");
+#endif
   }
 }
 

@@ -245,10 +245,78 @@ AssertTrue(WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isCo
 AssertTrue(!WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isConnected: true), "startup checkpoint coalesces a media update already triggered by the connection event");
 AssertTrue(!WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isConnected: false), "disconnect does not request a media update");
 AssertTrue(WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isConnected: true), "reconnect requests a fresh initial media update");
-AssertEqual(Color.FromArgb(243, 245, 247).ToArgb(), SettingsWindow.MapClientThemeColor(Color.FromArgb(18, 20, 25), "light").ToArgb(), "light theme maps the client background");
-AssertEqual(Color.FromArgb(18, 20, 25).ToArgb(), SettingsWindow.MapClientThemeColor(Color.FromArgb(243, 245, 247), "dark").ToArgb(), "dark theme restores the client background");
-AssertEqual(Color.FromArgb(243, 245, 247).ToArgb(), SettingsWindow.GetClientThemeBackground("light").ToArgb(), "light theme initializes the content host before attach");
+AssertEqual(Color.FromArgb(246, 247, 249).ToArgb(), SettingsWindow.MapClientThemeColor(Color.FromArgb(13, 15, 20), "light").ToArgb(), "light theme maps the client background");
+AssertEqual(Color.FromArgb(13, 15, 20).ToArgb(), SettingsWindow.MapClientThemeColor(Color.FromArgb(246, 247, 249), "dark").ToArgb(), "dark theme restores the client background");
+AssertEqual(Color.FromArgb(246, 247, 249).ToArgb(), SettingsWindow.GetClientThemeBackground("light").ToArgb(), "light theme initializes the content host before attach");
+AssertTrue(SettingsWindow.GetNavigationWidth() >= 250, "settings navigation uses a wider hierarchy rail");
+AssertTrue(SettingsWindow.GetNavigationButtonSize().Height >= 42, "settings navigation buttons have comfortable target height");
+AssertTrue(SettingsWindow.GetClientContentPadding().Left >= 32, "settings content uses spacious page margins");
 AssertTrue(SettingsWindow.ShouldPreserveClientThemeBackColor(SettingsWindow.DeviceColorPreviewTagForTests), "device color preview is not remapped by client theme");
+var minimumClientWidth = 900 - SettingsWindow.GetNavigationWidth() - SettingsWindow.GetClientContentPadding().Horizontal;
+var shortcutActionButtonWidths = new[] { "Add", "Edit", "Delete", "Move up", "Move down", "Import full config", "Export full config" }
+    .Select(SettingsWindow.MeasureSettingsActionButtonWidth)
+    .ToArray();
+AssertTrue(SettingsWindow.CalculateActionBarHeight(minimumClientWidth, shortcutActionButtonWidths) > SettingsWindow.GetActionButtonHeight(), "shortcuts action bar grows when controls wrap at minimum width");
+AssertTrue(SettingsWindow.CalculateActionBarHeight(minimumClientWidth, shortcutActionButtonWidths) <= 104, "wrapped shortcuts action bar remains accessible at minimum height");
+AssertTrue(SettingsWindow.GetAppearanceSliderTrackWidth(minimumClientWidth) < 300, "appearance sliders shrink below old fixed width at minimum window size");
+AssertTrue(SettingsWindow.GetAppearanceSliderValueWidth("86400 sec") >= System.Windows.Forms.TextRenderer.MeasureText("86400 sec", SystemFonts.MessageBoxFont).Width + 16, "appearance slider value column fits the longest timeout label");
+AssertTrue(SettingsWindow.GetAppearanceFormLabelWidth(minimumClientWidth) <= 180, "appearance labels leave room for controls at minimum width");
+var previousColorPickerContext = SynchronizationContext.Current;
+using (var colorPicker = SettingsWindow.CreateColorPickerControl("#12abef"))
+{
+    AssertEqual(SettingsWindow.DeviceColorPickerTagForTests, colorPicker.Tag, "appearance color control is a structured picker row");
+    var colorSwatch = colorPicker.Controls.OfType<System.Windows.Forms.Panel>().Single();
+    var colorValue = colorPicker.Controls.OfType<System.Windows.Forms.Label>().Single();
+    var chooseColor = colorPicker.Controls.OfType<System.Windows.Forms.Button>().Single();
+    AssertEqual(SettingsWindow.DeviceColorPreviewTagForTests, colorSwatch.Tag, "appearance color row includes a dedicated current-color swatch");
+    AssertEqual("#12ABEF", colorValue.Text, "appearance color row shows the current hex value separately from the action");
+    AssertEqual("Choose…", chooseColor.Text, "appearance color row has an explicit choose action");
+    AssertTrue(!string.Equals(chooseColor.Text, colorValue.Text, StringComparison.Ordinal), "appearance color action is not a full-row color value button");
+}
+SynchronizationContext.SetSynchronizationContext(previousColorPickerContext);
+var screenshotClientWidth = 1018 - SettingsWindow.GetNavigationWidth() - SettingsWindow.GetClientContentPadding().Horizontal;
+var minimumPairingColumns = SettingsWindow.CalculatePairingColumnWidths(minimumClientWidth);
+var screenshotPairingColumns = SettingsWindow.CalculatePairingColumnWidths(screenshotClientWidth);
+AssertTrue(SettingsWindow.ColumnWidthsFitAvailableWidth(minimumClientWidth, minimumPairingColumns), "pairing columns fit without a horizontal scrollbar at minimum width");
+AssertTrue(SettingsWindow.ColumnWidthsFitAvailableWidth(screenshotClientWidth, screenshotPairingColumns), "pairing columns fit without a horizontal scrollbar at screenshot width");
+AssertTrue(minimumPairingColumns[3] >= System.Windows.Forms.TextRenderer.MeasureText("First seen", SystemFonts.MessageBoxFont).Width + 24, "pairing first-seen header fits at minimum width");
+var previousPairingListContext = SynchronizationContext.Current;
+using (var pairingList = new System.Windows.Forms.ListView { View = System.Windows.Forms.View.Details })
+{
+    SettingsWindow.ConfigurePairingColumns(pairingList, minimumClientWidth);
+    SettingsWindow.AttachPairingColumnResizeHandler(pairingList);
+    var firstSeenHeader = pairingList.Columns[3];
+    AssertEqual("First seen", firstSeenHeader.Text, "pairing first-seen header is created once before handle resize");
+    _ = pairingList.Handle;
+    pairingList.Size = new Size(minimumClientWidth + 24, 240);
+    System.Windows.Forms.Application.DoEvents();
+    AssertTrue(ReferenceEquals(firstSeenHeader, pairingList.Columns[3]), "pairing resize keeps the existing native column header object");
+    AssertEqual("First seen", pairingList.Columns[3].Text, "pairing resize preserves first-seen header text without resetting ColumnInfo");
+}
+SynchronizationContext.SetSynchronizationContext(previousPairingListContext);
+previousPairingListContext = SynchronizationContext.Current;
+using (var pairingForm = new System.Windows.Forms.Form { ClientSize = new Size(minimumClientWidth, 260), ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new Point(-2000, -2000) })
+using (var livePairingList = new System.Windows.Forms.ListView { View = System.Windows.Forms.View.Details, Dock = System.Windows.Forms.DockStyle.Fill })
+{
+    pairingForm.Controls.Add(livePairingList);
+    SettingsWindow.ConfigurePairingColumns(livePairingList, minimumClientWidth);
+    SettingsWindow.AttachPairingColumnResizeHandler(livePairingList);
+    pairingForm.Show();
+    System.Windows.Forms.Application.DoEvents();
+    pairingForm.ClientSize = new Size(minimumClientWidth + 48, 260);
+    System.Windows.Forms.Application.DoEvents();
+    AssertEqual("First seen", livePairingList.Columns[3].Text, "pairing tab live resize handler preserves first-seen header through WM_WINDOWPOSCHANGED");
+}
+SynchronizationContext.SetSynchronizationContext(previousPairingListContext);
+var minimumShortcutColumns = SettingsWindow.CalculateShortcutsColumnWidths(minimumClientWidth);
+var screenshotShortcutColumns = SettingsWindow.CalculateShortcutsColumnWidths(screenshotClientWidth);
+AssertTrue(SettingsWindow.ColumnWidthsFitAvailableWidth(minimumClientWidth, minimumShortcutColumns), "shortcut columns fit without a horizontal scrollbar at minimum width");
+AssertTrue(SettingsWindow.ColumnWidthsFitAvailableWidth(screenshotClientWidth, screenshotShortcutColumns), "shortcut columns fit without a horizontal scrollbar at screenshot width");
+AssertTrue(minimumShortcutColumns[3] >= 120, "shortcut target column keeps a usable ellipsis area at minimum width");
+var minimumClientHeight = 620 - SettingsWindow.GetClientContentPadding().Vertical;
+AssertTrue(SettingsWindow.PageLayoutHasScrollableBodyAndAccessibleFooterForTests(minimumClientWidth, minimumClientHeight, contentHeight: 980, shortcutActionButtonWidths), "shortcuts page keeps wrapped footer accessible while tall body scrolls at minimum size");
+AssertTrue(SettingsWindow.PageLayoutHasScrollableBodyAndAccessibleFooterForTests(minimumClientWidth, minimumClientHeight, contentHeight: 860, new[] { "Reconnect", "Restart", "Factory reset", "Forget device" }.Select(SettingsWindow.MeasureSettingsActionButtonWidth).ToArray()), "device page keeps safety actions accessible while tall body scrolls at minimum size");
+AssertTrue(SettingsWindow.PageLayoutHasScrollableBodyAndAccessibleFooterForTests(minimumClientWidth, minimumClientHeight, contentHeight: 760, Array.Empty<int>()), "appearance page keeps tall settings body independently scrollable at minimum size");
 var liveOverview = SettingsWindow.CreateLiveInfoValues("Overview", new AgentStatusSnapshot(
     "connected", "device-1", "CYD", "192.168.1.8:1234", 8765, 5000, "live", ["192.168.1.10"]));
 AssertEqual("Connected", liveOverview["CYD"], "overview live device state");

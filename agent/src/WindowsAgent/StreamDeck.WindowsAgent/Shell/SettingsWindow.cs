@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Reflection;
 using StreamDeck.Host;
 using StreamDeck.Configuration;
@@ -12,28 +13,53 @@ namespace StreamDeck.WindowsAgent.Shell;
 
 public sealed class SettingsWindow : Form
 {
-    private static readonly Color DarkBackground = Color.FromArgb(18, 20, 25);
-    private static readonly Color LightBackground = Color.FromArgb(243, 245, 247);
-    private static readonly Color DarkSurface = Color.FromArgb(28, 31, 38);
+    private static readonly Color DarkBackground = Color.FromArgb(13, 15, 20);
+    private static readonly Color LightBackground = Color.FromArgb(246, 247, 249);
+    private static readonly Color DarkSurface = Color.FromArgb(25, 28, 35);
     private static readonly Color LightSurface = Color.FromArgb(255, 255, 255);
-    private static readonly Color DarkSurfaceAlt = Color.FromArgb(36, 40, 48);
-    private static readonly Color LightSurfaceAlt = Color.FromArgb(232, 235, 239);
-    private static readonly Color DarkTextPrimary = Color.FromArgb(238, 241, 245);
-    private static readonly Color LightTextPrimary = Color.FromArgb(27, 31, 36);
-    private static readonly Color DarkTextMuted = Color.FromArgb(150, 158, 170);
-    private static readonly Color LightTextMuted = Color.FromArgb(88, 97, 109);
+    private static readonly Color DarkSurfaceAlt = Color.FromArgb(39, 43, 52);
+    private static readonly Color LightSurfaceAlt = Color.FromArgb(236, 238, 242);
+    private static readonly Color DarkBorder = Color.FromArgb(55, 61, 73);
+    private static readonly Color LightBorder = Color.FromArgb(210, 214, 220);
+    private static readonly Color DarkTextPrimary = Color.FromArgb(244, 246, 248);
+    private static readonly Color LightTextPrimary = Color.FromArgb(29, 32, 37);
+    private static readonly Color DarkTextMuted = Color.FromArgb(156, 164, 176);
+    private static readonly Color LightTextMuted = Color.FromArgb(93, 101, 112);
     private static readonly Color Accent = Color.FromArgb(212, 59, 72);
+    private static readonly Padding WindowContentPadding = new(34, 30, 34, 30);
+    private const int NavigationWidth = 260;
+    private const int NavigationButtonWidth = 204;
+    private const int NavigationButtonHeight = 42;
+    private const int PageTitleHeight = 72;
+    private const int ActionButtonHeight = 36;
+    private const int ActionButtonMinimumWidth = 128;
+    private const int ActionButtonHorizontalMargin = 10;
+    private const int ActionButtonVerticalMargin = 10;
+    private const int AppearanceMinimumSliderTrackWidth = 150;
+    private const int AppearanceMaximumSliderTrackWidth = 300;
+    private const int ColorSwatchSize = 26;
+    private const int ColorPickerRowHeight = 40;
+    private const int ListVerticalScrollbarAllowance = 24;
+    private const string PageBodyTag = "settings-page-body";
+    private const string PageFooterTag = "settings-page-footer";
     private const string DeviceColorPreviewTag = "device-color-preview";
+    private const string DeviceColorPickerTag = "device-color-picker";
     internal const string ShortcutsSourceOfTruthText = "Agent-side shortcut catalog. Firmware does not preload shortcuts; the device displays up to the first 6 shortcuts.";
     internal const string EmptyShortcutsText = "No shortcuts configured on this PC. Click Add to create the first Agent-side shortcut; there is no device preload to import.";
     internal const string PendingShortcutImportsText = "Device-reported shortcuts needing configuration. These drafts are inactive and are not executable or synced until you configure and save a valid Agent-side action.";
     internal const string DeviceColorPreviewTagForTests = DeviceColorPreviewTag;
+    internal const string DeviceColorPickerTagForTests = DeviceColorPickerTag;
     private static bool clientLightTheme;
     private static Color Background => clientLightTheme ? LightBackground : DarkBackground;
     private static Color Surface => clientLightTheme ? LightSurface : DarkSurface;
     private static Color SurfaceAlt => clientLightTheme ? LightSurfaceAlt : DarkSurfaceAlt;
     private static Color TextPrimary => clientLightTheme ? LightTextPrimary : DarkTextPrimary;
     private static Color TextMuted => clientLightTheme ? LightTextMuted : DarkTextMuted;
+    private static Color Border => clientLightTheme ? LightBorder : DarkBorder;
+    private static int MinimumSettingsClientWidth => 900 - NavigationWidth - WindowContentPadding.Horizontal;
+
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+    private static extern int SetWindowTheme(IntPtr hwnd, string? pszSubAppName, string? pszSubIdList);
 
     private readonly AgentState state;
     private readonly WindowsAgentRuntime runtime;
@@ -138,7 +164,7 @@ public sealed class SettingsWindow : Form
             RowCount = 1,
             BackColor = Background
         };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, NavigationWidth));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         root.Controls.Add(CreateNavigation(), 0, 0);
         root.Controls.Add(contentPanel, 1, 0);
@@ -147,15 +173,24 @@ public sealed class SettingsWindow : Form
 
     private Control CreateNavigation()
     {
-        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Surface, Padding = new Padding(18, 22, 18, 18) };
+        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Surface, Padding = new Padding(24, 26, 24, 22) };
         var title = new Label
         {
             Text = "PC Dock",
             Dock = DockStyle.Top,
-            Height = 46,
-            Font = new Font(Font.FontFamily, 18F, FontStyle.Bold),
+            Height = 34,
+            Font = new Font(Font.FontFamily, 19F, FontStyle.Bold),
             ForeColor = TextPrimary
         };
+        var subtitle = new Label
+        {
+            Text = "Stream Deck Agent",
+            Dock = DockStyle.Top,
+            Height = 28,
+            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Regular),
+            ForeColor = TextMuted
+        };
+        panel.Controls.Add(subtitle);
         panel.Controls.Add(title);
 
         var nav = new FlowLayoutPanel
@@ -163,7 +198,7 @@ public sealed class SettingsWindow : Form
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
-            Padding = new Padding(0, 60, 0, 0),
+            Padding = new Padding(0, 48, 0, 0),
             BackColor = Surface
         };
 
@@ -183,14 +218,15 @@ public sealed class SettingsWindow : Form
         var button = new Button
         {
             Text = page,
-            Width = 176,
-            Height = 40,
+            Width = NavigationButtonWidth,
+            Height = NavigationButtonHeight,
             FlatStyle = FlatStyle.Flat,
             TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(12, 0, 0, 0),
-            Margin = new Padding(0, 0, 0, 8),
+            Padding = new Padding(16, 0, 0, 0),
+            Margin = new Padding(0, 0, 0, 10),
             BackColor = Surface,
             ForeColor = TextMuted,
+            Font = new Font(Font.FontFamily, 10F, FontStyle.Regular),
             Cursor = Cursors.Hand
         };
         button.FlatAppearance.BorderSize = 0;
@@ -206,6 +242,9 @@ public sealed class SettingsWindow : Form
             var selected = string.Equals(name, page, StringComparison.Ordinal);
             button.BackColor = selected ? SurfaceAlt : Surface;
             button.ForeColor = selected ? TextPrimary : TextMuted;
+            button.Font = new Font(Font.FontFamily, 10F, selected ? FontStyle.Bold : FontStyle.Regular);
+            button.FlatAppearance.BorderColor = selected ? Accent : Surface;
+            button.FlatAppearance.BorderSize = selected ? 1 : 0;
         }
 
         foreach (Control control in contentPanel.Controls.Cast<Control>().ToArray())
@@ -254,8 +293,8 @@ public sealed class SettingsWindow : Form
         AddInfoRow(grid, "LAN IP", snapshot.LanAddresses.Count == 0 ? "Unavailable" : string.Join(", ", snapshot.LanAddresses));
         AddInfoRow(grid, "Port", snapshot.HostPort.ToString());
         AddInfoRow(grid, "Start with Windows", startup.IsEnabled() ? "On" : "Off");
-        panel.Controls.Add(grid);
-        panel.Controls.Add(CreateActionsBar(("Reconnect device", ReconnectAsync)));
+        AddPageBodyControl(panel, grid);
+        AddPageFooter(panel, CreateActionsBar(("Reconnect device", ReconnectAsync)));
         return panel;
     }
 
@@ -289,9 +328,9 @@ public sealed class SettingsWindow : Form
         AddInfoRow(grid, "Last seen", AgentStatusFormatter.FormatLastSeen(snapshot));
         AddInfoRow(grid, "Agent port", snapshot.HostPort.ToString());
         AddInfoRow(grid, "Dashboard port", snapshot.DashboardPort == 0 ? "Unavailable" : snapshot.DashboardPort.ToString());
-        panel.Controls.Add(grid);
+        AddPageBodyControl(panel, grid);
         var hasActiveDevice = !string.IsNullOrWhiteSpace(snapshot.DeviceId);
-        panel.Controls.Add(CreateDeviceActionsBar(hasActiveDevice,
+        AddPageFooter(panel, CreateDeviceActionsBar(hasActiveDevice,
             ("Reconnect", ReconnectAsync),
             ("Restart", RestartDeviceAsync),
             ("Factory reset", FactoryResetDeviceAsync),
@@ -310,24 +349,15 @@ public sealed class SettingsWindow : Form
             Text = "Loading pending pairing requests…",
             Padding = new Padding(0, 10, 0, 0)
         };
-        var list = new ListView
-        {
-            Dock = DockStyle.Fill,
-            View = View.Details,
-            FullRowSelect = true,
-            MultiSelect = false,
-            BackColor = Surface,
-            ForeColor = TextPrimary,
-            BorderStyle = BorderStyle.None
-        };
-        list.Columns.Add("Name", 220);
-        list.Columns.Add("Device ID", 220);
-        list.Columns.Add("Address", 180);
-        list.Columns.Add("First seen", 220);
+        var list = CreateThemedListView();
+        list.Dock = DockStyle.Fill;
+        list.MultiSelect = false;
+        ConfigurePairingColumns(list, MinimumSettingsClientWidth);
+        AttachPairingColumnResizeHandler(list);
 
-        panel.Controls.Add(list);
-        panel.Controls.Add(status);
-        panel.Controls.Add(CreateActionsBar(
+        AddPageBodyControl(panel, list);
+        AddPageBodyControl(panel, status);
+        AddPageFooter(panel, CreateActionsBar(
             ("Approve", async () => await PairSelectedDeviceAsync(list, status, approve: true).ConfigureAwait(true)),
             ("Reject", async () => await PairSelectedDeviceAsync(list, status, approve: false).ConfigureAwait(true)),
             ("Refresh", async () => await RefreshPairingListAsync(list, status).ConfigureAwait(true))));
@@ -347,19 +377,10 @@ public sealed class SettingsWindow : Form
             Dock = DockStyle.Fill,
             BackColor = Surface
         };
-        var list = new ListView
-        {
-            Dock = DockStyle.Fill,
-            View = View.Details,
-            FullRowSelect = true,
-            BackColor = Surface,
-            ForeColor = TextPrimary,
-            BorderStyle = BorderStyle.None
-        };
-        list.Columns.Add("Name", 220);
-        list.Columns.Add("ID", 180);
-        list.Columns.Add("Action", 160);
-        list.Columns.Add("Target", 320);
+        var list = CreateThemedListView();
+        list.Dock = DockStyle.Fill;
+        ConfigureShortcutsColumns(list, MinimumSettingsClientWidth);
+        list.SizeChanged += (_, _) => ConfigureShortcutsColumns(list, list.ClientSize.Width);
         var emptyState = new Label
         {
             Dock = DockStyle.Fill,
@@ -390,9 +411,9 @@ public sealed class SettingsWindow : Form
         listHost.Controls.Add(emptyState);
         UpdateShortcutsEmptyState(list, emptyState, loadResult);
 
-        panel.Controls.Add(listHost);
-        panel.Controls.Add(shortcutCatalogNote);
-        panel.Controls.Add(CreateActionsBar(
+        AddPageBodyControl(panel, listHost);
+        AddPageBodyControl(panel, shortcutCatalogNote);
+        AddPageFooter(panel, CreateActionsBar(
             ("Add", async () => await AddShortcutAsync(list, shortcuts, emptyState, loadResult).ConfigureAwait(true)),
             ("Edit", async () => await EditShortcutAsync(list, shortcuts).ConfigureAwait(true)),
             ("Delete", async () => await DeleteShortcutAsync(list, shortcuts, emptyState, loadResult).ConfigureAwait(true)),
@@ -404,7 +425,7 @@ public sealed class SettingsWindow : Form
         shortcutImportSignature = CreatePendingShortcutImportSignature(pendingImports);
         if (pendingImports.Count > 0)
         {
-            panel.Controls.Add(CreatePendingShortcutImportsPanel(pendingImports, list, shortcuts, emptyState, loadResult));
+            AddPageBodyControl(panel, CreatePendingShortcutImportsPanel(pendingImports, list, shortcuts, emptyState, loadResult));
         }
         return panel;
     }
@@ -432,15 +453,9 @@ public sealed class SettingsWindow : Form
             TextAlign = ContentAlignment.MiddleLeft
         };
 
-        var list = new ListView
-        {
-            Dock = DockStyle.Fill,
-            View = View.Details,
-            FullRowSelect = true,
-            BackColor = Surface,
-            ForeColor = TextPrimary,
-            BorderStyle = BorderStyle.FixedSingle
-        };
+        var list = CreateThemedListView();
+        list.Dock = DockStyle.Fill;
+        list.BorderStyle = BorderStyle.FixedSingle;
         list.Columns.Add("Device shortcut", 220);
         list.Columns.Add("Reported action", 220);
         foreach (var pending in pendingImports)
@@ -620,10 +635,18 @@ public sealed class SettingsWindow : Form
             AutoSize = true,
             ColumnCount = 2,
             BackColor = Background,
-            Padding = new Padding(0, 8, 0, 16)
+            Padding = new Padding(0, 4, 0, 22),
+            Margin = new Padding(0, 0, 0, 18)
         };
-        form.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210));
+        form.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, GetAppearanceFormLabelWidth(Width - NavigationWidth - WindowContentPadding.Horizontal)));
         form.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        form.SizeChanged += (_, _) =>
+        {
+            if (form.ColumnStyles.Count > 0)
+            {
+                form.ColumnStyles[0].Width = GetAppearanceFormLabelWidth(form.ClientSize.Width);
+            }
+        };
 
         AddComboRow(form, "Theme", ["dark", "light"], settings.Theme, value =>
         {
@@ -648,8 +671,8 @@ public sealed class SettingsWindow : Form
             Text = "Changes save locally and sync to the connected device when available.",
             Padding = new Padding(0, 10, 0, 0)
         };
-        panel.Controls.Add(form);
-        panel.Controls.Add(appearanceStatusLabel);
+        AddPageBodyControl(panel, form);
+        AddPageBodyControl(panel, appearanceStatusLabel);
         return panel;
     }
 
@@ -677,30 +700,79 @@ public sealed class SettingsWindow : Form
 
     private void AddColorRow(TableLayoutPanel form, string label, string current, Action<string> update)
     {
-        var button = CreateActionButton(current);
-        MarkDeviceColorPreview(button);
-        button.BackColor = ParseHexColor(current, Accent);
-        button.Click += (_, _) =>
+        var panel = CreateColorPickerControl(current);
+        var swatch = panel.Controls.OfType<Panel>().First();
+        var valueLabel = panel.Controls.OfType<Label>().First();
+        var choose = panel.Controls.OfType<Button>().First();
+        choose.Click += (_, _) =>
         {
-            using var dialog = new ColorDialog { Color = button.BackColor, FullOpen = true };
+            using var dialog = new ColorDialog { Color = swatch.BackColor, FullOpen = true };
             if (dialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
             }
 
             var value = ToHexColor(dialog.Color);
-            button.Text = value;
-            button.BackColor = dialog.Color;
+            valueLabel.Text = value;
+            swatch.BackColor = dialog.Color;
             update(value);
             QueueAppearanceSave();
         };
-        AddControlRow(form, label, button);
+        AddControlRow(form, label, panel);
+    }
+
+    internal static FlowLayoutPanel CreateColorPickerControl(string current)
+    {
+        var value = IsHexColor(current) ? current.ToUpperInvariant() : ToHexColor(Accent);
+        var panel = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            BackColor = Background,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Height = ColorPickerRowHeight,
+            Tag = DeviceColorPickerTag,
+            AccessibleName = "Device color picker"
+        };
+        var swatch = new Panel
+        {
+            Width = ColorSwatchSize,
+            Height = ColorSwatchSize,
+            BackColor = ParseHexColor(value, Accent),
+            Margin = new Padding(0, 7, 10, 0),
+            BorderStyle = BorderStyle.FixedSingle,
+            Tag = DeviceColorPreviewTag,
+            AccessibleName = $"Current color {value}"
+        };
+        var hex = new Label
+        {
+            Text = value,
+            AutoSize = false,
+            Width = 86,
+            Height = ColorPickerRowHeight,
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = TextPrimary,
+            Font = new Font(FontFamily.GenericSansSerif, 9.5F, FontStyle.Bold),
+            AccessibleName = $"Current color value {value}"
+        };
+        var choose = CreateNeutralButton("Choose…");
+        choose.AccessibleName = $"Choose {value} color";
+        panel.Controls.Add(swatch);
+        panel.Controls.Add(hex);
+        panel.Controls.Add(choose);
+        return panel;
     }
 
     private void AddSliderRow(TableLayoutPanel form, string label, int min, int max, int current, string suffix, Action<int> update)
     {
-        var panel = new FlowLayoutPanel { AutoSize = true, BackColor = Background, FlowDirection = FlowDirection.LeftToRight };
-        var valueLabel = new Label { Width = 80, ForeColor = TextPrimary, Text = $"{current}{suffix}", Padding = new Padding(8, 6, 0, 0) };
+        var panel = new TableLayoutPanel
+        {
+            AutoSize = true,
+            BackColor = Background,
+            ColumnCount = 2,
+            Margin = new Padding(0, 6, 0, 6)
+        };
+        var valueLabel = new Label { Width = GetAppearanceSliderValueWidth($"{current}{suffix}"), ForeColor = TextPrimary, Text = $"{current}{suffix}", Padding = new Padding(8, 6, 0, 0), TextAlign = ContentAlignment.MiddleLeft };
         var track = new TrackBar
         {
             Minimum = min,
@@ -709,16 +781,26 @@ public sealed class SettingsWindow : Form
             SmallChange = max > 1000 ? 60 : 1,
             LargeChange = max > 1000 ? 300 : 10,
             Value = Math.Clamp(current, min, max),
-            Width = 300
+            Width = GetAppearanceSliderTrackWidth(Width - NavigationWidth - WindowContentPadding.Horizontal)
+        };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, track.Width));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, valueLabel.Width));
+        panel.SizeChanged += (_, _) =>
+        {
+            var trackWidth = GetAppearanceSliderTrackWidth(form.ClientSize.Width);
+            track.Width = trackWidth;
+            panel.ColumnStyles[0].Width = trackWidth;
         };
         track.ValueChanged += (_, _) =>
         {
             valueLabel.Text = $"{track.Value}{suffix}";
+            valueLabel.Width = GetAppearanceSliderValueWidth(valueLabel.Text);
+            panel.ColumnStyles[1].Width = valueLabel.Width;
             update(track.Value);
             QueueAppearanceSave();
         };
-        panel.Controls.Add(track);
-        panel.Controls.Add(valueLabel);
+        panel.Controls.Add(track, 0, 0);
+        panel.Controls.Add(valueLabel, 1, 0);
         AddControlRow(form, label, panel);
     }
 
@@ -835,9 +917,10 @@ public sealed class SettingsWindow : Form
             Text = label,
             AutoSize = true,
             ForeColor = TextMuted,
-            Padding = new Padding(0, 8, 0, 8)
+            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Regular),
+            Padding = new Padding(0, 10, 0, 10)
         };
-        control.Margin = new Padding(0, 4, 0, 4);
+        control.Margin = new Padding(0, 6, 0, 6);
         form.Controls.Add(name, 0, form.RowCount);
         form.Controls.Add(control, 1, form.RowCount);
         form.RowCount++;
@@ -871,8 +954,64 @@ public sealed class SettingsWindow : Form
         {
             Dock = DockStyle.Fill,
             BackColor = GetClientThemeBackground(theme),
-            Padding = new Padding(24)
+            Padding = WindowContentPadding
         };
+    }
+
+    internal static Padding GetClientContentPadding() => WindowContentPadding;
+
+    internal static int GetNavigationWidth() => NavigationWidth;
+
+    internal static Size GetNavigationButtonSize() => new(NavigationButtonWidth, NavigationButtonHeight);
+
+    internal static int GetActionButtonHeight() => ActionButtonHeight;
+
+    internal static int MeasureSettingsActionButtonWidth(string text)
+    {
+        var measured = TextRenderer.MeasureText(text, SystemFonts.MessageBoxFont).Width + 34;
+        return Math.Max(ActionButtonMinimumWidth, measured);
+    }
+
+    internal static int CalculateActionBarHeight(int availableWidth, IReadOnlyList<int> buttonWidths)
+    {
+        if (buttonWidths.Count == 0)
+        {
+            return 0;
+        }
+
+        var width = Math.Max(1, availableWidth);
+        var rows = 1;
+        var rowWidth = 0;
+        foreach (var buttonWidth in buttonWidths)
+        {
+            var required = buttonWidth + ActionButtonHorizontalMargin;
+            if (rowWidth > 0 && rowWidth + required > width)
+            {
+                rows++;
+                rowWidth = 0;
+            }
+
+            rowWidth += required;
+        }
+
+        return rows * (ActionButtonHeight + ActionButtonVerticalMargin) + 8;
+    }
+
+    internal static int GetAppearanceFormLabelWidth(int availableWidth)
+    {
+        return Math.Clamp(availableWidth / 3, 150, 180);
+    }
+
+    internal static int GetAppearanceSliderTrackWidth(int availableWidth)
+    {
+        var labelWidth = GetAppearanceFormLabelWidth(availableWidth);
+        var valueWidth = GetAppearanceSliderValueWidth("86400 sec");
+        return Math.Clamp(availableWidth - labelWidth - valueWidth - 64, AppearanceMinimumSliderTrackWidth, AppearanceMaximumSliderTrackWidth);
+    }
+
+    internal static int GetAppearanceSliderValueWidth(string value)
+    {
+        return Math.Max(76, TextRenderer.MeasureText(value, SystemFonts.MessageBoxFont).Width + 16);
     }
 
     internal static Color GetClientThemeBackground(string theme)
@@ -951,8 +1090,8 @@ public sealed class SettingsWindow : Form
         AddInfoRow(grid, "Protocol version", ProtocolConstants.CurrentVersion.ToString());
         AddInfoRow(grid, "Available version", "Unavailable");
         AddInfoRow(grid, "Release discovery", "Unavailable");
-        panel.Controls.Add(grid);
-        panel.Controls.Add(CreateUpdateActionsBar(snapshot.DeviceInfo?.Wifi.Ip));
+        AddPageBodyControl(panel, grid);
+        AddPageFooter(panel, CreateUpdateActionsBar(snapshot.DeviceInfo?.Wifi.Ip));
         return panel;
     }
 
@@ -971,8 +1110,9 @@ public sealed class SettingsWindow : Form
             Font = new Font("Cascadia Mono", 9F, FontStyle.Regular, GraphicsUnit.Point),
             Text = string.Join(Environment.NewLine, AgentDiagnosticLog.ReadRecentLines())
         };
-        panel.Controls.Add(text);
-        panel.Controls.Add(CreateActionsBar(
+        ApplySupportedScrollTheme(text);
+        AddPageBodyControl(panel, text);
+        AddPageFooter(panel, CreateActionsBar(
             ("Copy logs", () => Clipboard.SetText(text.Text)),
             ("Open log folder", OpenLogFolder),
             ("Clear view", () =>
@@ -986,16 +1126,77 @@ public sealed class SettingsWindow : Form
     private Panel CreatePage(string title)
     {
         var panel = new Panel { Dock = DockStyle.Fill, BackColor = Background };
+        var body = CreatePageBodyPanel();
         var titleLabel = new Label
         {
             Text = title,
             Dock = DockStyle.Top,
-            Height = 54,
-            Font = new Font(Font.FontFamily, 22F, FontStyle.Bold),
-            ForeColor = TextPrimary
+            Height = PageTitleHeight,
+            Font = new Font(Font.FontFamily, 24F, FontStyle.Bold),
+            ForeColor = TextPrimary,
+            Padding = new Padding(0, 4, 0, 18)
         };
+        panel.Controls.Add(body);
         panel.Controls.Add(titleLabel);
         return panel;
+    }
+
+    private static Panel CreatePageBodyPanel()
+    {
+        var panel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            BackColor = Background,
+            Tag = PageBodyTag,
+            Padding = new Padding(0, 0, 12, 0)
+        };
+        ApplySupportedScrollTheme(panel);
+        return panel;
+    }
+
+    private static void AddPageBodyControl(Control page, Control control)
+    {
+        FindPageBody(page).Controls.Add(control);
+    }
+
+    private static void AddPageFooter(Control page, Control footer)
+    {
+        footer.Tag = PageFooterTag;
+        page.Controls.Add(footer);
+        footer.BringToFront();
+    }
+
+    private static Panel FindPageBody(Control page)
+    {
+        return page.Controls.OfType<Panel>().First(control => Equals(control.Tag, PageBodyTag));
+    }
+
+    internal static bool PageLayoutHasScrollableBodyAndAccessibleFooterForTests(int width, int height, int contentHeight, IReadOnlyList<int> footerButtonWidths)
+    {
+        var context = SynchronizationContext.Current;
+        try
+        {
+            using var page = new Panel { Size = new Size(width, height), BackColor = Background };
+            using var title = new Label { Dock = DockStyle.Top, Height = PageTitleHeight };
+            using var body = CreatePageBodyPanel();
+            using var content = new Panel { Dock = DockStyle.Top, Height = contentHeight };
+            using var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = CalculateActionBarHeight(width, footerButtonWidths), Tag = PageFooterTag };
+            body.Controls.Add(content);
+            page.Controls.Add(body);
+            page.Controls.Add(title);
+            page.Controls.Add(footer);
+            page.PerformLayout();
+            return body.AutoScroll
+                && body.Bounds.Top >= title.Bottom
+                && footer.Bounds.Bottom <= page.ClientSize.Height
+                && body.Bounds.Bottom <= footer.Top
+                && body.DisplayRectangle.Height > body.ClientSize.Height;
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+        }
     }
 
     private static TableLayoutPanel CreateInfoGrid()
@@ -1006,11 +1207,131 @@ public sealed class SettingsWindow : Form
             AutoSize = true,
             ColumnCount = 2,
             BackColor = Background,
-            Padding = new Padding(0, 8, 0, 16)
+            Padding = new Padding(0, 4, 0, 22),
+            Margin = new Padding(0, 0, 0, 18)
         };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         return grid;
+    }
+
+    private static ListView CreateThemedListView()
+    {
+        var list = new ListView
+        {
+            View = View.Details,
+            FullRowSelect = true,
+            BackColor = Surface,
+            ForeColor = TextPrimary,
+            BorderStyle = BorderStyle.None,
+            OwnerDraw = true,
+            HideSelection = false
+        };
+        list.DrawColumnHeader += (_, args) => DrawListHeader(args);
+        list.DrawItem += (_, args) => args.DrawDefault = true;
+        list.DrawSubItem += (_, args) => DrawListSubItem(args);
+        list.HandleCreated += (_, _) => ApplySupportedScrollTheme(list);
+        ApplySupportedScrollTheme(list);
+        return list;
+    }
+
+    private static void DrawListHeader(DrawListViewColumnHeaderEventArgs args)
+    {
+        using var background = new SolidBrush(SurfaceAlt);
+        using var border = new Pen(Border);
+        args.Graphics.FillRectangle(background, args.Bounds);
+        args.Graphics.DrawRectangle(border, args.Bounds.X, args.Bounds.Y, args.Bounds.Width - 1, args.Bounds.Height - 1);
+        var bounds = Rectangle.Inflate(args.Bounds, -8, 0);
+        TextRenderer.DrawText(args.Graphics, args.Header?.Text ?? string.Empty, SystemFonts.MessageBoxFont, bounds, TextMuted, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.Left);
+    }
+
+    private static void DrawListSubItem(DrawListViewSubItemEventArgs args)
+    {
+        var selected = args.Item?.Selected == true;
+        var backColor = selected ? Accent : Surface;
+        var foreColor = selected ? Color.White : TextPrimary;
+        using var background = new SolidBrush(backColor);
+        args.Graphics.FillRectangle(background, args.Bounds);
+        var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.Left;
+        TextRenderer.DrawText(args.Graphics, args.SubItem?.Text ?? string.Empty, SystemFonts.MessageBoxFont, Rectangle.Inflate(args.Bounds, -8, 0), foreColor, flags);
+    }
+
+    private static void ApplySupportedScrollTheme(Control control)
+    {
+        if (control.IsHandleCreated && Environment.OSVersion.Platform == PlatformID.Win32NT)
+        {
+            _ = SetWindowTheme(control.Handle, clientLightTheme ? "Explorer" : "DarkMode_Explorer", null);
+        }
+
+        control.HandleCreated += (_, _) =>
+        {
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+            {
+                _ = SetWindowTheme(control.Handle, clientLightTheme ? "Explorer" : "DarkMode_Explorer", null);
+            }
+        };
+    }
+
+    internal static int[] CalculatePairingColumnWidths(int availableWidth)
+    {
+        var width = Math.Max(360, availableWidth - ListVerticalScrollbarAllowance);
+        var firstSeen = 132;
+        var address = Math.Clamp(width / 5, 116, 150);
+        var deviceId = Math.Clamp(width / 4, 128, 174);
+        var name = Math.Max(96, width - firstSeen - address - deviceId);
+        return [name, deviceId, address, firstSeen];
+    }
+
+    internal static int[] CalculateShortcutsColumnWidths(int availableWidth)
+    {
+        var width = Math.Max(360, availableWidth - ListVerticalScrollbarAllowance);
+        var id = Math.Clamp(width / 5, 92, 132);
+        var action = Math.Clamp(width / 5, 104, 138);
+        var name = Math.Clamp(width / 4, 120, 170);
+        var target = Math.Max(120, width - name - id - action);
+        return [name, id, action, target];
+    }
+
+    internal static bool ColumnWidthsFitAvailableWidth(int availableWidth, IReadOnlyList<int> widths)
+    {
+        return widths.Sum() + ListVerticalScrollbarAllowance <= availableWidth;
+    }
+
+    internal static void ConfigurePairingColumns(ListView list, int availableWidth)
+    {
+        SetListColumns(list, ["Name", "Device ID", "Address", "First seen"], CalculatePairingColumnWidths(availableWidth));
+    }
+
+    internal static void AttachPairingColumnResizeHandler(ListView list)
+    {
+        list.SizeChanged += (_, _) => ConfigurePairingColumns(list, list.ClientSize.Width);
+    }
+
+    internal static void ConfigureShortcutsColumns(ListView list, int availableWidth)
+    {
+        SetListColumns(list, ["Name", "ID", "Action", "Target"], CalculateShortcutsColumnWidths(availableWidth));
+    }
+
+    private static void SetListColumns(ListView list, string[] names, int[] widths)
+    {
+        while (list.Columns.Count < names.Length)
+        {
+            list.Columns.Add(names[list.Columns.Count], widths[list.Columns.Count]);
+        }
+
+        for (var index = 0; index < names.Length; index++)
+        {
+            var column = list.Columns[index];
+            if (!string.Equals(column.Text, names[index], StringComparison.Ordinal))
+            {
+                column.Text = names[index];
+            }
+
+            if (column.Width != widths[index])
+            {
+                column.Width = widths[index];
+            }
+        }
     }
 
     private void AddSectionHeader(TableLayoutPanel grid, string text)
@@ -1020,8 +1341,8 @@ public sealed class SettingsWindow : Form
             Text = text,
             AutoSize = true,
             ForeColor = Accent,
-            Font = new Font(Font.FontFamily, 9F, FontStyle.Bold),
-            Padding = new Padding(0, 18, 0, 6)
+            Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold),
+            Padding = new Padding(0, 22, 0, 8)
         };
         grid.Controls.Add(label, 0, grid.RowCount);
         grid.SetColumnSpan(label, 2);
@@ -1035,14 +1356,16 @@ public sealed class SettingsWindow : Form
             Text = label,
             AutoSize = true,
             ForeColor = TextMuted,
-            Padding = new Padding(0, 4, 0, 4)
+            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Regular),
+            Padding = new Padding(0, 7, 0, 7)
         };
         var content = new Label
         {
             Text = value,
             AutoSize = true,
             ForeColor = TextPrimary,
-            Padding = new Padding(0, 4, 0, 4)
+            Font = new Font(Font.FontFamily, 10F, FontStyle.Regular),
+            Padding = new Padding(0, 7, 0, 7)
         };
         grid.Controls.Add(name, 0, grid.RowCount);
         grid.Controls.Add(content, 1, grid.RowCount);
@@ -1055,9 +1378,13 @@ public sealed class SettingsWindow : Form
         var bar = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 54,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, ActionButtonHeight + ActionButtonVerticalMargin + 8),
             FlowDirection = FlowDirection.LeftToRight,
-            BackColor = Background
+            WrapContents = true,
+            BackColor = Background,
+            Padding = new Padding(0, 0, 0, 8)
         };
 
         foreach (var action in actions)
@@ -1067,7 +1394,31 @@ public sealed class SettingsWindow : Form
             bar.Controls.Add(button);
         }
 
+        bar.SizeChanged += (_, _) => UpdateActionsBarHeight(bar);
+        bar.ParentChanged += (_, _) =>
+        {
+            if (bar.Parent is not null)
+            {
+                bar.Parent.SizeChanged += (_, _) => UpdateActionsBarHeight(bar);
+            }
+
+            UpdateActionsBarHeight(bar);
+        };
+        bar.ControlAdded += (_, _) => UpdateActionsBarHeight(bar);
+        UpdateActionsBarHeight(bar);
+
         return bar;
+    }
+
+    private static void UpdateActionsBarHeight(FlowLayoutPanel bar)
+    {
+        var widths = bar.Controls.Cast<Control>().Select(control => control.Width).ToArray();
+        var parentWidth = bar.Parent?.ClientSize.Width ?? bar.ClientSize.Width;
+        var height = CalculateActionBarHeight(parentWidth, widths);
+        if (height > 0 && bar.Height != height)
+        {
+            bar.Height = height;
+        }
     }
 
     private Control CreateDeviceActionsBar(bool hasActiveDevice, params (string Text, Func<Task> Action)[] actions)
@@ -1113,19 +1464,40 @@ public sealed class SettingsWindow : Form
 
     private Button CreateActionButton(string text)
     {
+        var isPrimary = string.Equals(text, "Reconnect", StringComparison.Ordinal)
+            || string.Equals(text, "Reconnect device", StringComparison.Ordinal)
+            || string.Equals(text, "Approve", StringComparison.Ordinal);
+        var isDestructive = text.Contains("Delete", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Reject", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Factory reset", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Forget", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Clear", StringComparison.OrdinalIgnoreCase);
+        return CreateStyledActionButton(text, isPrimary || isDestructive);
+    }
+
+    private static Button CreateNeutralButton(string text)
+    {
+        return CreateStyledActionButton(text, useAccent: false);
+    }
+
+    private static Button CreateStyledActionButton(string text, bool useAccent)
+    {
         var button = new Button
         {
             Text = text,
-            Height = 36,
+            Height = ActionButtonHeight,
             AutoSize = true,
-            MinimumSize = new Size(120, 36),
+            MinimumSize = new Size(MeasureSettingsActionButtonWidth(text), ActionButtonHeight),
             FlatStyle = FlatStyle.Flat,
-            BackColor = Accent,
-            ForeColor = Color.White,
-            Margin = new Padding(0, 8, 10, 0),
+            BackColor = useAccent ? Accent : SurfaceAlt,
+            ForeColor = useAccent ? Color.White : TextPrimary,
+            Font = new Font(FontFamily.GenericSansSerif, 9.5F, useAccent ? FontStyle.Bold : FontStyle.Regular),
+            Padding = new Padding(12, 0, 12, 0),
+            Margin = new Padding(0, ActionButtonVerticalMargin, ActionButtonHorizontalMargin, 0),
             Cursor = Cursors.Hand
         };
-        button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.BorderSize = useAccent ? 0 : 1;
+        button.FlatAppearance.BorderColor = Border;
         return button;
     }
 

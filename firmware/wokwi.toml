@@ -1,0 +1,4 @@
+[wokwi]
+version = 1
+firmware = ".pio/wokwi/firmware-merged.bin"
+elf = ".pio/wokwi/firmware.elf"

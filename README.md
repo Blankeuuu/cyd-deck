@@ -37,6 +37,10 @@ powershell -ExecutionPolicy Bypass -File scripts/build-firmware.ps1 device monit
 
 Sprawdź oba warianty wyświetlacza i przekaż obserwacje z testu fizycznego; nie zakładamy kontrolera na podstawie nazwy płytki. Pełna procedura znajduje się w [docs/hardware.md](docs/hardware.md).
 
+## Symulacja Wokwi
+
+Uruchom `powershell -ExecutionPolicy Bypass -File scripts/test-wokwi.ps1`, aby zbudować podgląd firmware, przygotować pełny obraz flash i sprawdzić start UI w Wokwi. Wymaga zainstalowanego Wokwi CLI i zmiennej środowiskowej `WOKWI_CLI_TOKEN` z Wokwi CI; tokenu nie zapisuj w repozytorium. Symulator używa ESP32 DevKit i modelu ILI9341: sprawdza boot oraz renderowanie UI, ale nie emuluje dotyku XPT2046, microSD, rzeczywistego panelu ST7789 ani testów fizycznych.
+
 ## Testy hostowe
 
 Czysty affine helper używany przez firmware ma hostowe testy C++. Opcjonalny Zig host compiler instaluje się przez:
