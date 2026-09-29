@@ -1,0 +1,39 @@
+# PlatformIO build output and locally installed toolchains/backups.
+.pio/
+.pio-*/
+.tools/
+
+# .NET and editor output.
+**/bin/
+**/obj/
+**/artifacts/
+.vscode/
+*.user
+*.suo
+
+# OS metadata.
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Runtime logs, caches, and generated cover art.
+*.log
+*.log.*
+**/cache/
+**/cover-cache/
+**/cover-cache/**
+
+# Local secrets and user-specific configuration.
+.env
+.env.*
+!.env.example
+**/secrets/
+**/*.secrets.*
+**/credentials.json
+**/pairing-store.json
+
+# Private key material.
+*.pem
+*.key
+*.p12
+*.pfx

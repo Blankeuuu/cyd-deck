@@ -1,0 +1,84 @@
+using System.Text.Json.Serialization;
+using StreamDeck.Shortcuts;
+
+namespace StreamDeck.Configuration;
+
+public sealed record AgentConfiguration
+{
+    [JsonPropertyName("server")]
+    public ServerConfiguration? Server { get; init; } = new();
+
+    [JsonPropertyName("monitoring")]
+    public MonitoringConfiguration? Monitoring { get; init; } = new();
+
+    [JsonPropertyName("covers")]
+    public CoversConfiguration? Covers { get; init; } = new();
+
+    [JsonPropertyName("appearance")]
+    public AppearanceConfiguration? Appearance { get; init; } = new();
+
+    [JsonPropertyName("shortcuts")]
+    public IReadOnlyList<ShortcutDefinition>? Shortcuts { get; init; } = [];
+
+    public static AgentConfiguration CreateDefault()
+    {
+        return new AgentConfiguration();
+    }
+}
+
+public sealed record ServerConfiguration
+{
+    [JsonPropertyName("port")]
+    public int Port { get; init; } = 8765;
+}
+
+public sealed record MonitoringConfiguration
+{
+    [JsonPropertyName("intervalMs")]
+    public int IntervalMs { get; init; } = 1000;
+}
+
+public sealed record CoversConfiguration
+{
+    [JsonPropertyName("size")]
+    public int Size { get; init; } = 140;
+
+    [JsonPropertyName("jpegQuality")]
+    public int JpegQuality { get; init; } = 80;
+}
+
+public sealed record AppearanceConfiguration
+{
+    [JsonPropertyName("theme")]
+    public string Theme { get; init; } = "dark";
+
+    [JsonPropertyName("accent")]
+    public string Accent { get; init; } = "#7EAFE3";
+
+    [JsonPropertyName("background")]
+    public string Background { get; init; } = "#101216";
+
+    [JsonPropertyName("buttonStyle")]
+    public string ButtonStyle { get; init; } = "rounded";
+
+    [JsonPropertyName("pageOrder")]
+    public IReadOnlyList<string> PageOrder { get; init; } = ["media", "shortcuts", "pc", "info"];
+
+    [JsonPropertyName("pageVisibility")]
+    public IReadOnlyList<string> PageVisibility { get; init; } = ["media", "shortcuts", "pc", "info"];
+
+    [JsonPropertyName("brightness")]
+    public int Brightness { get; init; } = 70;
+
+    [JsonPropertyName("dimAfterSec")]
+    public int DimAfterSec { get; init; } = 300;
+
+    [JsonPropertyName("dimBrightness")]
+    public int DimBrightness { get; init; } = 20;
+
+    [JsonPropertyName("screenOffAfterSec")]
+    public int ScreenOffAfterSec { get; init; } = 1800;
+
+    [JsonPropertyName("wakeOnTouch")]
+    public bool WakeOnTouch { get; init; } = true;
+}

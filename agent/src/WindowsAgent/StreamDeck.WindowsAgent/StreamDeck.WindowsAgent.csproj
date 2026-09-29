@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>StreamDeck.WindowsAgent</AssemblyName>
+    <RootNamespace>StreamDeck.WindowsAgent</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="StreamDeck.WindowsAgent.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Audio\StreamDeck.Audio\StreamDeck.Audio.csproj" />
+    <ProjectReference Include="..\..\Configuration\StreamDeck.Configuration\StreamDeck.Configuration.csproj" />
+    <ProjectReference Include="..\..\Covers\StreamDeck.Covers\StreamDeck.Covers.csproj" />
+    <ProjectReference Include="..\..\Host\StreamDeck.Host\StreamDeck.Host.csproj" />
+    <ProjectReference Include="..\..\Media\StreamDeck.Media\StreamDeck.Media.csproj" />
+    <ProjectReference Include="..\..\Shortcuts\StreamDeck.Shortcuts\StreamDeck.Shortcuts.csproj" />
+    <ProjectReference Include="..\..\SystemMonitoring\SystemMonitoring.csproj" />
+  </ItemGroup>
+</Project>

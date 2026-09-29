@@ -1,0 +1,61 @@
+{
+  "shortcuts": [
+    {
+      "id": "discord",
+      "name": "Discord",
+      "icon": "discord",
+      "action": {
+        "type": "launch",
+        "executablePath": "C:\\Program Files\\Discord\\Discord.exe",
+        "arguments": []
+      }
+    },
+    {
+      "id": "docs",
+      "name": "Docs",
+      "icon": "link",
+      "action": {
+        "type": "url",
+        "url": "https://example.com/docs"
+      }
+    },
+    {
+      "id": "screenshot",
+      "name": "Screenshot",
+      "icon": "camera",
+      "action": {
+        "type": "hotkey",
+        "keys": ["WIN", "SHIFT", "S"]
+      }
+    },
+    {
+      "id": "cleanup",
+      "name": "Cleanup",
+      "icon": "script",
+      "action": {
+        "type": "script",
+        "scriptPath": "C:\\Tools\\cleanup.cmd",
+        "arguments": ["--quiet"]
+      }
+    },
+    {
+      "id": "build-report",
+      "name": "Build Report",
+      "icon": "terminal",
+      "action": {
+        "type": "powershell",
+        "scriptPath": "C:\\Tools\\build-report.ps1",
+        "arguments": ["daily"]
+      }
+    },
+    {
+      "id": "custom-mute",
+      "name": "Mute Mic",
+      "icon": "mic",
+      "action": {
+        "type": "predefined",
+        "adapterKey": "audio:toggle-mic"
+      }
+    }
+  ]
+}

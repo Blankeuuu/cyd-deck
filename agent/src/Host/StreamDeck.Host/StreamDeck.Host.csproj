@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>StreamDeck.Host</AssemblyName>
+    <RootNamespace>StreamDeck.Host</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+    <ProjectReference Include="..\..\Audio\StreamDeck.Audio\StreamDeck.Audio.csproj" />
+    <ProjectReference Include="..\..\Configuration\StreamDeck.Configuration\StreamDeck.Configuration.csproj" />
+    <ProjectReference Include="..\..\Media\StreamDeck.Media\StreamDeck.Media.csproj" />
+    <ProjectReference Include="..\..\Networking\StreamDeck.Protocol\StreamDeck.Protocol.csproj" />
+    <ProjectReference Include="..\..\Shortcuts\StreamDeck.Shortcuts\StreamDeck.Shortcuts.csproj" />
+    <ProjectReference Include="..\..\SystemMonitoring\SystemMonitoring.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,9 @@
+{
+  "name": "stream-deck-hardware-diagnostics",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:calibration": "powershell -ExecutionPolicy Bypass -File scripts/test-affine.ps1",
+    "test:sd-storage": "powershell -ExecutionPolicy Bypass -File scripts/test-sd-storage.ps1"
+  }
+}
