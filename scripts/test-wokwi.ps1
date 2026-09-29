@@ -66,5 +66,6 @@ if (-not (Test-Path -LiteralPath $cliPath)) {
   throw 'Wokwi CLI is not installed. Install it from https://docs.wokwi.com/wokwi-ci/cli-installation.'
 }
 
-& $cliPath $firmwareRoot --timeout $TimeoutSeconds --expect-text '[WOKWI] APP_UI_READY'
+$timeoutMilliseconds = $TimeoutSeconds * 1000
+& $cliPath $firmwareRoot --timeout $timeoutMilliseconds --expect-text '[WOKWI] APP_UI_READY'
 exit $LASTEXITCODE

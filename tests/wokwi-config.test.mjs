@@ -42,3 +42,9 @@ test('Wokwi uses a simulator-only app build and bypasses physical onboarding', (
   assert.match(app, /#if defined\(WOKWI_SIMULATOR\)[\s\S]*?calibration\.valid\s*=\s*true;[\s\S]*?setupSettings\.done\s*=\s*true;[\s\S]*?#endif/);
   assert.match(app, /\[WOKWI\] APP_UI_READY/);
 });
+
+test('Wokwi script converts its timeout seconds to CLI milliseconds', () => {
+  const script = readProjectFile('scripts/test-wokwi.ps1');
+  assert.match(script, /\$timeoutMilliseconds\s*=\s*\$TimeoutSeconds\s*\*\s*1000/);
+  assert.match(script, /--timeout\s+\$timeoutMilliseconds/);
+});
