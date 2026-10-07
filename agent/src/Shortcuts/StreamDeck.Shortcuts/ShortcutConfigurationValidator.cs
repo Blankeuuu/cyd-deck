@@ -139,6 +139,12 @@ public sealed class ShortcutConfigurationValidator
         if (Uri.TryCreate(normalizedValue, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
         {
             issues.Add(new ShortcutValidationIssue(path, "Network URLs are not valid local paths."));
+            return;
+        }
+
+        if (IsUncPath(normalizedValue))
+        {
+            issues.Add(new ShortcutValidationIssue(path, "Network share paths are not valid local paths."));
         }
     }
 
@@ -157,6 +163,12 @@ public sealed class ShortcutConfigurationValidator
             return;
         }
 
+        if (IsUncPath(normalizedValue))
+        {
+            issues.Add(new ShortcutValidationIssue(path, "Network share paths are not valid local paths."));
+            return;
+        }
+
         if (Path.IsPathFullyQualified(normalizedValue) || IsBareExecutableName(normalizedValue))
         {
             return;
@@ -170,6 +182,12 @@ public sealed class ShortcutConfigurationValidator
         return !value.Any(character => character == Path.DirectorySeparatorChar || character == Path.AltDirectorySeparatorChar)
             && value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0
             && value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUncPath(string value)
+    {
+        return value.StartsWith(@"\\", StringComparison.Ordinal)
+            || value.StartsWith("//", StringComparison.Ordinal);
     }
 
     private static string? NormalizeQuotedPath(string? value)

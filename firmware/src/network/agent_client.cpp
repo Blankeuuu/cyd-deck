@@ -165,6 +165,13 @@ Page pageFromName(const String& value, Page fallback) {
   return fallback;
 }
 
+void copyBoundedText(char* target, size_t targetSize, const String& value) {
+  if (!target || targetSize == 0) return;
+  const size_t copyLength = std::min(targetSize - 1, static_cast<size_t>(value.length()));
+  std::memcpy(target, value.c_str(), copyLength);
+  target[copyLength] = '\0';
+}
+
 void parsePageOrder(const char* json, size_t length, AppearanceState& appearance) {
   String needle = "\"pageOrder\"";
   const char* begin = json;
@@ -172,14 +179,14 @@ void parsePageOrder(const char* json, size_t length, AppearanceState& appearance
   const char* found = std::search(begin, end, needle.c_str(), needle.c_str() + needle.length());
   if (found == end) return;
 
-  bool seen[4] = {};
-  Page parsed[4]{};
+  bool seen[kPageCount] = {};
+  Page parsed[kPageCount]{};
   uint8_t count = 0;
   const char* cursor = found + needle.length();
   while (cursor < end && *cursor != '[') ++cursor;
   if (cursor == end) return;
   ++cursor;
-  while (cursor < end && *cursor != ']' && count < 4) {
+  while (cursor < end && *cursor != ']' && count < kPageCount) {
     while (cursor < end && *cursor != '"' && *cursor != ']') ++cursor;
     if (cursor == end || *cursor == ']') break;
     ++cursor;
@@ -188,13 +195,15 @@ void parsePageOrder(const char* json, size_t length, AppearanceState& appearance
     if (cursor < end) ++cursor;
     const Page page = pageFromName(item, Page::Info);
     const uint8_t index = pageIndex(page);
-    if (index < 4 && !seen[index]) {
+    if (index < kPageCount && !seen[index]) {
       parsed[count++] = page;
       seen[index] = true;
     }
   }
-  if (count == 4) {
-    for (uint8_t i = 0; i < 4; ++i) appearance.pageOrder[i] = parsed[i];
+  if (count > 0) {
+    for (uint8_t i = 0; i < kPageCount; ++i) {
+      appearance.pageOrder[i] = i < count ? parsed[i] : static_cast<Page>(255);
+    }
   }
 }
 
@@ -205,7 +214,7 @@ void parsePageVisibility(const char* json, size_t length, AppearanceState& appea
   const char* found = std::search(begin, end, needle.c_str(), needle.c_str() + needle.length());
   if (found == end) return;
 
-  for (uint8_t i = 0; i < 4; ++i) appearance.pageVisible[i] = false;
+  for (uint8_t i = 0; i < kPageCount; ++i) appearance.pageVisible[i] = false;
   const char* cursor = found + needle.length();
   while (cursor < end && *cursor != '[') ++cursor;
   if (cursor == end) return;

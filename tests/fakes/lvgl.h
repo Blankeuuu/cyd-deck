@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 #define LV_SYMBOL_AUDIO "[audio]"
 #define LV_SYMBOL_PREV "[prev]"
@@ -126,6 +127,20 @@ inline lv_obj_t* lv_bar_create(lv_obj_t* parent) { return lv_test_create(parent,
 inline lv_obj_t* lv_slider_create(lv_obj_t* parent) { return lv_test_create(parent, lv_obj_t::Type::Slider); }
 inline lv_obj_t* lv_image_create(lv_obj_t* parent) { return lv_test_create(parent, lv_obj_t::Type::Image); }
 inline void lv_image_set_src(lv_obj_t* object, const void* src) { object->image_src = src; }
+inline void lv_obj_delete(lv_obj_t* object) {
+  while (!object->children.empty()) lv_obj_delete(object->children.back());
+  if (object->parent) {
+    auto& siblings = object->parent->children;
+    siblings.erase(std::remove(siblings.begin(), siblings.end(), object), siblings.end());
+  }
+  lv_test_allocations.erase(std::remove(lv_test_allocations.begin(), lv_test_allocations.end(), object), lv_test_allocations.end());
+  delete object;
+}
+inline void lv_obj_move_to_index(lv_obj_t* object, int index) {
+  auto& siblings = object->parent->children;
+  siblings.erase(std::remove(siblings.begin(), siblings.end(), object), siblings.end());
+  siblings.insert(siblings.begin() + index, object);
+}
 
 inline void lv_obj_set_pos(lv_obj_t* object, int x, int y) { object->x = x; object->y = y; }
 inline void lv_obj_set_size(lv_obj_t* object, int w, int h) { object->w = w; object->h = h; }

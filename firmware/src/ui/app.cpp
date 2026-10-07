@@ -8,6 +8,7 @@
 #include <WiFi.h>
 #include <cstdlib>
 #include <cstring>
+#include <esp_system.h>
 #include <lgfx/v1/LGFX_Sprite.hpp>
 #include <lgfx/v1/lgfx_filesystem_support.hpp>
 #include <lvgl.h>
@@ -43,12 +44,18 @@ struct SetupSettings {
 
 struct PendingSetup {
   bool active = false;
+  bool fromAppMode = false;
   String ssid;
   String password;
   String deviceName;
   String agentIp;
   uint8_t brightness = onboarding::kDefaultBrightness;
   uint32_t startedAt = 0;
+  String previousSsid;
+  String previousPassword;
+  String previousDeviceName;
+  String previousAgentIp;
+  uint8_t previousBrightness = onboarding::kDefaultBrightness;
 };
 
 DisplayHal display;
@@ -80,6 +87,7 @@ bool agentClientStarted = false;
 bool otaConfigured = false;
 bool stationConnectStarted = false;
 bool sdMounted = false;
+String setupStatusMessage;
 constexpr uint16_t kCoverImageSize = 128;
 uint16_t* coverPixels = nullptr;
 lv_image_dsc_t coverImageDsc{};
@@ -96,16 +104,26 @@ lv_indev_t* pointer = nullptr;
 lv_obj_t* setupStatusLabel = nullptr;
 
 bool renderCachedCover(const char* coverId, AppState& appState);
+void startWebConfigServer(bool provisioningMode);
+void servicePendingSetupResult();
+void sendHttp(WiFiClient& client, int status, const char* statusText,
+              const char* contentType, const String& body);
+
+
 
 constexpr int kTargetX[5] = {12, 307, 12, 307, 160};
 constexpr int kTargetY[5] = {12, 12, 227, 227, 120};
-constexpr uint32_t kSetupBg = 0x101216;
-constexpr uint32_t kSetupText = 0xF3F5F7;
-constexpr uint32_t kSetupMuted = 0xA3ABB7;
+constexpr uint32_t kSetupBg = 0x0B0D12;
+constexpr uint32_t kSetupText = 0xF7F8FA;
+constexpr uint32_t kSetupMuted = 0xB2BAC6;
 constexpr uint32_t kSetupAccent = 0x7EAFE3;
-constexpr uint32_t kSetupPanel = 0x1C2026;
+constexpr uint32_t kSetupPanel = 0x171B22;
+constexpr const char* kSetupApSsid = "CYD-Deck-Setup";
+
 constexpr byte kDnsPort = 53;
 constexpr uint32_t kWifiConnectTimeoutMs = 20000;
+constexpr std::size_t kSetupHttpMaxRequestBytes = 1536;
+constexpr std::size_t kSetupHttpMaxBodyBytes = 1024;
 
 void disableScrolling(lv_obj_t* object) {
   lv_obj_clear_flag(object, LV_OBJ_FLAG_SCROLLABLE);
@@ -176,14 +194,11 @@ String makeDeviceId() {
 }
 
 String makeSetupPassword() {
-  static constexpr char alphabet[] =
-      "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  String password;
-  password.reserve(12);
-  for (uint8_t i = 0; i < 12; ++i) {
-    password += alphabet[esp_random() % (sizeof(alphabet) - 1)];
-  }
-  return password;
+  char buffer[17];
+  std::snprintf(buffer, sizeof(buffer), "%08lX%08lX",
+      static_cast<unsigned long>(esp_random()),
+      static_cast<unsigned long>(esp_random()));
+  return String(buffer);
 }
 
 void loadCalibration() {
@@ -230,17 +245,15 @@ void loadSetupSettings() {
     setupSettings.deviceName = makeDefaultDeviceName();
     prefs.putString("name", setupSettings.deviceName);
   }
-  if (setupSettings.apSsid.length() == 0) {
-    const uint32_t chip = static_cast<uint32_t>(ESP.getEfuseMac() & 0xFFFFFF);
-    char buffer[24];
-    std::snprintf(buffer, sizeof(buffer), "CYD-Setup-%06lX",
-        static_cast<unsigned long>(chip));
-    setupSettings.apSsid = buffer;
+  if (setupSettings.apSsid != kSetupApSsid) {
+    setupSettings.apSsid = kSetupApSsid;
     prefs.putString("apssid", setupSettings.apSsid);
   }
-  if (setupSettings.setupPassword.length() < 8) {
+  const uint8_t setupSecretVersion = prefs.getUChar("secver", 0);
+  if (setupSecretVersion != 1 || setupSettings.setupPassword.length() < 8) {
     setupSettings.setupPassword = makeSetupPassword();
     prefs.putString("secret", setupSettings.setupPassword);
+    prefs.putUChar("secver", 1);
   }
   prefs.putUChar("bright", setupSettings.brightness);
   prefs.end();
@@ -263,9 +276,12 @@ void loadAppearanceSettings() {
       ? prefs.getUShort("offsec", state.appearance.screenOffAfterSeconds)
       : prefs.getUInt("offsec", state.appearance.screenOffAfterSeconds);
   state.appearance.wakeOnTouch = prefs.getBool("wake", state.appearance.wakeOnTouch);
-  uint32_t order = prefs.getUInt("order", 0x03020100UL);
-  uint8_t visible = prefs.getUChar("visible", 0x0F);
-  for (uint8_t i = 0; i < 4; ++i) {
+  const PreferenceType orderType = prefs.getType("order");
+  uint64_t order = orderType == PT_U64
+      ? prefs.getULong64("order", 0x0302010400ULL)
+      : prefs.getUInt("order", 0x03020100UL);
+  uint8_t visible = prefs.getUChar("visible", 0x1F);
+  for (uint8_t i = 0; i < kPageCount; ++i) {
     state.appearance.pageOrder[i] = static_cast<Page>((order >> (i * 8)) & 0xFF);
     state.appearance.pageVisible[i] = (visible & (1 << i)) != 0;
   }
@@ -295,13 +311,13 @@ void persistAppearanceSettings() {
   prefs.putUChar("dimbright", state.appearance.dimBrightness);
   prefs.putUInt("offsec", state.appearance.screenOffAfterSeconds);
   prefs.putBool("wake", state.appearance.wakeOnTouch);
-  uint32_t order = 0;
+  uint64_t order = 0;
   uint8_t visible = 0;
-  for (uint8_t i = 0; i < 4; ++i) {
-    order |= static_cast<uint32_t>(pageIndex(state.appearance.pageOrder[i])) << (i * 8);
+  for (uint8_t i = 0; i < kPageCount; ++i) {
+    order |= static_cast<uint64_t>(pageIndex(state.appearance.pageOrder[i])) << (i * 8);
     if (state.appearance.pageVisible[i]) visible |= 1 << i;
   }
-  prefs.putUInt("order", order);
+  prefs.putULong64("order", order);
   prefs.putUChar("visible", visible);
   prefs.end();
 }
@@ -324,7 +340,23 @@ void persistSuccessfulSetup() {
   setupSettings.wifiPassword = pendingSetup.password;
 }
 
+void restorePreviousNetwork() {
+  setupSettings.wifiSsid = pendingSetup.previousSsid;
+  setupSettings.wifiPassword = pendingSetup.previousPassword;
+  setupSettings.deviceName = pendingSetup.previousDeviceName;
+  setupSettings.agentIp = pendingSetup.previousAgentIp;
+  setupSettings.brightness = pendingSetup.previousBrightness;
+  applyBacklight(setupSettings.brightness);
+  if (setupSettings.wifiSsid.length() > 0) {
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(setupSettings.wifiSsid.c_str(), setupSettings.wifiPassword.c_str());
+    stationConnectStarted = true;
+  }
+}
+
 void setSetupStatus(const char* text) {
+  setupStatusMessage = text ? text : "";
   if (setupStatusLabel) lv_label_set_text(setupStatusLabel, text);
 }
 
@@ -344,10 +376,14 @@ void drawSetupQr() {
   setupQrNeedsDraw = false;
 }
 
+
 void startAppUi() {
   bootMode = BootMode::App;
   calibrating = false;
   setupUiBuilt = false;
+  if (!setupPortalActive && setupSettings.wifiSsid.length() > 0) {
+    startWebConfigServer(false);
+  }
   if (!appUiStarted) {
     lv_obj_clean(lv_scr_act());
     uiBegin(state, intents);
@@ -467,6 +503,18 @@ void stopSetupPortal() {
   setupPortalActive = false;
 }
 
+void startWebConfigServer(bool provisioningMode) {
+  if (provisioningMode) {
+    const IPAddress apIp(192, 168, 4, 1);
+    const IPAddress netmask(255, 255, 255, 0);
+    WiFi.softAPConfig(apIp, apIp, netmask);
+    WiFi.softAP(setupSettings.apSsid.c_str(), setupSettings.setupPassword.c_str());
+    dnsServer.start(kDnsPort, "*", apIp);
+  }
+  setupServer.begin();
+  setupPortalActive = true;
+}
+
 void startStationIfConfigured() {
   if (stationConnectStarted || setupSettings.wifiSsid.length() == 0) return;
   WiFi.persistent(false);
@@ -480,13 +528,17 @@ void startStationIfConfigured() {
 
 String buildSetupPage(const char* message) {
   String html;
-  html.reserve(2300);
+  html.reserve(5000);
   html += F("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>");
   html += F("<title>CYD Stream Deck setup</title><style>body{font-family:system-ui;margin:24px;background:#101216;color:#f3f5f7}label{display:block;margin-top:14px}.card{max-width:460px;margin:auto}.hint{color:#a3abb7}input{width:100%;box-sizing:border-box;padding:10px;margin-top:5px;border-radius:8px;border:1px solid #555;background:#1c2026;color:#fff}button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:8px;background:#7eafe3;color:#101216;font-weight:700}</style></head><body><main class='card'>");
   html += F("<h1>CYD Stream Deck</h1>");
   if (message && message[0]) {
     html += F("<p class='hint'>");
     html += htmlEscape(message);
+    html += F("</p>");
+  } else if (setupStatusMessage.length() > 0) {
+    html += F("<p class='hint'>");
+    html += htmlEscape(setupStatusMessage);
     html += F("</p>");
   }
   html += F("<form method='post' action='/save'>");
@@ -501,8 +553,9 @@ String buildSetupPage(const char* message) {
   html += F("'></label>");
   html += F("<label>Windows agent IP fallback<input name='agentip' placeholder='optional, e.g. 192.168.1.50' value='");
   html += htmlEscape(setupSettings.agentIp);
-  html += F("'></label><button type='submit'>Save and connect</button></form>");
-  html += F("<p class='hint'>Credentials are saved only after this device connects successfully.</p>");
+  html += F("'></label>");
+  html += F("<button type='submit'>Save and connect</button></form>");
+  html += F("<p class='hint'>Wi-Fi settings are saved only after this device connects successfully.</p>");
   html += F("</main></body></html>");
   return html;
 }
@@ -557,6 +610,7 @@ void sendHttp(WiFiClient& client, int status, const char* statusText,
   client.println(contentType);
   client.print(F("Content-Length: "));
   client.println(body.length());
+  client.println(F("Cache-Control: no-store"));
   client.println(F("Connection: close"));
   client.println();
   client.print(body);
@@ -593,20 +647,26 @@ void handleSetupSave(WiFiClient& client, const String& body) {
   }
 
   pendingSetup.active = true;
+  pendingSetup.fromAppMode = bootMode == BootMode::App;
   pendingSetup.ssid = ssid;
   pendingSetup.password = pass;
   pendingSetup.deviceName = name;
   pendingSetup.agentIp = agentIp;
   pendingSetup.brightness = onboarding::clampBrightness(brightness);
   pendingSetup.startedAt = millis();
+  pendingSetup.previousSsid = setupSettings.wifiSsid;
+  pendingSetup.previousPassword = setupSettings.wifiPassword;
+  pendingSetup.previousDeviceName = setupSettings.deviceName;
+  pendingSetup.previousAgentIp = setupSettings.agentIp;
+  pendingSetup.previousBrightness = setupSettings.brightness;
   applyBacklight(pendingSetup.brightness);
 
   WiFi.persistent(false);
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(pendingSetup.fromAppMode ? WIFI_STA : WIFI_AP_STA);
   WiFi.begin(pendingSetup.ssid.c_str(), pendingSetup.password.c_str());
   setSetupStatus("Testing Wi-Fi credentials...");
   sendHttp(client, 202, "Accepted", "text/html",
-      buildSetupPage("Testing Wi-Fi credentials. Keep this phone near the device."));
+      buildSetupPage("Testing Wi-Fi credentials. Refresh this page for the result."));
   Serial.println("[SETUP] Wi-Fi credentials received; testing connection");
 }
 
@@ -615,23 +675,29 @@ void serviceSetupHttp() {
   if (!client) return;
 
   String request;
-  request.reserve(1536);
+  request.reserve(kSetupHttpMaxRequestBytes);
   const uint32_t start = millis();
-  while (client.connected() && millis() - start < 250 && request.length() < 1536) {
-    while (client.available() && request.length() < 1536) {
+  HttpRequestReadDecision readDecision = HttpRequestReadDecision::Incomplete;
+  while (client.connected() && millis() - start < 250 &&
+      request.length() < kSetupHttpMaxRequestBytes) {
+    while (client.available() && request.length() < kSetupHttpMaxRequestBytes) {
       request += static_cast<char>(client.read());
     }
-    const int headerEnd = request.indexOf("\r\n\r\n");
-    if (headerEnd >= 0) {
-      int contentLength = 0;
-      const int lengthAt = request.indexOf("Content-Length:");
-      if (lengthAt >= 0 && lengthAt < headerEnd) {
-        const int lineEnd = request.indexOf("\r\n", lengthAt);
-        contentLength = request.substring(lengthAt + 15, lineEnd).toInt();
-      }
-      if (static_cast<int>(request.length()) >= headerEnd + 4 + contentLength) break;
-    }
+    readDecision = decideHttpRequestRead(request.c_str(), request.length(),
+        kSetupHttpMaxBodyBytes);
+    if (readDecision != HttpRequestReadDecision::Incomplete) break;
     delay(1);
+  }
+
+  if (readDecision == HttpRequestReadDecision::Incomplete) {
+    readDecision = decideHttpRequestRead(request.c_str(), request.length(),
+        kSetupHttpMaxBodyBytes);
+  }
+  if (readDecision == HttpRequestReadDecision::Invalid ||
+      readDecision == HttpRequestReadDecision::Incomplete) {
+    sendHttp(client, 400, "Bad Request", "text/plain", "Bad Request");
+    client.stop();
+    return;
   }
 
   const int firstLineEnd = request.indexOf("\r\n");
@@ -687,15 +753,11 @@ void startSetupPortal() {
   pendingSetup.active = false;
   WiFi.persistent(false);
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(setupSettings.apSsid.c_str(), setupSettings.setupPassword.c_str());
-  const IPAddress apIp = WiFi.softAPIP();
-  dnsServer.start(kDnsPort, "*", apIp);
-  setupServer.begin();
-  setupPortalActive = true;
+  startWebConfigServer(true);
   appUiStarted = false;
   buildSetupUi();
   Serial.printf("[SETUP] portal started ssid=%s ip=%s\n",
-      setupSettings.apSsid.c_str(), apIp.toString().c_str());
+      setupSettings.apSsid.c_str(), WiFi.softAPIP().toString().c_str());
 }
 
 void calibrationScreen() {
@@ -893,13 +955,11 @@ void handleIntent(const Intent& intent) {
 void serviceDisplayIdle() {
   if (bootMode != BootMode::App || calibrating) return;
   const uint32_t idleSeconds = (millis() - lastUserInputAt) / 1000UL;
-  bool nextOff = state.appearance.screenOffAfterSeconds > 0 &&
-      idleSeconds >= state.appearance.screenOffAfterSeconds;
-  bool nextDim = !nextOff && state.appearance.dimAfterSeconds > 0 &&
-      idleSeconds >= state.appearance.dimAfterSeconds;
-  if (nextOff != displayOff || nextDim != displayDimmed) {
-    displayOff = nextOff;
-    displayDimmed = nextDim;
+  const DisplayIdleDecision decision = computeDisplayIdleDecision(state, idleSeconds, displayOff, displayDimmed);
+  if (decision.resetIdleTimer) lastUserInputAt = millis();
+  if (decision.off != displayOff || decision.dimmed != displayDimmed) {
+    displayOff = decision.off;
+    displayDimmed = decision.dimmed;
     applyConfiguredBacklight();
   }
 }
@@ -909,10 +969,27 @@ void serviceSetupPortal() {
   dnsServer.processNextRequest();
   serviceSetupHttp();
 
+  servicePendingSetupResult();
+}
+
+void servicePendingSetupResult() {
   if (!pendingSetup.active) return;
-  if (WiFi.status() == WL_CONNECTED) {
+
+  const bool connected = WiFi.status() == WL_CONNECTED;
+  const bool ssidMatches = connected && WiFi.SSID() == pendingSetup.ssid;
+  const PendingSetupDecision decision = decidePendingSetupResult(
+      connected, ssidMatches, millis() - pendingSetup.startedAt,
+      kWifiConnectTimeoutMs);
+
+  if (decision == PendingSetupDecision::Success) {
+    const bool fromAppMode = pendingSetup.fromAppMode;
     persistSuccessfulSetup();
     pendingSetup.active = false;
+    if (fromAppMode) {
+      setSetupStatus("Wi-Fi connected. Settings saved. Restart to apply device name or agent IP changes.");
+      stationConnectStarted = true;
+      return;
+    }
     setSetupStatus("Wi-Fi connected. Starting app...");
     Serial.printf("[SETUP] Wi-Fi validated; setup complete ip=%s\n",
         WiFi.localIP().toString().c_str());
@@ -921,8 +998,16 @@ void serviceSetupPortal() {
     startAppUi();
     return;
   }
-  if (millis() - pendingSetup.startedAt > kWifiConnectTimeoutMs) {
+  if (decision == PendingSetupDecision::Failure) {
+    const bool fromAppMode = pendingSetup.fromAppMode;
     pendingSetup.active = false;
+    if (fromAppMode) {
+      WiFi.disconnect(false, false);
+      restorePreviousNetwork();
+      setSetupStatus("Wi-Fi failed. Previous network restored.");
+      Serial.println("[SETUP] Wi-Fi validation failed; previous network restored");
+      return;
+    }
     WiFi.disconnect(false, false);
     WiFi.mode(WIFI_AP_STA);
     setSetupStatus("Wi-Fi failed. Portal still open.");
@@ -968,6 +1053,7 @@ void refreshSystemState() {
 }  // namespace
 
 namespace streamdeck {
+
 
 void appBegin() {
   Serial.begin(115200);
@@ -1019,7 +1105,11 @@ void appBegin() {
 void appLoop() {
   lv_timer_handler();
   if (setupQrNeedsDraw) drawSetupQr();
-  serviceSetupPortal();
+  if (bootMode == BootMode::Provisioning) serviceSetupPortal();
+  if (bootMode == BootMode::App) {
+    serviceSetupHttp();
+    servicePendingSetupResult();
+  }
   if (bootMode == BootMode::App) agentClient.loop();
   serviceOtaUpdate();
   serviceDisplayIdle();

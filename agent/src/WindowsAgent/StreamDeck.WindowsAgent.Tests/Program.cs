@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Windows.Forms;
 
 using StreamDeck.Protocol;
 using StreamDeck.Audio;
@@ -245,12 +246,14 @@ AssertTrue(WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isCo
 AssertTrue(!WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isConnected: true), "startup checkpoint coalesces a media update already triggered by the connection event");
 AssertTrue(!WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isConnected: false), "disconnect does not request a media update");
 AssertTrue(WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isConnected: true), "reconnect requests a fresh initial media update");
+
 AssertEqual(Color.FromArgb(246, 247, 249).ToArgb(), SettingsWindow.MapClientThemeColor(Color.FromArgb(13, 15, 20), "light").ToArgb(), "light theme maps the client background");
 AssertEqual(Color.FromArgb(13, 15, 20).ToArgb(), SettingsWindow.MapClientThemeColor(Color.FromArgb(246, 247, 249), "dark").ToArgb(), "dark theme restores the client background");
 AssertEqual(Color.FromArgb(246, 247, 249).ToArgb(), SettingsWindow.GetClientThemeBackground("light").ToArgb(), "light theme initializes the content host before attach");
 AssertTrue(SettingsWindow.GetNavigationWidth() >= 250, "settings navigation uses a wider hierarchy rail");
 AssertTrue(SettingsWindow.GetNavigationButtonSize().Height >= 42, "settings navigation buttons have comfortable target height");
 AssertTrue(SettingsWindow.GetClientContentPadding().Left >= 32, "settings content uses spacious page margins");
+AssertEqual(new Size(900, 620), SettingsWindow.GetMinimumWindowSizeForTests(), "settings window keeps the validated 900x620 minimum size");
 AssertTrue(SettingsWindow.ShouldPreserveClientThemeBackColor(SettingsWindow.DeviceColorPreviewTagForTests), "device color preview is not remapped by client theme");
 var minimumClientWidth = 900 - SettingsWindow.GetNavigationWidth() - SettingsWindow.GetClientContentPadding().Horizontal;
 var shortcutActionButtonWidths = new[] { "Add", "Edit", "Delete", "Move up", "Move down", "Import full config", "Export full config" }
@@ -313,10 +316,87 @@ var screenshotShortcutColumns = SettingsWindow.CalculateShortcutsColumnWidths(sc
 AssertTrue(SettingsWindow.ColumnWidthsFitAvailableWidth(minimumClientWidth, minimumShortcutColumns), "shortcut columns fit without a horizontal scrollbar at minimum width");
 AssertTrue(SettingsWindow.ColumnWidthsFitAvailableWidth(screenshotClientWidth, screenshotShortcutColumns), "shortcut columns fit without a horizontal scrollbar at screenshot width");
 AssertTrue(minimumShortcutColumns[3] >= 120, "shortcut target column keeps a usable ellipsis area at minimum width");
+var minimumRenderedShortcutListWidth = 538;
+var previousShortcutListContext = SynchronizationContext.Current;
+using (var shortcutListForm = new System.Windows.Forms.Form { ClientSize = new Size(minimumRenderedShortcutListWidth, 260), ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new Point(-2000, -2000) })
+using (var liveShortcutList = new System.Windows.Forms.ListView { View = System.Windows.Forms.View.Details, Dock = System.Windows.Forms.DockStyle.Fill })
+{
+    shortcutListForm.Controls.Add(liveShortcutList);
+    liveShortcutList.Items.Add(new ListViewItem(["Documentation", "docs", ShortcutActionTypes.OpenUrl, "https://example.com/docs"]));
+    liveShortcutList.Items.Add(new ListViewItem(["OBS record", "obs-record", ShortcutActionTypes.Hotkey, "CTRL+SHIFT+R"]));
+    shortcutListForm.Show();
+    System.Windows.Forms.Application.DoEvents();
+    SettingsWindow.ConfigureShortcutsColumns(liveShortcutList, liveShortcutList.ClientSize.Width);
+    System.Windows.Forms.Application.DoEvents();
+    var renderedShortcutColumnWidth = liveShortcutList.Columns.Cast<ColumnHeader>().Sum(column => column.Width);
+    AssertTrue(liveShortcutList.ClientSize.Width <= minimumRenderedShortcutListWidth, "shortcut list uses the rendered client width, not the outer bounds width");
+    AssertTrue(renderedShortcutColumnWidth < liveShortcutList.ClientSize.Width, "shortcut columns leave native ListView breathing room at the rendered minimum width");
+    AssertTrue(!SettingsWindow.ControlHasHorizontalScrollbarForTests(liveShortcutList), "shown shortcut list does not expose a horizontal scrollbar at the rendered 900x620 minimum width");
+}
+SynchronizationContext.SetSynchronizationContext(previousShortcutListContext);
+var previousSettingsShortcutsContext = SynchronizationContext.Current;
+var settingsPairingStore = Path.Combine(Path.GetTempPath(), $"streamdeck-settings-shortcuts-{Guid.NewGuid():N}.json");
+using (var settingsIcon = AppIconFactory.CreateIcon())
+await using (var settingsRuntime = new WindowsAgentRuntime(new AgentState(), new PairingApprovalService(settingsPairingStore), AgentOptions.FromArgs(["--mock"]), listenPortOverride: 0))
+await using (var settingsDashboard = new LocalDashboardServer(new AgentState()))
+using (var settingsWindow = new SettingsWindow(new AgentState(), settingsRuntime, settingsDashboard, new WindowsStartupService(AgentOptions.FromArgs(["--mock"])), new PairingApprovalService(settingsPairingStore), settingsIcon))
+{
+    settingsWindow.StartPosition = FormStartPosition.Manual;
+    settingsWindow.Location = new Point(-2000, -2000);
+    settingsWindow.ShowInTaskbar = false;
+    settingsWindow.Size = SettingsWindow.GetMinimumWindowSizeForTests();
+    settingsWindow.Show();
+    System.Windows.Forms.Application.DoEvents();
+    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Shortcuts").PerformClick();
+    System.Windows.Forms.Application.DoEvents();
+    settingsWindow.PerformLayout();
+    System.Windows.Forms.Application.DoEvents();
+    var shortcutsPageControls = FlattenControls(settingsWindow).Where(control => control.Visible).ToArray();
+    var shortcutsBody = shortcutsPageControls.OfType<Panel>().Single(panel => Equals(panel.Tag, "settings-page-body"));
+    var shortcutsFooter = shortcutsPageControls.OfType<FlowLayoutPanel>().Single(panel => Equals(panel.Tag, "settings-page-footer"));
+    var shortcutsLists = shortcutsPageControls.OfType<ListView>().ToArray();
+    var shortcutFooterButtons = shortcutsFooter.Controls.OfType<Button>().Where(button => button.Visible).ToArray();
+    AssertTrue(shortcutsLists.Any(list => string.Equals(list.AccessibleName, "Agent-side shortcuts", StringComparison.Ordinal)), "settings shortcuts page shows the Agent-side shortcuts list at minimum size");
+    AssertTrue(shortcutsBody.Bounds.Bottom <= shortcutsFooter.Bounds.Top, "shown settings shortcuts page body stays above the footer at 900x620");
+    AssertTrue(shortcutsFooter.Bounds.Bottom <= shortcutsFooter.Parent!.ClientSize.Height, "shown settings shortcuts page footer stays inside the page at 900x620");
+    foreach (var expectedButton in new[] { "Add", "Edit", "Delete", "Move up", "Move down", "Import full config", "Export full config" })
+    {
+        var button = shortcutFooterButtons.Single(candidate => candidate.Text == expectedButton);
+        var bounds = BoundsInClient(settingsWindow, button);
+        AssertTrue(button.Width >= 128 && button.Height >= SettingsWindow.GetActionButtonHeight(), $"settings shortcuts footer keeps {expectedButton} accessible at 900x620");
+        AssertTrue(bounds.Width > 0 && bounds.Height > 0 && settingsWindow.ClientRectangle.Contains(bounds), $"settings shortcuts footer renders {expectedButton} inside the shown window at 900x620");
+    }
+
+    AssertTrue(!SettingsWindow.ControlHasHorizontalScrollbarForTests(shortcutsBody), "shown settings shortcuts page body does not expose a horizontal scrollbar at 900x620");
+    AssertTrue(shortcutsLists.All(list => !SettingsWindow.ControlHasHorizontalScrollbarForTests(list)), "shown settings shortcuts page lists do not expose horizontal scrollbars at 900x620");
+    settingsWindow.CloseForExit();
+}
+SynchronizationContext.SetSynchronizationContext(previousSettingsShortcutsContext);
 var minimumClientHeight = 620 - SettingsWindow.GetClientContentPadding().Vertical;
 AssertTrue(SettingsWindow.PageLayoutHasScrollableBodyAndAccessibleFooterForTests(minimumClientWidth, minimumClientHeight, contentHeight: 980, shortcutActionButtonWidths), "shortcuts page keeps wrapped footer accessible while tall body scrolls at minimum size");
 AssertTrue(SettingsWindow.PageLayoutHasScrollableBodyAndAccessibleFooterForTests(minimumClientWidth, minimumClientHeight, contentHeight: 860, new[] { "Reconnect", "Restart", "Factory reset", "Forget device" }.Select(SettingsWindow.MeasureSettingsActionButtonWidth).ToArray()), "device page keeps safety actions accessible while tall body scrolls at minimum size");
 AssertTrue(SettingsWindow.PageLayoutHasScrollableBodyAndAccessibleFooterForTests(minimumClientWidth, minimumClientHeight, contentHeight: 760, Array.Empty<int>()), "appearance page keeps tall settings body independently scrollable at minimum size");
+AssertTrue(ShortcutEditorDialog.GetMinimumDialogSizeForTests().Width >= 620, "shortcut editor keeps enough width for labels and Browse action at minimum size");
+AssertTrue(ShortcutEditorDialog.GetMinimumDialogSizeForTests().Height >= 540, "shortcut editor keeps action help and Save/Cancel visible at minimum size");
+AssertTrue(ShortcutEditorDialog.GetFieldLabelWidthForTests() >= 126, "shortcut editor labels reserve stable readable width");
+AssertTrue(ShortcutEditorDialog.GetPrimaryButtonSizeForTests().Height >= 38, "shortcut editor Save and Cancel controls have comfortable keyboard focus targets");
+var previousShortcutEditorContext = SynchronizationContext.Current;
+using (var shortcutEditor = new ShortcutEditorDialog())
+{
+    AssertEqual(new Size(620, 540), shortcutEditor.MinimumSize, "shortcut editor enforces its tested minimum size");
+    AssertEqual("Add shortcut", shortcutEditor.AccessibleName, "shortcut editor exposes an accessible dialog name");
+    AssertContains("Agent-side shortcut", shortcutEditor.AccessibleDescription ?? string.Empty, "shortcut editor describes Agent-side shortcut semantics for assistive tech");
+    var editorControls = FlattenControls(shortcutEditor).ToArray();
+    AssertTrue(editorControls.OfType<System.Windows.Forms.TextBox>().All(control => !string.IsNullOrWhiteSpace(control.AccessibleName)), "shortcut editor text inputs have accessible names");
+    AssertTrue(editorControls.OfType<System.Windows.Forms.ComboBox>().All(control => !string.IsNullOrWhiteSpace(control.AccessibleName)), "shortcut editor combo inputs have accessible names");
+    AssertTrue(editorControls.OfType<System.Windows.Forms.Button>().Any(button => button.Text == "Save" && button.DialogResult == DialogResult.OK), "shortcut editor keeps Save as the OK action");
+    AssertTrue(editorControls.OfType<System.Windows.Forms.Button>().Any(button => button.Text == "Cancel" && button.DialogResult == DialogResult.Cancel), "shortcut editor keeps Cancel as the cancel action");
+    AssertTrue(ReferenceEquals(shortcutEditor.AcceptButton, editorControls.OfType<System.Windows.Forms.Button>().First(button => button.Text == "Save")), "shortcut editor Enter key activates Save");
+    AssertTrue(ReferenceEquals(shortcutEditor.CancelButton, editorControls.OfType<System.Windows.Forms.Button>().First(button => button.Text == "Cancel")), "shortcut editor Escape key activates Cancel");
+    AssertShortcutEditorLayout(shortcutEditor, new Size(620, 540), "minimum");
+    AssertShortcutEditorLayout(shortcutEditor, new Size(720, 600), "regular");
+}
+SynchronizationContext.SetSynchronizationContext(previousShortcutEditorContext);
 var liveOverview = SettingsWindow.CreateLiveInfoValues("Overview", new AgentStatusSnapshot(
     "connected", "device-1", "CYD", "192.168.1.8:1234", 8765, 5000, "live", ["192.168.1.10"]));
 AssertEqual("Connected", liveOverview["CYD"], "overview live device state");
@@ -776,6 +856,73 @@ static void AssertThrows<TException>(Action action, string label)
 
     throw new InvalidOperationException($"{label}: expected {typeof(TException).Name}");
 }
+
+static void AssertShortcutEditorLayout(ShortcutEditorDialog dialog, Size size, string label)
+{
+    dialog.StartPosition = FormStartPosition.Manual;
+    dialog.Location = new Point(-2000, -2000);
+    dialog.Size = size;
+    if (!dialog.Visible)
+    {
+        dialog.Show();
+    }
+
+    System.Windows.Forms.Application.DoEvents();
+    dialog.PerformLayout();
+    System.Windows.Forms.Application.DoEvents();
+
+    var controls = FlattenControls(dialog).Where(control => control.Visible).ToArray();
+    var essentials = new System.Windows.Forms.Control[]
+    {
+        controls.Single(control => control.AccessibleName == "Shortcut ID"),
+        controls.Single(control => control.AccessibleName == "Shortcut name"),
+        controls.Single(control => control.AccessibleName == "Shortcut icon"),
+        controls.Single(control => control.AccessibleName == "Shortcut action"),
+        controls.Single(control => control.AccessibleName == "Shortcut target"),
+        controls.Single(control => control.AccessibleName == "Shortcut arguments"),
+        controls.Single(control => control.AccessibleName == "Browse for shortcut target"),
+        controls.Single(control => control.AccessibleName == "Shortcut action help"),
+        controls.OfType<System.Windows.Forms.Button>().Single(button => button.Text == "Save"),
+        controls.OfType<System.Windows.Forms.Button>().Single(button => button.Text == "Cancel")
+    };
+
+    var bounds = essentials.ToDictionary(control => control, control => BoundsInClient(dialog, control));
+    foreach (var (control, rectangle) in bounds)
+    {
+        AssertTrue(rectangle.Width > 0 && rectangle.Height > 0, $"shortcut editor {label} {DescribeControl(control)} has positive bounds");
+        AssertTrue(dialog.ClientRectangle.Contains(rectangle), $"shortcut editor {label} {DescribeControl(control)} remains inside the client area");
+    }
+
+    for (var left = 0; left < essentials.Length; left++)
+    {
+        for (var right = left + 1; right < essentials.Length; right++)
+        {
+            AssertTrue(!bounds[essentials[left]].IntersectsWith(bounds[essentials[right]]), $"shortcut editor {label} {DescribeControl(essentials[left])} does not overlap {DescribeControl(essentials[right])}");
+        }
+    }
+}
+
+static IEnumerable<System.Windows.Forms.Control> FlattenControls(System.Windows.Forms.Control root)
+{
+    foreach (System.Windows.Forms.Control child in root.Controls)
+    {
+        yield return child;
+        foreach (var descendant in FlattenControls(child))
+        {
+            yield return descendant;
+        }
+    }
+}
+
+static Rectangle BoundsInClient(System.Windows.Forms.Form form, System.Windows.Forms.Control control)
+{
+    var screenBounds = control.RectangleToScreen(control.ClientRectangle);
+    return new Rectangle(form.PointToClient(screenBounds.Location), screenBounds.Size);
+}
+
+static string DescribeControl(System.Windows.Forms.Control control) => string.IsNullOrWhiteSpace(control.AccessibleName)
+    ? $"{control.GetType().Name} '{control.Text}'"
+    : control.AccessibleName;
 
 sealed class TestMediaController : IHostMediaController
 {

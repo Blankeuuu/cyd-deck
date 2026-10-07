@@ -2,16 +2,22 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <initializer_list>
 
 #include "network/cover_art.h"
 
 namespace streamdeck {
 constexpr std::size_t kMaxShortcutIdLength = 64;
-enum class Page : uint8_t { Media, Shortcuts, Pc, Info };
+constexpr uint8_t kPageCount = 4;
+enum class Page : uint8_t { Media = 0, Shortcuts = 1, Pc = 2, Info = 3 };
 enum class IntentType : uint8_t { Previous, TogglePlayback, Next, SetVolume, RunShortcut, Recalibrate, RestartDevice, FactoryReset, SettingsUpdated, RefreshUi };
 struct Intent { IntentType type; int16_t value; constexpr Intent(IntentType t = IntentType::Previous, int16_t v = 0) : type(t), value(v) {} };
 struct MediaState { char title[48] = "No track"; char artist[48] = "Waiting for PC"; char album[48] = ""; char coverId[kCoverIdLength + 1] = ""; CoverFetchState cover; uint32_t positionMs = 0; uint32_t durationMs = 0; bool playing = false; };
+struct DisplayIdleDecision { bool off = false; bool dimmed = false; bool resetIdleTimer = false; };
+enum class PendingSetupDecision : uint8_t { Wait, Success, Failure };
 struct AudioState { uint8_t reportedVolume = 0; bool available = false; };
 struct SystemState { uint32_t freeHeap = 0; uint32_t minHeap = 0; uint32_t largestBlock = 0; };
 struct StorageState { bool mounted = false; bool ready = false; uint32_t totalMb = 0; uint32_t freeMb = 0; char status[32] = "not started"; };
@@ -46,8 +52,8 @@ struct AppearanceState {
   uint8_t dimBrightness = 20;
   uint32_t screenOffAfterSeconds = 1800;
   bool wakeOnTouch = true;
-  Page pageOrder[4] = {Page::Media, Page::Shortcuts, Page::Pc, Page::Info};
-  bool pageVisible[4] = {true, true, true, true};
+  Page pageOrder[kPageCount] = {Page::Media, Page::Shortcuts, Page::Pc, Page::Info};
+  bool pageVisible[kPageCount] = {true, true, true, true};
 };
 struct UiState { Page page = Page::Media; bool volumeOpen = false; };
 struct AppState {
@@ -93,12 +99,12 @@ inline void normalizeAppearance(AppearanceState& appearance) {
   appearance.dimAfterSeconds = clampSeconds(appearance.dimAfterSeconds, 0, 86400);
   appearance.screenOffAfterSeconds = clampSeconds(appearance.screenOffAfterSeconds, 0, 86400);
 
-  bool seen[4] = {};
-  Page normalized[4] = {Page::Media, Page::Shortcuts, Page::Pc, Page::Info};
+  bool seen[kPageCount] = {};
+  Page normalized[kPageCount] = {Page::Media, Page::Shortcuts, Page::Pc, Page::Info};
   uint8_t count = 0;
   for (Page page : appearance.pageOrder) {
     const uint8_t index = pageIndex(page);
-    if (index < 4 && !seen[index]) {
+    if (index < kPageCount && !seen[index]) {
       normalized[count++] = page;
       seen[index] = true;
     }
@@ -107,9 +113,130 @@ inline void normalizeAppearance(AppearanceState& appearance) {
     const uint8_t index = pageIndex(page);
     if (!seen[index]) normalized[count++] = page;
   }
-  for (uint8_t i = 0; i < 4; ++i) appearance.pageOrder[i] = normalized[i];
+  for (uint8_t i = 0; i < kPageCount; ++i) appearance.pageOrder[i] = normalized[i];
   appearance.pageVisible[pageIndex(Page::Info)] = true;
 }
+
+inline DisplayIdleDecision computeDisplayIdleDecision(const AppState& state, uint32_t idleSeconds,
+    bool currentOff, bool currentDimmed) {
+  if (state.connection.agentConnected) {
+    DisplayIdleDecision decision;
+    decision.off = false;
+    decision.dimmed = false;
+    decision.resetIdleTimer = currentOff || currentDimmed || idleSeconds > 0;
+    return decision;
+  }
+  DisplayIdleDecision decision;
+  decision.off = state.appearance.screenOffAfterSeconds > 0 &&
+      idleSeconds >= state.appearance.screenOffAfterSeconds;
+  decision.dimmed = !decision.off && state.appearance.dimAfterSeconds > 0 &&
+      idleSeconds >= state.appearance.dimAfterSeconds;
+  return decision;
+}
+
+inline PendingSetupDecision decidePendingSetupResult(bool connected, bool ssidMatches,
+    uint32_t elapsedMs, uint32_t timeoutMs) {
+  if (connected && ssidMatches) return PendingSetupDecision::Success;
+  if (elapsedMs >= timeoutMs) return PendingSetupDecision::Failure;
+  return PendingSetupDecision::Wait;
+}
+
+inline bool asciiEqualsIgnoreCase(char a, char b) {
+  return std::tolower(static_cast<unsigned char>(a)) ==
+      std::tolower(static_cast<unsigned char>(b));
+}
+
+inline bool startsWithIgnoreCase(const char* value, const char* prefix) {
+  if (!value || !prefix) return false;
+  while (*prefix) {
+    if (!*value || !asciiEqualsIgnoreCase(*value, *prefix)) return false;
+    ++value;
+    ++prefix;
+  }
+  return true;
+}
+
+struct HttpContentLength {
+  bool present = false;
+  bool valid = true;
+  std::size_t length = 0;
+};
+
+enum class HttpRequestReadDecision : uint8_t { Incomplete, Complete, Invalid };
+
+inline HttpContentLength parseHttpContentLength(const char* headers,
+    std::size_t maxContentLength) {
+  HttpContentLength result;
+  if (!headers) return result;
+  const char* line = headers;
+  while (*line) {
+    const char* lineEnd = std::strstr(line, "\015\012");
+    const std::size_t lineLength = lineEnd
+        ? static_cast<std::size_t>(lineEnd - line)
+        : std::strlen(line);
+    if (lineLength == 0) return result;
+    if (startsWithIgnoreCase(line, "Content-Length:")) {
+      const char* value = line + std::strlen("Content-Length:");
+      while (*value == ' ' || *value == '\t') ++value;
+      if (value >= line + lineLength || *value < '0' || *value > '9') {
+        result.valid = false;
+        return result;
+      }
+      std::size_t length = 0;
+      while (*value >= '0' && *value <= '9') {
+        const std::size_t digit = static_cast<std::size_t>(*value - '0');
+        if (digit > maxContentLength || length > (maxContentLength - digit) / 10) {
+          result.valid = false;
+          return result;
+        }
+        length = length * 10 + (*value - '0');
+        ++value;
+      }
+      while (value < line + lineLength && (*value == ' ' || *value == '\t')) ++value;
+      if (value < line + lineLength) {
+        result.valid = false;
+        return result;
+      }
+      if (result.present && result.length != length) {
+        result.valid = false;
+        return result;
+      }
+      result.present = true;
+      result.length = length;
+    }
+    if (!lineEnd) break;
+    line = lineEnd + 2;
+  }
+  return result;
+}
+
+inline int parseHttpContentLength(const char* headers) {
+  const HttpContentLength parsed = parseHttpContentLength(headers,
+      static_cast<std::size_t>(2147483647));
+  return parsed.valid && parsed.present ? static_cast<int>(parsed.length) : 0;
+}
+
+inline const char* findHttpHeaderEnd(const char* request) {
+  return request ? std::strstr(request, "\015\012\015\012") : nullptr;
+}
+
+inline HttpRequestReadDecision decideHttpRequestRead(const char* request,
+    std::size_t requestLength, std::size_t maxContentLength) {
+  const char* headerEnd = findHttpHeaderEnd(request);
+  if (!headerEnd) return HttpRequestReadDecision::Incomplete;
+  const std::size_t headerBytes = static_cast<std::size_t>(headerEnd - request) + 4;
+  HttpContentLength contentLength = parseHttpContentLength(request, maxContentLength);
+  if (!contentLength.valid) return HttpRequestReadDecision::Invalid;
+  if (!contentLength.present && startsWithIgnoreCase(request, "POST "))
+    return HttpRequestReadDecision::Invalid;
+  if (!contentLength.present) return HttpRequestReadDecision::Complete;
+  if (requestLength > headerBytes + contentLength.length)
+    return HttpRequestReadDecision::Invalid;
+  return requestLength >= headerBytes + contentLength.length
+      ? HttpRequestReadDecision::Complete
+      : HttpRequestReadDecision::Incomplete;
+}
+
 class IntentQueue {
  public:
   bool push(Intent intent) { if (size_ == Capacity) return false; items_[tail_] = intent; tail_=(tail_+1)%Capacity; ++size_; return true; }

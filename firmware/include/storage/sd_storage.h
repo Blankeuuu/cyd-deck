@@ -5,6 +5,7 @@
 #include <SPI.h>
 
 #include "storage/sd_paths.h"
+#include "storage/paged_index.h"
 
 namespace streamdeck::storage {
 
@@ -50,6 +51,7 @@ class SdStorage {
   bool pruneFor(std::size_t incomingBytes);
   void refreshCapacity();
   void upsertCover(const char* coverId, uint32_t size);
+  bool ensureCoverSlot(const char* coverId);
   void eraseIndexEntry(std::size_t index);
   int findCover(const char* coverId) const;
   uint32_t nextUseTick();
@@ -57,7 +59,7 @@ class SdStorage {
   SPIClass sdBus_{VSPI};
   FS* fs_ = nullptr;
   SdStorageStatus status_{};
-  CoverIndexEntry entries_[kMaxIndexEntries]{};
+  PagedIndex<CoverIndexEntry, kMaxIndexEntries> entries_;
   std::size_t entryCount_ = 0;
   uint32_t lastUseTick_ = 0;
 };

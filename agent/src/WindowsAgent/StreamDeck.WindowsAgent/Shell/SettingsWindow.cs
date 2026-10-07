@@ -35,15 +35,20 @@ public sealed class SettingsWindow : Form
     private const int ActionButtonMinimumWidth = 128;
     private const int ActionButtonHorizontalMargin = 10;
     private const int ActionButtonVerticalMargin = 10;
+    private const int MinimumWindowWidth = 900;
+    private const int MinimumWindowHeight = 620;
     private const int AppearanceMinimumSliderTrackWidth = 150;
     private const int AppearanceMaximumSliderTrackWidth = 300;
     private const int ColorSwatchSize = 26;
     private const int ColorPickerRowHeight = 40;
     private const int ListVerticalScrollbarAllowance = 24;
+    private const int ShortcutsListScrollbarAllowance = 48;
     private const string PageBodyTag = "settings-page-body";
     private const string PageFooterTag = "settings-page-footer";
     private const string DeviceColorPreviewTag = "device-color-preview";
     private const string DeviceColorPickerTag = "device-color-picker";
+    private static readonly string[] DefaultAppearancePageOrder = ["media", "shortcuts", "pc", "info"];
+    private static readonly HashSet<string> ForcedVisibleAppearancePages = new(["info"], StringComparer.Ordinal);
     internal const string ShortcutsSourceOfTruthText = "Agent-side shortcut catalog. Firmware does not preload shortcuts; the device displays up to the first 6 shortcuts.";
     internal const string EmptyShortcutsText = "No shortcuts configured on this PC. Click Add to create the first Agent-side shortcut; there is no device preload to import.";
     internal const string PendingShortcutImportsText = "Device-reported shortcuts needing configuration. These drafts are inactive and are not executable or synced until you configure and save a valid Agent-side action.";
@@ -56,10 +61,17 @@ public sealed class SettingsWindow : Form
     private static Color TextPrimary => clientLightTheme ? LightTextPrimary : DarkTextPrimary;
     private static Color TextMuted => clientLightTheme ? LightTextMuted : DarkTextMuted;
     private static Color Border => clientLightTheme ? LightBorder : DarkBorder;
-    private static int MinimumSettingsClientWidth => 900 - NavigationWidth - WindowContentPadding.Horizontal;
+    private static int MinimumSettingsClientWidth => MinimumWindowWidth - NavigationWidth - WindowContentPadding.Horizontal;
 
     [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
     private static extern int SetWindowTheme(IntPtr hwnd, string? pszSubAppName, string? pszSubIdList);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, [MarshalAs(UnmanagedType.Bool)] bool bShow);
 
     private readonly AgentState state;
     private readonly WindowsAgentRuntime runtime;
@@ -102,12 +114,14 @@ public sealed class SettingsWindow : Form
 
         Text = "PC Dock";
         Icon = shellIcon;
-        MinimumSize = new Size(900, 620);
+        MinimumSize = new Size(MinimumWindowWidth, MinimumWindowHeight);
         Size = new Size(1040, 720);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Background;
         ForeColor = TextPrimary;
         Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
+        AccessibleName = "PC Dock settings";
+        AccessibleDescription = "Configure the local Windows Agent, connected CYD device, appearance and Agent-side shortcuts.";
 
         Controls.Add(CreateLayout());
         state.Changed += HandleStateChanged;
@@ -298,6 +312,7 @@ public sealed class SettingsWindow : Form
         return panel;
     }
 
+
     private Control CreateDevicePage()
     {
         var snapshot = state.Snapshot();
@@ -379,8 +394,15 @@ public sealed class SettingsWindow : Form
         };
         var list = CreateThemedListView();
         list.Dock = DockStyle.Fill;
+        list.AccessibleName = "Agent-side shortcuts";
+        list.AccessibleDescription = "Saved shortcuts available on this PC. The device displays up to the first six labels and IDs.";
         ConfigureShortcutsColumns(list, MinimumSettingsClientWidth);
-        list.SizeChanged += (_, _) => ConfigureShortcutsColumns(list, list.ClientSize.Width);
+        SuppressHorizontalListScrollbar(list);
+        list.SizeChanged += (_, _) =>
+        {
+            ConfigureShortcutsColumns(list, list.ClientSize.Width);
+            SuppressHorizontalListScrollbar(list);
+        };
         var emptyState = new Label
         {
             Dock = DockStyle.Fill,
@@ -456,6 +478,8 @@ public sealed class SettingsWindow : Form
         var list = CreateThemedListView();
         list.Dock = DockStyle.Fill;
         list.BorderStyle = BorderStyle.FixedSingle;
+        list.AccessibleName = "Inactive device-reported shortcuts";
+        list.AccessibleDescription = "Device-reported shortcut drafts that require configuration before they can run on this PC.";
         list.Columns.Add("Device shortcut", 220);
         list.Columns.Add("Reported action", 220);
         foreach (var pending in pendingImports)
@@ -470,12 +494,8 @@ public sealed class SettingsWindow : Form
             FlowDirection = FlowDirection.RightToLeft,
             BackColor = Background
         };
-        var configureButton = new Button
-        {
-            Text = "Configure selected",
-            Width = 150,
-            Height = 30
-        };
+        var configureButton = CreateNeutralButton("Configure selected");
+        configureButton.AccessibleDescription = "Open the shortcut editor for the selected inactive device-reported shortcut.";
         configureButton.Click += async (_, _) => await ConfigurePendingShortcutImportAsync(list, shortcutsList, shortcuts, emptyState, loadResult).ConfigureAwait(true);
         actions.Controls.Add(configureButton);
 
@@ -821,63 +841,75 @@ public sealed class SettingsWindow : Form
         {
             AutoSize = true,
             BackColor = Background,
-            ColumnCount = 2
+            ColumnCount = 3
         };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
 
-        var list = new CheckedListBox
+        var list = new ListBox
         {
-            Width = 240,
+            Width = 200,
             Height = 118,
-            CheckOnClick = true,
             BackColor = Surface,
             ForeColor = TextPrimary,
             BorderStyle = BorderStyle.FixedSingle
         };
 
-        var moving = false;
+        var visibilityPanel = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            BackColor = Background,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false
+        };
+
         void RefreshPageList(int selectedIndex)
         {
-            moving = true;
             list.Items.Clear();
             foreach (var page in settings.PageOrder)
             {
-                list.Items.Add(page, settings.PageVisibility.Contains(page, StringComparer.Ordinal));
+                list.Items.Add(ForcedVisibleAppearancePages.Contains(page) ? $"{page} (always visible)" : page);
             }
 
             if (list.Items.Count > 0)
             {
                 list.SelectedIndex = Math.Clamp(selectedIndex, 0, list.Items.Count - 1);
             }
-
-            moving = false;
         }
 
-        void SaveVisiblePages()
+        void RefreshVisibilityControls()
         {
-            settings.PageVisibility = settings.PageOrder
-                .Where(page => string.Equals(page, "info", StringComparison.Ordinal) || list.CheckedItems.Cast<string>().Contains(page, StringComparer.Ordinal))
-                .ToArray();
-            QueueAppearanceSave();
+            visibilityPanel.Controls.Clear();
+            foreach (var page in settings.PageOrder.Where(page => !ForcedVisibleAppearancePages.Contains(page)))
+            {
+                var check = new CheckBox
+                {
+                    Text = page,
+                    Checked = settings.PageVisibility.Contains(page, StringComparer.Ordinal),
+                    AutoSize = true,
+                    BackColor = Background,
+                    ForeColor = TextPrimary
+                };
+                check.CheckedChanged += (_, _) =>
+                {
+                    var visible = settings.PageVisibility.ToHashSet(StringComparer.Ordinal);
+                    if (check.Checked)
+                    {
+                        visible.Add(page);
+                    }
+                    else
+                    {
+                        visible.Remove(page);
+                    }
+
+                    visible.UnionWith(ForcedVisibleAppearancePages);
+                    settings.PageVisibility = settings.PageOrder.Where(visible.Contains).ToArray();
+                    QueueAppearanceSave();
+                };
+                visibilityPanel.Controls.Add(check);
+            }
         }
-
-        list.ItemCheck += (_, args) =>
-        {
-            if (moving)
-            {
-                return;
-            }
-
-            var page = (string)list.Items[args.Index];
-            if (string.Equals(page, "info", StringComparison.Ordinal) && args.NewValue != CheckState.Checked)
-            {
-                args.NewValue = CheckState.Checked;
-                return;
-            }
-
-            BeginInvoke((Action)SaveVisiblePages);
-        };
 
         var buttons = new FlowLayoutPanel { AutoSize = true, BackColor = Background, FlowDirection = FlowDirection.TopDown, WrapContents = false };
         var up = CreateActionButton("Up");
@@ -897,6 +929,7 @@ public sealed class SettingsWindow : Form
                 .Where(page => settings.PageVisibility.Contains(page, StringComparer.Ordinal))
                 .ToArray();
             RefreshPageList(target);
+            RefreshVisibilityControls();
             QueueAppearanceSave();
         }
 
@@ -906,7 +939,9 @@ public sealed class SettingsWindow : Form
         buttons.Controls.Add(down);
         panel.Controls.Add(list, 0, 0);
         panel.Controls.Add(buttons, 1, 0);
+        panel.Controls.Add(visibilityPanel, 2, 0);
         RefreshPageList(0);
+        RefreshVisibilityControls();
         AddControlRow(form, label, panel);
     }
 
@@ -948,6 +983,56 @@ public sealed class SettingsWindow : Form
         return color;
     }
 
+    internal static string[] NormalizeAppearancePageOrderForTests(IReadOnlyList<string> pages)
+    {
+        return NormalizeAppearancePageOrder(pages);
+    }
+
+    internal static string[] NormalizeAppearancePageVisibilityForTests(IReadOnlyList<string> pageOrder, IReadOnlyList<string> pageVisibility)
+    {
+        return NormalizeAppearancePageVisibility(pageOrder, pageVisibility);
+    }
+
+    private static string[] NormalizeAppearancePageOrder(IReadOnlyList<string> pages)
+    {
+        var normalized = new List<string>();
+        foreach (var page in pages)
+        {
+            if (DefaultAppearancePageOrder.Contains(page, StringComparer.Ordinal) && !normalized.Contains(page, StringComparer.Ordinal))
+            {
+                normalized.Add(page);
+            }
+        }
+
+        foreach (var page in DefaultAppearancePageOrder)
+        {
+            if (normalized.Contains(page, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            var defaultIndex = Array.IndexOf(DefaultAppearancePageOrder, page);
+            var insertIndex = normalized.FindIndex(existing => Array.IndexOf(DefaultAppearancePageOrder, existing) > defaultIndex);
+            if (insertIndex < 0)
+            {
+                normalized.Add(page);
+            }
+            else
+            {
+                normalized.Insert(insertIndex, page);
+            }
+        }
+
+        return normalized.ToArray();
+    }
+
+    private static string[] NormalizeAppearancePageVisibility(IReadOnlyList<string> pageOrder, IReadOnlyList<string> pageVisibility)
+    {
+        var visible = new HashSet<string>(pageVisibility.Where(page => DefaultAppearancePageOrder.Contains(page, StringComparer.Ordinal)), StringComparer.Ordinal);
+        visible.UnionWith(ForcedVisibleAppearancePages);
+        return pageOrder.Where(visible.Contains).ToArray();
+    }
+
     internal static Panel CreateThemedContentPanel(string theme)
     {
         return new Panel
@@ -961,6 +1046,8 @@ public sealed class SettingsWindow : Form
     internal static Padding GetClientContentPadding() => WindowContentPadding;
 
     internal static int GetNavigationWidth() => NavigationWidth;
+
+    internal static Size GetMinimumWindowSizeForTests() => new(MinimumWindowWidth, MinimumWindowHeight);
 
     internal static Size GetNavigationButtonSize() => new(NavigationButtonWidth, NavigationButtonHeight);
 
@@ -1151,8 +1238,19 @@ public sealed class SettingsWindow : Form
             Tag = PageBodyTag,
             Padding = new Padding(0, 0, 12, 0)
         };
+        DisableHorizontalAutoScroll(panel);
+        panel.SizeChanged += (_, _) => DisableHorizontalAutoScroll(panel);
+        panel.ControlAdded += (_, _) => DisableHorizontalAutoScroll(panel);
         ApplySupportedScrollTheme(panel);
         return panel;
+    }
+
+    private static void DisableHorizontalAutoScroll(Panel panel)
+    {
+        panel.AutoScrollMinSize = new Size(0, panel.AutoScrollMinSize.Height);
+        panel.HorizontalScroll.Enabled = false;
+        panel.HorizontalScroll.Visible = false;
+        panel.HorizontalScroll.Maximum = 0;
     }
 
     private static void AddPageBodyControl(Control page, Control control)
@@ -1164,7 +1262,7 @@ public sealed class SettingsWindow : Form
     {
         footer.Tag = PageFooterTag;
         page.Controls.Add(footer);
-        footer.BringToFront();
+        footer.SendToBack();
     }
 
     private static Panel FindPageBody(Control page)
@@ -1284,7 +1382,7 @@ public sealed class SettingsWindow : Form
 
     internal static int[] CalculateShortcutsColumnWidths(int availableWidth)
     {
-        var width = Math.Max(360, availableWidth - ListVerticalScrollbarAllowance);
+        var width = Math.Max(360, availableWidth - ShortcutsListScrollbarAllowance);
         var id = Math.Clamp(width / 5, 92, 132);
         var action = Math.Clamp(width / 5, 104, 138);
         var name = Math.Clamp(width / 4, 120, 170);
@@ -1310,6 +1408,23 @@ public sealed class SettingsWindow : Form
     internal static void ConfigureShortcutsColumns(ListView list, int availableWidth)
     {
         SetListColumns(list, ["Name", "ID", "Action", "Target"], CalculateShortcutsColumnWidths(availableWidth));
+        SuppressHorizontalListScrollbar(list);
+    }
+
+    private static void SuppressHorizontalListScrollbar(ListView list)
+    {
+        const int sbHorz = 0;
+        if (list.IsHandleCreated)
+        {
+            ShowScrollBar(list.Handle, sbHorz, false);
+        }
+    }
+
+    internal static bool ControlHasHorizontalScrollbarForTests(Control control)
+    {
+        const int gwlStyle = -16;
+        const int wsHscroll = 0x00100000;
+        return (GetWindowLongPtr(control.Handle, gwlStyle).ToInt64() & wsHscroll) != 0;
     }
 
     private static void SetListColumns(ListView list, string[] names, int[] widths)
@@ -2034,7 +2149,7 @@ public sealed class SettingsWindow : Form
 
         try
         {
-            SaveAppearanceConfiguration(settings.EnsureInfoVisible());
+            SaveAppearanceConfiguration(settings.EnsureForcedPagesVisible());
         }
         catch (Exception exception)
         {
@@ -2048,7 +2163,7 @@ public sealed class SettingsWindow : Form
             return;
         }
 
-        var applied = await TryApplyAppearanceAsync(settings.EnsureInfoVisible()).ConfigureAwait(true);
+        var applied = await TryApplyAppearanceAsync(settings.EnsureForcedPagesVisible()).ConfigureAwait(true);
         if (appearanceStatusLabel is not null)
         {
             appearanceStatusLabel.ForeColor = applied ? TextMuted : Color.Khaki;
@@ -2063,7 +2178,7 @@ public sealed class SettingsWindow : Form
         var defaults = AppearanceState.Default;
         try
         {
-            return AppearanceState.FromConfiguration(LoadConfiguration().Appearance ?? new AppearanceConfiguration()).EnsureInfoVisible();
+            return AppearanceState.FromConfiguration(LoadConfiguration().Appearance ?? new AppearanceConfiguration()).EnsureForcedPagesVisible();
         }
         catch (Exception exception)
         {
@@ -2398,8 +2513,8 @@ public sealed class SettingsWindow : Form
             Accent = "#D43B48",
             Background = "#101216",
             ButtonStyle = "rounded",
-            PageOrder = ["media", "pc", "shortcuts", "info"],
-            PageVisibility = ["media", "pc", "shortcuts", "info"],
+            PageOrder = DefaultAppearancePageOrder.ToArray(),
+            PageVisibility = DefaultAppearancePageOrder.ToArray(),
             Brightness = 70,
             DimAfterSec = 300,
             DimBrightness = 20,
@@ -2427,8 +2542,8 @@ public sealed class SettingsWindow : Form
                 Accent = configuration.Accent,
                 Background = configuration.Background,
                 ButtonStyle = configuration.ButtonStyle,
-                PageOrder = configuration.PageOrder.ToArray(),
-                PageVisibility = configuration.PageVisibility.ToArray(),
+                PageOrder = NormalizeAppearancePageOrder(configuration.PageOrder),
+                PageVisibility = NormalizeAppearancePageVisibility(NormalizeAppearancePageOrder(configuration.PageOrder), configuration.PageVisibility),
                 Brightness = configuration.Brightness,
                 DimAfterSec = configuration.DimAfterSec,
                 DimBrightness = configuration.DimBrightness,
@@ -2437,17 +2552,10 @@ public sealed class SettingsWindow : Form
             };
         }
 
-        public AppearanceState EnsureInfoVisible()
+        public AppearanceState EnsureForcedPagesVisible()
         {
-            if (!PageOrder.Contains("info", StringComparer.Ordinal))
-            {
-                PageOrder = [..PageOrder, "info"];
-            }
-
-            if (!PageVisibility.Contains("info", StringComparer.Ordinal))
-            {
-                PageVisibility = [..PageVisibility, "info"];
-            }
+            PageOrder = NormalizeAppearancePageOrder(PageOrder);
+            PageVisibility = NormalizeAppearancePageVisibility(PageOrder, PageVisibility);
 
             return this;
         }
@@ -2460,8 +2568,8 @@ public sealed class SettingsWindow : Form
                 Accent = Accent,
                 Background = Background,
                 ButtonStyle = ButtonStyle,
-                PageOrder = PageOrder,
-                PageVisibility = PageVisibility,
+                PageOrder = NormalizeAppearancePageOrder(PageOrder),
+                PageVisibility = NormalizeAppearancePageVisibility(NormalizeAppearancePageOrder(PageOrder), PageVisibility),
                 Brightness = Brightness,
                 DimAfterSec = DimAfterSec,
                 DimBrightness = DimBrightness,

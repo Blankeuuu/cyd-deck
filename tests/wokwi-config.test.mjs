@@ -43,6 +43,19 @@ test('Wokwi uses a simulator-only app build and bypasses physical onboarding', (
   assert.match(app, /\[WOKWI\] APP_UI_READY/);
 });
 
+test('Web config sockets start only after Wi-Fi stack initialization', () => {
+  const app = readProjectFile('firmware/src/ui/app.cpp');
+  const startWebConfigServer = app.match(/void startWebConfigServer\(bool provisioningMode\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.match(startWebConfigServer, /if \(provisioningMode\) \{[\s\S]*?WiFi\.softAP\([\s\S]*?setupServer\.begin\(\)/);
+  assert.ok(
+    startWebConfigServer.indexOf('WiFi.softAP(') < startWebConfigServer.indexOf('setupServer.begin()'),
+    'provisioning AP must be created before setupServer.begin() opens a socket',
+  );
+
+  const startAppUi = app.match(/void startAppUi\(\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.match(startAppUi, /setupSettings\.wifiSsid\.length\(\) > 0[\s\S]*?startWebConfigServer\(false\)/);
+});
+
 test('Wokwi script converts its timeout seconds to CLI milliseconds', () => {
   const script = readProjectFile('scripts/test-wokwi.ps1');
   assert.match(script, /\$timeoutMilliseconds\s*=\s*\$TimeoutSeconds\s*\*\s*1000/);

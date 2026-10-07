@@ -69,6 +69,9 @@ bool coverIdFromFileName(const char* name, char* out) {
 }  // namespace
 
 bool SdStorage::begin() {
+  entries_.truncate(0);
+  entryCount_ = 0;
+  lastUseTick_ = 0;
   status_ = {};
   status_.message = "mounting";
   sdBus_.begin(board::sdSclk, board::sdMiso, board::sdMosi, board::sdCs);
@@ -88,7 +91,9 @@ bool SdStorage::begin() {
   }
 
   loadIndex();
+  if (!status_.ready) return false;
   reconcileIndexFromDirectory();
+  if (!status_.ready) return false;
   const bool indexReady = saveIndex();
   status_.message = indexReady ? "mounted; storage ready" : "mounted; cover index unavailable";
   return true;
@@ -122,6 +127,7 @@ bool SdStorage::hasCover(const char* coverId) {
     return false;
   }
 
+  if (!ensureCoverSlot(coverId)) return false;
   upsertCover(coverId, static_cast<uint32_t>(size));
   saveIndex();
   return true;
@@ -140,6 +146,7 @@ bool SdStorage::writeCover(const char* coverId, const uint8_t* jpeg, std::size_t
     status_.message = "cover cache prune failed";
     return false;
   }
+  if (!ensureCoverSlot(coverId)) return false;
 
   char path[kMaxCoverPathLength]{};
   char tempPath[kMaxCoverPathLength]{};
@@ -248,6 +255,10 @@ bool SdStorage::commitCoverTemp(const char* coverId, std::size_t length) {
     status_.message = "cover cache prune failed";
     return false;
   }
+  if (!ensureCoverSlot(coverId)) {
+    discardCoverTemp(coverId);
+    return false;
+  }
   char path[kMaxCoverPathLength]{};
   char tempPath[kMaxCoverPathLength]{};
   if (!makeCoverPath(coverId, path, sizeof(path)) ||
@@ -336,6 +347,7 @@ bool SdStorage::ensureDirectory(const char* path) {
 }
 
 bool SdStorage::loadIndex() {
+  entries_.truncate(0);
   entryCount_ = 0;
   lastUseTick_ = 0;
   File file = fs_->open(kIndexPath, FILE_READ);
@@ -353,6 +365,12 @@ bool SdStorage::loadIndex() {
     if (sscanf(line, "%64[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]\t%lu\t%lu",
         id, &size, &lastUse) == 3 &&
         isSafeAssetId(id) && size > 0 && size <= kMaxCoverBytes) {
+      if (!entries_.ensure(entryCount_)) {
+        status_.ready = false;
+        status_.message = "cover index allocation failed";
+        file.close();
+        return false;
+      }
       copyId(entries_[entryCount_].id, id);
       entries_[entryCount_].size = static_cast<uint32_t>(size);
       entries_[entryCount_].lastUse = static_cast<uint32_t>(lastUse);
@@ -423,6 +441,13 @@ void SdStorage::reconcileIndexFromDirectory() {
             fs_->remove(path);
           }
         } else if (findCover(id) < 0) {
+          if (!entries_.ensure(entryCount_)) {
+            status_.ready = false;
+            status_.message = "cover index allocation failed";
+            file.close();
+            dir.close();
+            return;
+          }
           copyId(entries_[entryCount_].id, id);
           entries_[entryCount_].size = static_cast<uint32_t>(size);
           entries_[entryCount_].lastUse = 0;
@@ -483,6 +508,20 @@ void SdStorage::refreshCapacity() {
   status_.usedBytes = SD.usedBytes();
 }
 
+bool SdStorage::ensureCoverSlot(const char* coverId) {
+  if (!isSafeAssetId(coverId)) return false;
+  if (findCover(coverId) >= 0) return true;
+  if (entryCount_ >= kMaxIndexEntries) {
+    status_.message = "cover index full";
+    return false;
+  }
+  if (!entries_.ensure(entryCount_)) {
+    status_.message = "cover index allocation failed";
+    return false;
+  }
+  return true;
+}
+
 void SdStorage::upsertCover(const char* coverId, uint32_t size) {
   const int existing = findCover(coverId);
   if (existing >= 0) {
@@ -490,7 +529,8 @@ void SdStorage::upsertCover(const char* coverId, uint32_t size) {
     entries_[existing].lastUse = nextUseTick();
     return;
   }
-  if (entryCount_ >= kMaxIndexEntries || !copyId(entries_[entryCount_].id, coverId)) {
+  if (entryCount_ >= kMaxIndexEntries || !entries_.ensure(entryCount_) ||
+      !copyId(entries_[entryCount_].id, coverId)) {
     return;
   }
   entries_[entryCount_].size = size;
@@ -506,6 +546,7 @@ void SdStorage::eraseIndexEntry(std::size_t index) {
     entries_[i - 1] = entries_[i];
   }
   --entryCount_;
+  entries_.truncate(entryCount_);
 }
 
 int SdStorage::findCover(const char* coverId) const {

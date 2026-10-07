@@ -5,6 +5,7 @@ $zig = Join-Path $projectRoot '.tools\ziglang-host\ziglang\zig.exe'
 $source = Join-Path $projectRoot 'tests\ui_logic_test.cpp'
 $includeDir = Join-Path $projectRoot 'firmware\include'
 $fakeIncludeDir = Join-Path $projectRoot 'tests\fakes'
+$arduinoJsonIncludeDir = Join-Path $projectRoot 'firmware\.pio\libdeps\cyd28_st7789_app\ArduinoJson\src'
 $zigCache = Join-Path $projectRoot '.tools\zig-cache'
 if (-not (Test-Path -LiteralPath $python)) { throw "Run scripts/setup-tools.ps1 first." }
 if (-not (Test-Path -LiteralPath $zig)) { throw "Host test compiler missing; run scripts/setup-tools.ps1 -IncludeHostTestCompiler." }
@@ -23,6 +24,7 @@ try {
         @{ Source = $source; Executable = (Join-Path $projectRoot '.tools\ui_logic_test.exe'); Includes = @($includeDir) },
         @{ Source = (Join-Path $projectRoot 'tests\onboarding_state_test.cpp'); Executable = (Join-Path $projectRoot '.tools\onboarding_state_test.exe'); Includes = @($includeDir) },
         @{ Source = (Join-Path $projectRoot 'tests\network_protocol_test.cpp'); Executable = (Join-Path $projectRoot '.tools\network_protocol_test.exe'); Includes = @($includeDir) },
+        @{ Source = (Join-Path $projectRoot 'tests\paged_index_test.cpp'); Executable = (Join-Path $projectRoot '.tools\paged_index_test.exe'); Includes = @($includeDir) },
         @{ Source = (Join-Path $projectRoot 'tests\ui_layout_test.cpp'); Executable = (Join-Path $projectRoot '.tools\ui_layout_test.exe'); Includes = @($fakeIncludeDir, $includeDir) }
     )
     foreach ($test in $tests) {

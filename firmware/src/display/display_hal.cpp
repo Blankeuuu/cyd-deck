@@ -17,7 +17,7 @@ DisplayHal::DisplayHal() {
   bus_.config(bus);
   panel_.setBus(&bus_);
 
-  // CYD panel RAM is portrait-native (240x320); rotation 1 exposes 320x240.
+  // CYD panel RAM is portrait-native (240x320); board::landscapeRotation = 3 exposes 320x240.
   auto panel = panel_.config();
   panel.pin_cs = board::tftCs;
   panel.pin_rst = -1;

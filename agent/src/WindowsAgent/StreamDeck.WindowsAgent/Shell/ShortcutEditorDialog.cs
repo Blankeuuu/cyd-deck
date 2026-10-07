@@ -4,6 +4,12 @@ namespace StreamDeck.WindowsAgent.Shell;
 
 internal sealed class ShortcutEditorDialog : Form
 {
+    private const int DialogWidth = 620;
+    private const int DialogHeight = 540;
+    private const int FieldLabelWidth = 126;
+    private const int FieldRowHeight = 46;
+    private const int PrimaryButtonWidth = 104;
+    private const int PrimaryButtonHeight = 38;
     internal const string ObsToggleRecordingChoice = "OBS: toggle recording (Ctrl+Shift+R hotkey)";
     internal const string LaunchApplicationChoice = "Launch application";
     internal const string OpenUrlChoice = "Open URL";
@@ -32,18 +38,29 @@ internal sealed class ShortcutEditorDialog : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        Width = 560;
-        Height = 480;
+        Width = DialogWidth;
+        Height = DialogHeight;
+        MinimumSize = new Size(DialogWidth, DialogHeight);
         BackColor = Color.FromArgb(18, 20, 25);
         ForeColor = Color.FromArgb(238, 241, 245);
         Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
+        AccessibleName = Text;
+        AccessibleDescription = "Configure an Agent-side shortcut action. Firmware receives only shortcut IDs and labels.";
 
         typeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        typeCombo.AccessibleName = "Shortcut action";
         typeCombo.Items.AddRange(GetActionChoices().Cast<object>().ToArray());
         typeCombo.SelectedIndexChanged += (_, _) => ApplySelectedActionChoice();
         builtInActionCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        builtInActionCombo.AccessibleName = "Built-in action";
         builtInActionCombo.Items.AddRange(GetBuiltInActionChoices().Cast<object>().ToArray());
-        browseButton.Text = "Browse...";
+        idText.AccessibleName = "Shortcut ID";
+        nameText.AccessibleName = "Shortcut name";
+        iconText.AccessibleName = "Shortcut icon";
+        targetText.AccessibleName = "Shortcut target";
+        argumentsText.AccessibleName = "Shortcut arguments";
+        browseButton.Text = "Browse…";
+        browseButton.AccessibleName = "Browse for shortcut target";
         browseButton.Click += (_, _) => BrowseForActionTarget();
         Controls.Add(BuildLayout());
 
@@ -85,8 +102,8 @@ internal sealed class ShortcutEditorDialog : Form
 
     private Control BuildLayout()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 8, Padding = new Padding(20), BackColor = BackColor };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 8, Padding = new Padding(24, 22, 24, 18), BackColor = BackColor };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, FieldLabelWidth));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddField(root, 0, "ID", idText);
         AddField(root, 1, "Name", nameText);
@@ -95,20 +112,21 @@ internal sealed class ShortcutEditorDialog : Form
         actionPanel.Dock = DockStyle.Fill;
         actionPanel.ColumnCount = 2;
         actionPanel.BackColor = BackColor;
-        actionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        actionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, FieldLabelWidth));
         actionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
         root.Controls.Add(actionPanel, 0, 4);
         root.SetColumnSpan(actionPanel, 2);
         hintLabel.Dock = DockStyle.Fill;
-        hintLabel.ForeColor = Color.FromArgb(150, 158, 170);
+        hintLabel.ForeColor = Color.FromArgb(177, 184, 195);
         hintLabel.TextAlign = ContentAlignment.MiddleLeft;
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        hintLabel.AccessibleName = "Shortcut action help";
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
         root.Controls.Add(hintLabel, 0, 5);
         root.SetColumnSpan(hintLabel, 2);
-        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, Height = 48 };
-        buttons.Controls.Add(new Button { Text = "Save", DialogResult = DialogResult.OK, Width = 96, Height = 34 });
-        buttons.Controls.Add(new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 96, Height = 34 });
+        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, Height = 52, Padding = new Padding(0, 8, 0, 0) };
+        buttons.Controls.Add(CreateDialogButton("Save", DialogResult.OK, isDefault: true));
+        buttons.Controls.Add(CreateDialogButton("Cancel", DialogResult.Cancel, isDefault: false));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.Controls.Add(buttons, 0, 7);
         root.SetColumnSpan(buttons, 2);
@@ -119,14 +137,27 @@ internal sealed class ShortcutEditorDialog : Form
 
     private static void AddField(TableLayoutPanel root, int row, string label, Control control)
     {
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, FieldRowHeight));
         root.Controls.Add(CreateFieldLabel(label), 0, row);
         control.Dock = DockStyle.Fill;
         control.Margin = new Padding(0, 4, 0, 4);
         root.Controls.Add(control, 1, row);
     }
 
-    private static Label CreateFieldLabel(string text) => new() { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.FromArgb(150, 158, 170) };
+    private static Label CreateFieldLabel(string text) => new() { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.FromArgb(177, 184, 195) };
+
+    private static Button CreateDialogButton(string text, DialogResult result, bool isDefault) => new()
+    {
+        Text = text,
+        DialogResult = result,
+        Width = PrimaryButtonWidth,
+        Height = PrimaryButtonHeight,
+        Margin = new Padding(8, 0, 0, 0),
+        BackColor = isDefault ? Color.FromArgb(212, 59, 72) : Color.FromArgb(39, 43, 52),
+        ForeColor = Color.White,
+        FlatStyle = FlatStyle.Flat,
+        AccessibleName = text
+    };
 
     private void LoadShortcut(ShortcutDefinition shortcut)
     {
@@ -199,7 +230,7 @@ internal sealed class ShortcutEditorDialog : Form
     {
         var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
         targetText.Dock = DockStyle.Fill;
         targetText.Margin = new Padding(0, 4, 6, 4);
         panel.Controls.Add(targetText, 0, 0);
@@ -219,10 +250,16 @@ internal sealed class ShortcutEditorDialog : Form
     private void AddActionControlRow(string label, Control control)
     {
         var row = actionPanel.RowCount++;
-        actionPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        actionPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, FieldRowHeight));
         actionPanel.Controls.Add(CreateFieldLabel(label), 0, row);
         actionPanel.Controls.Add(control, 1, row);
     }
+
+    internal static Size GetMinimumDialogSizeForTests() => new(DialogWidth, DialogHeight);
+
+    internal static int GetFieldLabelWidthForTests() => FieldLabelWidth;
+
+    internal static Size GetPrimaryButtonSizeForTests() => new(PrimaryButtonWidth, PrimaryButtonHeight);
 
     private void ApplySelectedActionChoice()
     {

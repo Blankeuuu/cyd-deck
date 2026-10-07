@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstring>
+#include <vector>
 
 #include "lvgl.h"
 #include "ui/app_state.h"
@@ -47,6 +48,11 @@ lv_obj_t* findButtonByText(lv_obj_t* object, const char* text) {
   return nullptr;
 }
 
+void collectButtons(lv_obj_t* object, std::vector<lv_obj_t*>& out) {
+  if (object->type == lv_obj_t::Type::Button) out.push_back(object);
+  for (lv_obj_t* child : object->children) collectButtons(child, out);
+}
+
 void assertVolumeIntent(streamdeck::IntentQueue& intents, int16_t value) {
   streamdeck::Intent intent;
   assert(intents.pop(intent));
@@ -76,10 +82,19 @@ int main() {
   assert(findButtonByText(lv_test_root(), LV_SYMBOL_PLAY) != nullptr);
   assert(findButtonByText(lv_test_root(), LV_SYMBOL_NEXT) != nullptr);
   assert(findLabel(lv_test_root(), LV_SYMBOL_AUDIO) != nullptr);
+  assert(findLabel(lv_test_root(), "MEDIA") != nullptr);
+  assert(findLabel(lv_test_root(), "PC ONLINE") != nullptr);
+  assert(findLabel(lv_test_root(), "queued if PC offline") != nullptr);
+  std::vector<lv_obj_t*> initialButtons;
+  collectButtons(lv_test_root(), initialButtons);
+  for (lv_obj_t* button : initialButtons) {
+    assert(button->w >= 48 || button->h >= 40);
+  }
   assert(findLabel(lv_test_root(), "Ready to play") != nullptr);
   state.connection.online = false;
   streamdeck::uiRefresh(state);
   assert(findLabel(lv_test_root(), "Waiting for PC") != nullptr);
+  assert(findLabel(lv_test_root(), "Media offline - actions queue") != nullptr);
   state.connection.online = true;
 
   state.audio.reportedVolume = 56;
@@ -132,21 +147,22 @@ int main() {
   assert(lv_test_root()->bg_color == 0xF3F5F7);
   assert(mediaTitle->text_color == 0x101216);
   assert(coverPanel->bg_color == 0xFFFFFF);
-  assert(findLabel(lv_test_root(), "NOW PLAYING")->text_color == 0x101216);
+  assert(findLabel(lv_test_root(), "MEDIA")->text_color == 0x101216);
   assert(findLabel(lv_test_root(), "Factory Reset?")->text_color == 0x101216);
   assert(lv_obj_get_child(findButtonByText(lv_test_root(), LV_SYMBOL_PAUSE), 0)->text_color == 0x101216);
   state.appearance.theme = 0;
   streamdeck::normalizeAppearance(state.appearance);
   streamdeck::uiRefresh(state);
   assert(lv_test_root()->bg_color == 0x101216);
-  assert(coverPanel->bg_color == 0x1C2026);
-  assert(findLabel(lv_test_root(), "NOW PLAYING")->text_color == 0xF3F5F7);
+  assert(coverPanel->bg_color == 0x171B22);
+  assert(findLabel(lv_test_root(), "MEDIA")->text_color == 0xF7F8FA);
   streamdeck::uiSetPage(streamdeck::Page::Info);
   streamdeck::uiRefresh(state);
   assert(findLabel(lv_test_root(), "FW 1.0.0") != nullptr);
   assert(findLabel(lv_test_root(), "Wi-Fi  LabWiFi  -53 dBm") != nullptr);
   assert(findLabel(lv_test_root(), "IP      192.168.50.205") != nullptr);
   assert(findLabel(lv_test_root(), "PC      Connected") != nullptr);
+  assert(findLabel(lv_test_root(), "WIFI") != nullptr);
   assert(findLabel(lv_test_root(), "Agent   192.168.50.190") != nullptr);
   state.appearance.pageOrder[0] = streamdeck::Page::Media;
   state.appearance.pageOrder[1] = streamdeck::Page::Info;
@@ -159,6 +175,8 @@ int main() {
   streamdeck::uiSetPage(streamdeck::Page::Shortcuts);
   assert(state.ui.page == streamdeck::Page::Info);
 
+  state.appearance.pageVisible[streamdeck::pageIndex(streamdeck::Page::Shortcuts)] = true;
+  streamdeck::uiSetPage(streamdeck::Page::Shortcuts);
   streamdeck::resetShortcuts(state.shortcuts);
   std::strcpy(state.shortcuts.names[0], "Keep A");
   std::strcpy(state.shortcuts.ids[0], "shortcut-a");
@@ -201,10 +219,13 @@ int main() {
   lv_test_send_event(minus, LV_EVENT_CLICKED);
   assertVolumeIntent(intents, 0);
 
+  streamdeck::uiSetPage(streamdeck::Page::Info);
   lv_obj_t* restart = findButtonByText(lv_test_root(), "Restart");
   lv_obj_t* factoryReset = findButtonByText(lv_test_root(), "Factory Reset");
+  lv_obj_t* setupKey = findButtonByText(lv_test_root(), "Setup key");
   assert(restart != nullptr);
   assert(factoryReset != nullptr);
+  assert(setupKey == nullptr);
 
   lv_test_send_event(restart, LV_EVENT_CLICKED);
   streamdeck::Intent intent;
@@ -221,4 +242,28 @@ int main() {
   lv_test_send_event(confirm, LV_EVENT_CLICKED);
   assert(intents.pop(intent));
   assert(intent.type == streamdeck::IntentType::FactoryReset);
+
+  std::size_t objectCounts[streamdeck::kPageCount]{};
+  for (int cycle = 0; cycle < 40; ++cycle) {
+    state.appearance.theme = cycle % 2;
+    streamdeck::normalizeAppearance(state.appearance);
+    for (uint8_t p = 0; p < streamdeck::kPageCount; ++p) {
+      streamdeck::uiSetPage(static_cast<streamdeck::Page>(p));
+      assertInsideParent(lv_test_root());
+      assertNoScrollbars(lv_test_root());
+      for (uint8_t other = 0; other < streamdeck::kPageCount; ++other) assert((pages[other] != nullptr) == (other == p));
+      assert(lv_test_root()->children.front() == pages[p]);
+      if (cycle == 0) objectCounts[p] = lv_test_allocations.size();
+      else assert(lv_test_allocations.size() == objectCounts[p]);
+      if (p == streamdeck::pageIndex(streamdeck::Page::Media)) {
+        assert(coverImage->image_src == &testCover);
+        assert(mediaTitle->text_color == (state.appearance.theme ? 0x101216U : 0xF7F8FAU));
+      }
+    }
+  }
+  lv_image_dsc_t nextCover{};
+  streamdeck::uiSetCoverImage(&nextCover); // While Media widgets are absent.
+  streamdeck::uiSetPage(streamdeck::Page::Media);
+  assert(coverImage->image_src == &nextCover);
+  lv_test_reset();
 }

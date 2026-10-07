@@ -72,6 +72,7 @@ public sealed class ShortcutConfigurationTests
     [InlineData("..\\Tools\\app.exe")]
     [InlineData("folder\\app.exe")]
     [InlineData("https://example.com/app.exe")]
+    [InlineData("\\\\fileserver\\share\\app.exe")]
     public void LaunchApplicationRejectsRelativeOrRemoteExecutablePaths(string executablePath)
     {
         var configuration = CreateLaunchConfiguration(executablePath);
@@ -80,6 +81,38 @@ public sealed class ShortcutConfigurationTests
         var issues = validator.Validate(configuration);
 
         Assert.Contains(issues, issue => issue.Path.EndsWith(".executablePath", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("\\\\fileserver\\share\\cleanup.cmd")]
+    [InlineData("\\\\fileserver\\share\\build-report.ps1")]
+    public void ScriptActionsRejectUncNetworkPaths(string scriptPath)
+    {
+        var configuration = new ShortcutConfiguration
+        {
+            Shortcuts =
+            [
+                new ShortcutDefinition
+                {
+                    Id = "network-script",
+                    Name = "Network Script",
+                    Icon = "script",
+                    Action = new ShortcutActionDefinition
+                    {
+                        Type = scriptPath.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase)
+                            ? ShortcutActionTypes.PowerShell
+                            : ShortcutActionTypes.Script,
+                        ScriptPath = scriptPath,
+                        Arguments = []
+                    }
+                }
+            ]
+        };
+        var validator = new ShortcutConfigurationValidator();
+
+        var issues = validator.Validate(configuration);
+
+        Assert.Contains(issues, issue => issue.Path.EndsWith(".scriptPath", StringComparison.Ordinal));
     }
 
     [Theory]
