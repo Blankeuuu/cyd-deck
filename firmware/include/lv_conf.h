@@ -12,7 +12,9 @@
 #define LV_FONT_MONTSERRAT_14 1
 #define LV_FONT_MONTSERRAT_16 1
 #define LV_FONT_MONTSERRAT_20 1
-#define LV_FONT_DEFAULT &lv_font_montserrat_14
+#define LV_FONT_DEJAVU_16_PERSIAN_HEBREW 0
+#define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(streamdeck_polish_14) LV_FONT_DECLARE(streamdeck_polish_16) LV_FONT_DECLARE(streamdeck_polish_20)
+#define LV_FONT_DEFAULT &streamdeck_polish_16
 #define LV_USE_THEME_DEFAULT 1
 #define LV_THEME_DEFAULT_DARK 1
 #define LV_USE_THEME_SIMPLE 0

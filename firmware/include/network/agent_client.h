@@ -13,6 +13,7 @@ struct AgentClientConfig {
   String deviceName;
   String manualHost;
   uint16_t port = 8765;
+  bool usbProtocolEnabled = true;
   bool (*renderCover)(const char* coverId, AppState& state) = nullptr;
 };
 

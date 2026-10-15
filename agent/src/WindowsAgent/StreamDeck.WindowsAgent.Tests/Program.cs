@@ -20,6 +20,65 @@ using StreamDeck.Shortcuts;
 using StreamDeck.WindowsAgent.Updates;
 using ShortcutDefinition = StreamDeck.Shortcuts.ShortcutDefinition;
 
+if (args.Contains("--live-audio"))
+{
+    using var endpoint = new CoreAudioEndpoint();
+    using var liveAudio = new WindowsMasterVolumeService(endpoint);
+    AssertTrue(liveAudio.Refresh(), "default render/multimedia CoreAudio endpoint is readable");
+    Console.WriteLine($"CoreAudio master volume={liveAudio.CurrentSnapshot!.VolumePercent}%, muted={liveAudio.CurrentSnapshot.IsMuted}");
+    return;
+}
+
+if (args.Contains("--live-media"))
+{
+    await using var liveSource = new StreamDeck.Media.WindowsGlobalMediaSessionSource();
+    await liveSource.InitializeAsync();
+    if (args.Contains("--stress"))
+    {
+        var errors = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+        {
+            for (var iteration = 0; iteration < 100; iteration++)
+                try { liveSource.GetSessions(); liveSource.GetCurrentSession(); }
+                catch (Exception exception) { errors.Enqueue(exception); }
+        })));
+        Console.WriteLine($"Concurrent native reads: failures={errors.Count}");
+        foreach (var error in errors.Take(2)) Console.WriteLine(error);
+        if (!errors.IsEmpty) Environment.ExitCode = 1;
+    }
+    for (var attempt = 0; attempt < 3; attempt++)
+    {
+        try
+        {
+            var sessions = liveSource.GetSessions();
+            var current = liveSource.GetCurrentSession();
+            Console.WriteLine($"Sessions={sessions.Count}, current={current is not null}");
+            foreach (var session in sessions)
+            {
+                var mapped = await new StreamDeck.Media.WindowsMediaSessionMapper().MapAsync(session);
+                Console.WriteLine($"App={mapped.SourceAppUserModelId}, state={mapped.PlaybackState}, titlePresent={!string.IsNullOrWhiteSpace(mapped.Title)}, thumbnail={mapped.Thumbnail is not null}");
+            }
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine(exception.ToString());
+            Environment.ExitCode = 1;
+        }
+    }
+    return;
+}
+
+if (args.Contains("--usb-covers")) { await TestUsbCoverSenderAsync(); Console.WriteLine("USB artwork regression PASS"); return; }
+
+var coverDiagnosticFrame = ProtocolSerializer.Serialize(ProtocolConstants.MessageTypes.DeviceInfo, null,
+    new DeviceInfoMessage("1.0.0", 10, new DeviceWifiInfo(true, "lab", -50, "192.168.1.2"), "usb",
+        new DeviceStorageInfo(true, true, 1024, 512), new DeviceHeapInfo(1000, 900, 800), new DeviceCoverInfo(2, true)));
+var coverDiagnosticParse = ProtocolSerializer.Parse(coverDiagnosticFrame);
+AssertTrue(coverDiagnosticParse.IsSuccess, "device.info accepts optional artwork diagnostic extension");
+AssertTrue(ProtocolSerializer.DeserializeData<DeviceInfoMessage>(coverDiagnosticParse.Envelope!).Cover?.Rendered == true, "device.info preserves firmware-confirmed artwork rendering");
+AgentDiagnosticLog.Write("Synthetic hello {\"bearerToken\":\"test-secret-for-redaction\"}");
+AssertTrue(!AgentDiagnosticLog.ReadRecentLines().Last().Contains("test-secret-for-redaction", StringComparison.Ordinal), "raw hello logs never expose bearerToken");
+
 var state = new AgentState();
 state.SetMode("mock");
 state.SetHostListening(8765);
@@ -33,7 +92,7 @@ AssertEqual(5000, snapshot.DashboardPort, "dashboard port");
 AssertEqual("mock", snapshot.Mode, "agent mode");
 AssertEqual("Connected", AgentStatusFormatter.ToUserStatus(snapshot.HostStatus), "user status");
 AssertEqual("Connected", AgentStatusFormatter.ToDeviceStatus(snapshot), "device status");
-AssertEqual("not connected", AgentStatusFormatter.FormatLastSeen(snapshot), "last seen before diagnostics");
+AssertEqual("Connected now", AgentStatusFormatter.FormatLastSeen(snapshot), "connected last seen before telemetry");
 
 state.UpdateDeviceInfo(new DeviceInfoMessage(
     "test-firmware",
@@ -44,7 +103,7 @@ state.UpdateDeviceInfo(new DeviceInfoMessage(
     new DeviceHeapInfo(1000, 900, 800)));
 snapshot = state.Snapshot();
 AssertTrue(snapshot.DeviceInfoUpdatedAtUtc.HasValue, "device info timestamp populated");
-AssertContains("seconds ago", AgentStatusFormatter.FormatLastSeen(snapshot), "last seen recency");
+AssertEqual("Connected now", AgentStatusFormatter.FormatLastSeen(snapshot), "connected last seen recency");
 
 state.MarkDeviceDisconnected("device-1");
 snapshot = state.Snapshot();
@@ -55,9 +114,24 @@ AssertEqual(null, snapshot.RemoteAddress, "remote address after disconnect");
 AssertEqual("test-firmware", snapshot.DeviceInfo?.FirmwareVersion, "device info preserved after disconnect");
 AssertTrue(snapshot.DeviceInfoUpdatedAtUtc.HasValue, "device info timestamp preserved after disconnect");
 AssertContains("seconds ago", AgentStatusFormatter.FormatLastSeen(snapshot), "last seen preserved after disconnect");
-AssertEqual("Connecting", AgentStatusFormatter.ToUserStatus(snapshot.HostStatus), "listening user status");
+AssertEqual("Listening", AgentStatusFormatter.ToUserStatus(snapshot.HostStatus), "listener readiness must not imply an active connection attempt");
 AssertEqual("Disconnected", AgentStatusFormatter.ToDeviceStatus(snapshot), "listening device status");
 
+var offlineValues = SettingsWindow.CreateLiveInfoValues("Device", snapshot);
+AssertEqual("Unavailable", offlineValues["Firmware"], "offline telemetry is not presented as current");
+var changedDevice = SettingsWindow.CreateLiveInfoValues("Overview", new AgentStatusSnapshot(
+    "connected", "new-device", "New CYD", "USB", 8765, 5000, "live", []));
+AssertEqual("New CYD", changedDevice["Device name"], "overview updates device name when a different device connects");
+AssertEqual("new-device", changedDevice["Device ID"], "overview updates device identity after reconnect");
+if (args.Contains("--status-regression"))
+{
+    Console.WriteLine("Connection status regression PASS");
+    return;
+}
+var updatesInfo = SettingsWindow.CreateLiveInfoValues("Updates", new AgentStatusSnapshot(
+    "connected", "device-1", "CYD", "USB", 8765, 5000, "live", [], snapshot.DeviceInfo));
+AssertEqual("test-firmware", updatesInfo["Firmware version"], "Updates reads the shared telemetry firmware");
+AssertEqual("192.168.1.51", updatesInfo["Device IP"], "Updates reads Wi-Fi IP even with USB control");
 var startupRaceState = new AgentState();
 startupRaceState.MarkDeviceConnected("fast-device", "Fast CYD", "192.168.1.70");
 startupRaceState.SetHostListening(9876);
@@ -68,6 +142,80 @@ AssertEqual("fast-device", startupRaceSnapshot.DeviceId, "listener setup preserv
 
 var options = AgentOptions.FromArgs(["--mock"]);
 AssertTrue(options.MockMode, "mock option");
+var usbOptions = AgentOptions.FromArgs(["--mock", "--usb-port", "COM7"]);
+AssertEqual("COM7", usbOptions.UsbPort, "usb port option");
+AssertTrue(UsbSerialPortDiscovery.IsCh340HardwareId("VID_1A86&PID_7523&REV_0264"), "USB discovery recognizes the CH340 parent key hardware ID");
+AssertTrue(UsbSerialPortDiscovery.IsCh340HardwareId(@"USB\VID_1A86&PID_7523&REV_0264"), "USB discovery recognizes the CH340 hardware ID in a device-instance value");
+AssertTrue(!UsbSerialPortDiscovery.IsCh340HardwareId(@"USB\VID_10C4&PID_EA60"), "USB discovery rejects unrelated instance hardware IDs");
+AssertEqual(
+    "COM8",
+    UsbSerialPortDiscovery.SelectAvailableCh340Ports([(@"USB\VID_1A86&PID_7523&REV_0264", "COM8")], ["COM8"]).Single(),
+    "USB discovery selects a CH340 port when the ID is stored as an instance value");
+AssertEqual(
+    "COM5",
+    UsbSerialPortDiscovery.SelectAvailableCh340Ports(
+        [("VID_10C4&PID_EA60", "COM7"), ("VID_1A86&PID_7523", "COM5")],
+        ["COM5", "COM7"]).Single(),
+    "USB discovery selects the connected CH340 port");
+AssertEqual(
+    "COM5,COM8",
+    string.Join(',', UsbSerialPortDiscovery.SelectAvailableCh340Ports(
+        [("VID_1A86&PID_7523", "COM8"), ("VID_1A86&PID_7523", "COM5"), ("VID_1A86&PID_7523", "COM5")],
+        ["COM5", "COM8"])),
+    "USB discovery returns sorted unique CH340 candidates");
+AssertEqual(
+    0,
+    UsbSerialPortDiscovery.SelectAvailableCh340Ports(
+        [("VID_1A86&PID_7523", "COM5")],
+        ["COM7"]).Count,
+    "USB discovery ignores stale CH340 port registrations");
+AssertEqual(
+    0,
+    UsbSerialPortDiscovery.SelectAvailableCh340Ports(
+        [("VID_10C4&PID_EA60", "COM7")],
+        ["COM7"]).Count,
+    "USB discovery does not claim unrelated serial hardware");
+AssertEqual("COM7", WindowsAgentRuntime.ResolveUsbPortCandidates(usbOptions).Single(), "explicit USB override is a hard single candidate");
+await TestUsbLineProtocolTransportAsync();
+await TestUsbCoverSenderAsync();
+await TestUsbRuntimeAdvancesFromSilentCandidateToValidEsp32HelloAsync();
+await TestUsbRuntimeRejectsWrongRoleHelloAsync();
+await TestUsbRuntimeHardOverrideRetriesSinglePortAsync();
+await TestUsbRuntimeDisposesTimedOutProbeAsync();
+await TestUsbProbeDoesNotConsumeFrameAfterHelloAsync();
+await TestUsbProbeRecoversFromLeadingEmptyLineAndFragmentAsync();
+await TestUsbDeviceRuntimeHandshakeAsync();
+var usbFirstCalls = new List<string>();
+AssertTrue(await WindowsAgentRuntime.SendWithUsbPriorityAsync(
+    usbReady: true,
+    sendUsb: () => { usbFirstCalls.Add("USB"); return Task.FromResult(true); },
+    sendWebSocket: () => { usbFirstCalls.Add("WebSocket"); return Task.FromResult(true); }),
+    "runtime sends over ready USB before WebSocket");
+AssertEqual("USB", string.Join(',', usbFirstCalls), "USB primary route avoids duplicate WebSocket command");
+
+var wifiFallbackCalls = new List<string>();
+AssertTrue(await WindowsAgentRuntime.SendWithUsbPriorityAsync(
+    usbReady: false,
+    sendUsb: () => { wifiFallbackCalls.Add("USB"); return Task.FromResult(true); },
+    sendWebSocket: () => { wifiFallbackCalls.Add("WebSocket"); return Task.FromResult(true); }),
+    "runtime uses Wi-Fi when USB is not ready");
+AssertEqual("WebSocket", string.Join(',', wifiFallbackCalls), "ready Wi-Fi is the first fallback when USB is unavailable");
+
+var usbRecoveryCalls = new List<string>();
+AssertTrue(await WindowsAgentRuntime.SendWithUsbPriorityAsync(
+    usbReady: false,
+    sendUsb: () => { usbRecoveryCalls.Add("USB"); return Task.FromResult(true); },
+    sendWebSocket: () => { usbRecoveryCalls.Add("WebSocket"); return Task.FromResult(false); }),
+    "runtime tries USB after WebSocket is unavailable");
+AssertEqual("WebSocket,USB", string.Join(',', usbRecoveryCalls), "USB recovery is attempted after failed Wi-Fi route");
+
+var disconnectedUsbCalls = new List<string>();
+AssertTrue(await WindowsAgentRuntime.SendWithUsbPriorityAsync(
+    usbReady: true,
+    sendUsb: () => { disconnectedUsbCalls.Add("USB"); throw new IOException("simulated detach"); },
+    sendWebSocket: () => { disconnectedUsbCalls.Add("WebSocket"); return Task.FromResult(true); }),
+    "runtime falls back to Wi-Fi after USB detach");
+AssertEqual("USB,WebSocket", string.Join(',', disconnectedUsbCalls), "USB transport failure advances to Wi-Fi fallback");
 
 var exported = ConfigurationExportService.Export(new AgentConfiguration
 {
@@ -94,14 +242,19 @@ var imported = ConfigurationExportService.Import(exported);
 AssertEqual(9123, imported.Server!.Port, "imported server port");
 AssertEqual("docs", imported.Shortcuts![0].Id, "imported shortcut id");
 var shortcutActionChoices = ShortcutEditorDialog.GetActionChoices();
+AssertEqual(3, ShortcutEditorDialog.GetDisplayModeChoices().Count, "shortcut editor exposes label/icon/both display modes");
+AssertEqual(ShortcutDisplayModes.Icon, ShortcutEditorDialog.NormalizeDisplayModeChoice(ShortcutEditorDialog.DisplayIconChoice), "shortcut editor maps icon display mode");
+AssertEqual(ShortcutDisplayModes.Both, ShortcutEditorDialog.NormalizeDisplayModeChoice(ShortcutEditorDialog.DisplayBothChoice), "shortcut editor maps combined label/icon display mode");
 var generatedShortcutId1 = ShortcutEditorDialog.CreateNewShortcutId();
 var generatedShortcutId2 = ShortcutEditorDialog.CreateNewShortcutId();
 AssertTrue(generatedShortcutId1.StartsWith("shortcut-", StringComparison.Ordinal), "new shortcut IDs use a generated prefix");
 AssertTrue(!string.Equals(generatedShortcutId1, generatedShortcutId2, StringComparison.Ordinal), "new shortcut dialogs receive distinct IDs");
 AssertEqual(1, shortcutActionChoices.Count(choice => ShortcutEditorDialog.NormalizeActionChoice(choice) == ShortcutActionTypes.LaunchApplication), "shortcut editor exposes one launch action choice");
+AssertEqual(1, shortcutActionChoices.Count(choice => ShortcutEditorDialog.NormalizeActionChoice(choice) == ShortcutActionTypes.Hotkey), "shortcut editor exposes one generic hotkey action choice");
+AssertEqual(0, shortcutActionChoices.Count(choice => ShortcutEditorDialog.NormalizeActionChoice(choice) == ShortcutActionTypes.PowerShell), "shortcut editor hides redundant PowerShell action choice");
+AssertTrue(!shortcutActionChoices.Any(choice => choice.Contains("PowerShell", StringComparison.OrdinalIgnoreCase)), "shortcut editor does not show a separate PowerShell script action");
 AssertTrue(!shortcutActionChoices.Contains(ShortcutActionTypes.LaunchApplication), "shortcut editor hides raw launch action type from display choices");
 AssertEqual(ShortcutActionTypes.LaunchApplication, ShortcutEditorDialog.NormalizeActionChoice(ShortcutEditorDialog.LaunchApplicationChoice), "shortcut editor launch choice maps to supported launch action");
-AssertEqual(ShortcutActionTypes.Hotkey, ShortcutEditorDialog.NormalizeActionChoice(ShortcutEditorDialog.ObsToggleRecordingChoice), "shortcut editor OBS preset maps to supported hotkey action");
 var launchHints = ShortcutEditorDialog.GetActionFieldHints(ShortcutEditorDialog.LaunchApplicationChoice);
 AssertEqual("Executable", launchHints.TargetLabel, "launch editor labels executable path field");
 AssertTrue(launchHints.ArgumentsEnabled, "launch editor has action-specific arguments field");
@@ -117,11 +270,16 @@ AssertEqual("CTRL+SHIFT+R", string.Join('+', hotkeyAction.Keys), "hotkey panel u
 AssertEqual(0, hotkeyAction.Arguments.Count, "hotkey panel does not duplicate keys in arguments");
 var predefinedAction = ShortcutEditorDialog.CreateActionForInputs(ShortcutEditorDialog.BuiltInActionChoice, "freeform", string.Empty, ShortcutEditorDialog.ToggleMicrophoneChoice);
 AssertEqual(ShortcutEditorDialog.ToggleMicrophoneAdapterKey, predefinedAction.AdapterKey, "built-in panel maps known choice to adapter key");
-AssertContains("Ctrl+Shift+R", ShortcutEditorDialog.ObsToggleRecordingChoice, "OBS preset clearly labels shortcut keys");
+AssertTrue(shortcutActionChoices.All(choice => !choice.Contains("OBS", StringComparison.OrdinalIgnoreCase)), "shortcut editor does not expose redundant app-specific hotkey presets");
+AssertContains("Win+L", ShortcutEditorDialog.GetActionFieldHints(ShortcutEditorDialog.SendHotkeyChoice).HelpText, "hotkey help documents reserved Windows shortcuts");
+AssertEqual("Script", ShortcutEditorDialog.GetActionFieldHints(ShortcutActionTypes.PowerShell).TargetLabel, "legacy PowerShell shortcut types are edited through generic Script UI");
 var quotedLaunchAction = ShortcutEditorDialog.CreateActionForInputs(ShortcutEditorDialog.LaunchApplicationChoice, "notepad.exe", "--name \"Two Words\" --flag");
 AssertEqual(3, quotedLaunchAction.Arguments.Count, "quote-aware argument parser preserves argument count");
 AssertEqual("--name", quotedLaunchAction.Arguments[0], "quote-aware argument parser keeps leading option");
-AssertEqual("Two Words", quotedLaunchAction.Arguments[1], "quote-aware argument parser preserves quoted multi-word argument");
+AssertEqual("Two Words", quotedLaunchAction.Arguments[1], "quote-aware argument parser keeps grouped text");
+var legacyPowerShellAction = ShortcutEditorDialog.CreateActionForInputs(ShortcutActionTypes.PowerShell, "C:\\Tools\\legacy.ps1", "-Verbose");
+AssertEqual(ShortcutActionTypes.PowerShell, legacyPowerShellAction.Type, "legacy PowerShell action type remains round-trippable");
+AssertEqual("C:\\Tools\\legacy.ps1", legacyPowerShellAction.ScriptPath, "legacy PowerShell action preserves script path");
 AssertEqual("--flag", quotedLaunchAction.Arguments[2], "quote-aware argument parser keeps trailing option");
 var quotedPathAction = ShortcutEditorDialog.CreateActionForInputs(ShortcutEditorDialog.LaunchApplicationChoice, "notepad.exe", "--config \"C:\\Users\\Alice\\config.json\" C:\\Temp\\");
 AssertEqual(3, quotedPathAction.Arguments.Count, "Windows argument parser preserves quoted path argument count");
@@ -164,11 +322,11 @@ AssertEqual(0, shortcutLoadFailure.Configuration.Shortcuts?.Count ?? 0, "failed 
 var emptyShortcutLoad = SettingsWindow.LoadShortcutConfigurationState(() => AgentConfiguration.CreateDefault());
 AssertTrue(emptyShortcutLoad.CanWriteShortcuts, "genuinely empty default config remains writable");
 AssertTrue(SettingsWindow.CanWriteShortcutsAfterLoad(emptyShortcutLoad), "shortcut save remains enabled after successful empty load");
-AssertContains("Agent-side", SettingsWindow.ShortcutsSourceOfTruthText, "shortcuts page explains Agent source of truth");
-AssertContains("first 6", SettingsWindow.ShortcutsSourceOfTruthText, "shortcuts page explains device visibility limit");
-AssertContains("No shortcuts configured on this PC", SettingsWindow.CreateShortcutsEmptyStateText(emptyShortcutLoad), "empty shortcut catalog has explicit empty state");
-AssertContains("Click Add", SettingsWindow.CreateShortcutsEmptyStateText(emptyShortcutLoad), "empty shortcut catalog names next action");
-AssertContains("no device preload", SettingsWindow.CreateShortcutsEmptyStateText(emptyShortcutLoad), "empty shortcut catalog distinguishes unavailable device preload data");
+AssertContains("Select a shortcut", SettingsWindow.ShortcutsSourceOfTruthText, "shortcuts page explains the next action");
+AssertContains("first six", SettingsWindow.ShortcutsSourceOfTruthText, "shortcuts page explains device visibility limit");
+AssertContains("first shortcut", SettingsWindow.CreateShortcutsEmptyStateText(emptyShortcutLoad), "empty shortcut catalog has explicit empty state");
+AssertContains("Add", SettingsWindow.CreateShortcutsEmptyStateText(emptyShortcutLoad), "empty shortcut catalog names next action");
+AssertContains("CYD", SettingsWindow.CreateShortcutsEmptyStateText(emptyShortcutLoad), "empty state describes the shortcut destination");
 AssertContains("failed to load", SettingsWindow.CreateShortcutsEmptyStateText(shortcutLoadFailure), "load failure empty state is distinct from genuinely empty catalog");
 AssertContains("Import full config", SettingsWindow.CreateShortcutsEmptyStateText(shortcutLoadFailure), "load failure empty state names recovery action");
 AssertContains("inactive", SettingsWindow.PendingShortcutImportsText, "pending device shortcut imports are labeled inactive");
@@ -176,9 +334,9 @@ AssertContains("not executable or synced", SettingsWindow.PendingShortcutImports
 var pendingShortcutStore = new PendingShortcutImportStore();
 pendingShortcutStore.UpdateFromDeviceReport(
     new ShortcutsReportMessage([
-        new StreamDeck.Protocol.ShortcutDefinition("saved", "Saved", ShortcutActionTypes.LaunchApplication),
-        new StreamDeck.Protocol.ShortcutDefinition("device-only", "Device only", ShortcutActionTypes.OpenUrl),
-        new StreamDeck.Protocol.ShortcutDefinition("device-only", "Duplicate", ShortcutActionTypes.Hotkey)
+        new StreamDeck.Protocol.ShortcutDefinition("saved", "Saved", ActionType: ShortcutActionTypes.LaunchApplication),
+        new StreamDeck.Protocol.ShortcutDefinition("device-only", "Device only", ActionType: ShortcutActionTypes.OpenUrl),
+        new StreamDeck.Protocol.ShortcutDefinition("device-only", "Duplicate", ActionType: ShortcutActionTypes.Hotkey)
     ]),
     new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "saved" });
 var pendingImports = pendingShortcutStore.Snapshot(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "saved" });
@@ -189,6 +347,33 @@ var filteredPendingImports = SettingsWindow.FilterPendingShortcutImports(
     [new ShortcutDefinition { Id = "saved", Name = "Saved" }]);
 AssertEqual(1, filteredPendingImports.Count, "settings pending import list de-dupes against saved shortcut IDs");
 AssertEqual("device-only", filteredPendingImports[0].Id, "settings pending import list keeps unsaved device-only metadata");
+var diagnosticLines = new[]
+{
+    "2026-01-01 INFO Agent listening on port 8765",
+    "2026-01-01 WARN USB discovery waiting for adapter",
+    "2026-01-01 ERROR USB transport disconnected: IOException",
+    "2026-01-01 USB pairing failed: timeout",
+    "2026-01-01 pairing approval pending"
+};
+var allDiagnosticLines = SettingsWindow.FilterDiagnosticLines(diagnosticLines, string.Empty, errorsOnly: false);
+AssertEqual(diagnosticLines.Length, allDiagnosticLines.Count, "empty diagnostic filter returns every recent line");
+var searchedDiagnosticLines = SettingsWindow.FilterDiagnosticLines(diagnosticLines, "usb", errorsOnly: false);
+AssertEqual(3, searchedDiagnosticLines.Count, "diagnostic search is case-insensitive");
+AssertContains("WARN", searchedDiagnosticLines[0], "diagnostic search preserves source order");
+var errorDiagnosticLines = SettingsWindow.FilterDiagnosticLines(diagnosticLines, string.Empty, errorsOnly: true);
+AssertEqual(2, errorDiagnosticLines.Count, "errors-only filter includes error, exception, and failure entries");
+AssertContains("failed", errorDiagnosticLines[1], "errors-only filter recognizes failed operations");
+var combinedDiagnosticLines = SettingsWindow.FilterDiagnosticLines(diagnosticLines, "USB", errorsOnly: true);
+AssertEqual(2, combinedDiagnosticLines.Count, "diagnostic search and errors-only filters compose");
+AssertContains("IOException", combinedDiagnosticLines[0], "error filter retains transport exception details");
+var warningAndErrorLines = SettingsWindow.FilterDiagnosticLines(diagnosticLines, string.Empty, "warnings & errors");
+AssertEqual(3, warningAndErrorLines.Count, "warnings & errors filter includes both warning and error entries");
+var infoLines = SettingsWindow.FilterDiagnosticLines(diagnosticLines, string.Empty, "info");
+AssertEqual(2, infoLines.Count, "info filter excludes warnings and errors");
+AssertContains("listening", infoLines[0], "info filter retains informational entries");
+AssertContains("pending", infoLines[1], "info filter retains second informational entry");
+AssertEqual("just now", AgentStatusFormatter.FormatRelativeTime(DateTimeOffset.UtcNow), "relative time just now");
+AssertEqual("5m ago", AgentStatusFormatter.FormatRelativeTime(DateTimeOffset.UtcNow.AddMinutes(-5)), "relative time minutes ago");
 var pendingDraft = SettingsWindow.CreateShortcutDraftFromPendingImport(new PendingShortcutImport("device-url", "Device URL", ShortcutActionTypes.OpenUrl));
 AssertEqual("device-url", pendingDraft.Id, "pending import draft preserves device shortcut ID");
 AssertEqual("Device URL", pendingDraft.Name, "pending import draft pre-fills device label");
@@ -212,6 +397,9 @@ AssertTrue(SettingsWindow.ShouldRefreshShortcutImports(existingImportSignature, 
 AssertEqual((ushort)0x11, WindowsHotkeySender.ResolveVirtualKey("CTRL"), "hotkey control key mapping");
 AssertEqual((ushort)0x10, WindowsHotkeySender.ResolveVirtualKey("Shift"), "hotkey shift key mapping");
 AssertEqual((ushort)0x52, WindowsHotkeySender.ResolveVirtualKey("R"), "hotkey letter mapping");
+AssertEqual((ushort)0x5B, WindowsHotkeySender.ResolveVirtualKey("WIN"), "hotkey Windows key mapping");
+AssertEqual((ushort)0xB3, WindowsHotkeySender.ResolveVirtualKey("MEDIA_PLAY_PAUSE"), "hotkey media play/pause mapping");
+AssertTrue(WindowsHotkeySender.IsLockWorkstationHotkey([WindowsHotkeySender.ResolveVirtualKey("WIN"), WindowsHotkeySender.ResolveVirtualKey("L")]), "Win+L is routed through LockWorkStation instead of SendInput");
 AssertEqual(IntPtr.Size == 8 ? 40 : 28, WindowsHotkeySender.NativeInputSize, "SendInput native structure size");
 AssertThrows<ArgumentException>(() => WindowsHotkeySender.ResolveVirtualKey("not-a-key"), "unknown hotkey key rejected");
 var microphoneToggleCount = 0;
@@ -235,7 +423,7 @@ AssertTrue(unsupportedPredefinedWasRejected, "unknown predefined shortcut is not
 AssertTrue(!SettingsWindow.ShouldRebuildPageOnStateChanged("Overview"), "overview state updates do not rebuild the page");
 AssertTrue(!SettingsWindow.ShouldRebuildPageOnStateChanged("Device"), "device state updates do not rebuild the page");
 AssertTrue(!SettingsWindow.ShouldRebuildPageOnStateChanged("Shortcuts"), "shortcut page uses pending-import polling instead of unrelated state rebuilds");
-AssertTrue(SettingsWindow.ShouldRebuildPageOnStateChanged("Pairing"), "pairing updates refresh the pending list");
+AssertTrue(!SettingsWindow.ShouldRebuildPageOnStateChanged("Pairing"), "telemetry must not rebuild Pairing and drop selection");
 var pendingLiveRefresh = 0;
 AssertTrue(SettingsWindow.TryQueueLiveRefresh(ref pendingLiveRefresh), "first live refresh event is queued");
 AssertTrue(!SettingsWindow.TryQueueLiveRefresh(ref pendingLiveRefresh), "duplicate live refresh event is coalesced while queued");
@@ -247,20 +435,29 @@ AssertTrue(!WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isC
 AssertTrue(!WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isConnected: false), "disconnect does not request a media update");
 AssertTrue(WindowsAgentRuntime.TryMarkHostConnected(ref lastConnectedState, isConnected: true), "reconnect requests a fresh initial media update");
 
+await RunOnStaAsync(async () =>
+{
 AssertEqual(Color.FromArgb(246, 247, 249).ToArgb(), SettingsWindow.MapClientThemeColor(Color.FromArgb(13, 15, 20), "light").ToArgb(), "light theme maps the client background");
 AssertEqual(Color.FromArgb(13, 15, 20).ToArgb(), SettingsWindow.MapClientThemeColor(Color.FromArgb(246, 247, 249), "dark").ToArgb(), "dark theme restores the client background");
 AssertEqual(Color.FromArgb(246, 247, 249).ToArgb(), SettingsWindow.GetClientThemeBackground("light").ToArgb(), "light theme initializes the content host before attach");
+AssertEqual(Color.FromArgb(0x12, 0x34, 0x56).ToArgb(), SettingsWindow.ResolveClientAccentForTests("#123456").ToArgb(), "client app follows configured accent color");
+AssertEqual(Color.FromArgb(0x65, 0x43, 0x21).ToArgb(), SettingsWindow.ResolveClientBackgroundForTests("dark", "#654321").ToArgb(), "client app follows configured background color");
+AssertEqual(SettingsWindow.GetClientThemeBackground("light").ToArgb(), SettingsWindow.ResolveClientBackgroundForTests("light", string.Empty).ToArgb(), "light client theme keeps light default background when device color is unset");
 AssertTrue(SettingsWindow.GetNavigationWidth() >= 250, "settings navigation uses a wider hierarchy rail");
 AssertTrue(SettingsWindow.GetNavigationButtonSize().Height >= 42, "settings navigation buttons have comfortable target height");
 AssertTrue(SettingsWindow.GetClientContentPadding().Left >= 32, "settings content uses spacious page margins");
 AssertEqual(new Size(900, 620), SettingsWindow.GetMinimumWindowSizeForTests(), "settings window keeps the validated 900x620 minimum size");
 AssertTrue(SettingsWindow.ShouldPreserveClientThemeBackColor(SettingsWindow.DeviceColorPreviewTagForTests), "device color preview is not remapped by client theme");
 var minimumClientWidth = 900 - SettingsWindow.GetNavigationWidth() - SettingsWindow.GetClientContentPadding().Horizontal;
-var shortcutActionButtonWidths = new[] { "Add", "Edit", "Delete", "Move up", "Move down", "Import full config", "Export full config" }
+var shortcutActionButtonWidths = new[] { "Add", "Edit", "Delete", "Move up", "Move down", "Move to…", "Import full config", "Export full config" }
     .Select(SettingsWindow.MeasureSettingsActionButtonWidth)
     .ToArray();
 AssertTrue(SettingsWindow.CalculateActionBarHeight(minimumClientWidth, shortcutActionButtonWidths) > SettingsWindow.GetActionButtonHeight(), "shortcuts action bar grows when controls wrap at minimum width");
-AssertTrue(SettingsWindow.CalculateActionBarHeight(minimumClientWidth, shortcutActionButtonWidths) <= 104, "wrapped shortcuts action bar remains accessible at minimum height");
+AssertTrue(SettingsWindow.CalculateActionBarHeight(minimumClientWidth, shortcutActionButtonWidths) <= 156, "wrapped shortcuts action bar remains accessible at minimum height");
+AssertTrue(SettingsWindow.PageLayoutHasScrollableBodyAndAccessibleFooterForTests(900 - SettingsWindow.GetNavigationWidth(), 620 - SettingsWindow.GetClientContentPadding().Vertical, 520, [SettingsWindow.MeasureSettingsActionButtonWidth("Reconnect device")]), "overview page keeps its body scrollable instead of clipping its footer frame at minimum size");
+var orderedShortcuts = new List<string> { "one", "two", "three", "four" };
+SettingsWindow.MoveShortcutInMemory(orderedShortcuts, 0, SettingsWindow.NormalizeShortcutTargetIndex(0, 3, orderedShortcuts.Count));
+AssertEqual("two,three,one,four", string.Join(',', orderedShortcuts), "shortcut Move to position reorders by user-visible one-based position");
 AssertTrue(SettingsWindow.GetAppearanceSliderTrackWidth(minimumClientWidth) < 300, "appearance sliders shrink below old fixed width at minimum window size");
 AssertTrue(SettingsWindow.GetAppearanceSliderValueWidth("86400 sec") >= System.Windows.Forms.TextRenderer.MeasureText("86400 sec", SystemFonts.MessageBoxFont).Width + 16, "appearance slider value column fits the longest timeout label");
 AssertTrue(SettingsWindow.GetAppearanceFormLabelWidth(minimumClientWidth) <= 180, "appearance labels leave room for controls at minimum width");
@@ -275,6 +472,9 @@ using (var colorPicker = SettingsWindow.CreateColorPickerControl("#12abef"))
     AssertEqual("#12ABEF", colorValue.Text, "appearance color row shows the current hex value separately from the action");
     AssertEqual("Choose…", chooseColor.Text, "appearance color row has an explicit choose action");
     AssertTrue(!string.Equals(chooseColor.Text, colorValue.Text, StringComparison.Ordinal), "appearance color action is not a full-row color value button");
+    using var pickerBitmap = new Bitmap(colorPicker.Width, colorPicker.Height);
+    colorPicker.DrawToBitmap(pickerBitmap, new Rectangle(Point.Empty, colorPicker.Size));
+    AssertTrue(BitmapContainsColor(pickerBitmap, Color.FromArgb(0x12, 0xAB, 0xEF)), "appearance color picker visually renders the configured swatch color");
 }
 SynchronizationContext.SetSynchronizationContext(previousColorPickerContext);
 var screenshotClientWidth = 1018 - SettingsWindow.GetNavigationWidth() - SettingsWindow.GetClientContentPadding().Horizontal;
@@ -334,12 +534,24 @@ using (var liveShortcutList = new System.Windows.Forms.ListView { View = System.
     AssertTrue(!SettingsWindow.ControlHasHorizontalScrollbarForTests(liveShortcutList), "shown shortcut list does not expose a horizontal scrollbar at the rendered 900x620 minimum width");
 }
 SynchronizationContext.SetSynchronizationContext(previousShortcutListContext);
+Directory.CreateDirectory("artifacts/ui-review");
+var shortcutFixtureStore = new AgentConfigurationStore(Path.GetFullPath("artifacts/ui-review/shortcut-regression.json"));
+shortcutFixtureStore.Save(AgentConfiguration.CreateDefault() with { Shortcuts = new[]
+{
+    new ShortcutDefinition { Id = "test-first", Name = "First shortcut", Icon = "browser", Action = new ShortcutActionDefinition { Type = ShortcutActionTypes.OpenUrl, Url = "https://example.com/first" } },
+    new ShortcutDefinition { Id = "test-second", Name = "Second shortcut", Icon = "browser", Action = new ShortcutActionDefinition { Type = ShortcutActionTypes.OpenUrl, Url = "https://example.com/second" } }
+}});
+var catalogFixture = ShortcutCatalog.Create(new ShortcutConfiguration { Shortcuts = shortcutFixtureStore.LoadOrDefault().Shortcuts! });
+catalogFixture.Replace(new ShortcutConfiguration { Shortcuts = shortcutFixtureStore.LoadOrDefault().Shortcuts!.Reverse().ToArray() });
+AssertEqual("test-second", catalogFixture.DeviceConfiguration.Shortcuts[0].Id, "live catalog replacement updates the device order atomically");
+AssertTrue(catalogFixture.TryGetAction("test-second", out var liveAction) && liveAction.Url == "https://example.com/second", "live catalog replacement keeps executable actions available");
 var previousSettingsShortcutsContext = SynchronizationContext.Current;
+var settingsUiState = new AgentState();
 var settingsPairingStore = Path.Combine(Path.GetTempPath(), $"streamdeck-settings-shortcuts-{Guid.NewGuid():N}.json");
 using (var settingsIcon = AppIconFactory.CreateIcon())
 await using (var settingsRuntime = new WindowsAgentRuntime(new AgentState(), new PairingApprovalService(settingsPairingStore), AgentOptions.FromArgs(["--mock"]), listenPortOverride: 0))
 await using (var settingsDashboard = new LocalDashboardServer(new AgentState()))
-using (var settingsWindow = new SettingsWindow(new AgentState(), settingsRuntime, settingsDashboard, new WindowsStartupService(AgentOptions.FromArgs(["--mock"])), new PairingApprovalService(settingsPairingStore), settingsIcon))
+using (var settingsWindow = new SettingsWindow(settingsUiState, settingsRuntime, settingsDashboard, new WindowsStartupService(AgentOptions.FromArgs(["--mock"])), new PairingApprovalService(settingsPairingStore), settingsIcon, shortcutFixtureStore))
 {
     settingsWindow.StartPosition = FormStartPosition.Manual;
     settingsWindow.Location = new Point(-2000, -2000);
@@ -347,6 +559,39 @@ using (var settingsWindow = new SettingsWindow(new AgentState(), settingsRuntime
     settingsWindow.Size = SettingsWindow.GetMinimumWindowSizeForTests();
     settingsWindow.Show();
     System.Windows.Forms.Application.DoEvents();
+    AssertEqual(SettingsWindow.AppDisplayName, settingsWindow.Text, "settings window uses CYD-DECK title branding");
+    AssertEqual("CYD-DECK settings", settingsWindow.AccessibleName, "settings window uses CYD-DECK accessible branding");
+    AssertTrue(FlattenControls(settingsWindow).OfType<System.Windows.Forms.Label>().Any(label => label.Text == SettingsWindow.AppDisplayName), "settings navigation visually renders CYD-DECK branding");
+    var brandLabel = FlattenControls(settingsWindow).OfType<Label>().Single(label => label.Text == SettingsWindow.AppDisplayName);
+    AssertTrue(brandLabel.Visible && BoundsInClient(settingsWindow, brandLabel).Top < 100, "navigation branding remains above the navigation buttons");
+    using (var overviewBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
+    {
+        settingsWindow.DrawToBitmap(overviewBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
+        AssertTrue(BitmapContainsColor(overviewBitmap, Color.FromArgb(82, 153, 224)), "overview page renders the accent border/header at minimum size");
+        Directory.CreateDirectory("artifacts/ui-review");
+        overviewBitmap.Save("artifacts/ui-review/overview-minimum.png");
+    }
+    AssertEqual(ApartmentState.STA, Thread.CurrentThread.GetApartmentState(), "control tests run on STA for DragDrop");
+    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Device").PerformClick();
+    AssertTrue(!FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Restart").Enabled, "restart disabled when device offline");
+    settingsUiState.MarkDeviceConnected("ui-device", "UI CYD", "USB");
+    AssertTrue(FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Restart").Enabled, "restart enabled immediately after reconnect without page navigation");
+    settingsUiState.UpdateDeviceInfo(new DeviceInfoMessage("ui-firmware", 30,
+        new DeviceWifiInfo(true, "lab", -50, "192.168.1.8"), "192.168.1.10",
+        new DeviceStorageInfo(true, true, 1024, 512), new DeviceHeapInfo(1000, 900, 800)));
+    AssertTrue(FlattenControls(settingsWindow).OfType<Label>().Any(label => label.Text == "ui-firmware"), "first telemetry report adds device details without reopening page");
+    settingsUiState.MarkDeviceDisconnected("ui-device");
+    AssertTrue(!FlattenControls(settingsWindow).OfType<Label>().Any(label => label.Text == "ui-firmware"), "disconnect removes current telemetry from device page");
+    AssertTrue(!FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Restart").Enabled, "restart disabled immediately after disconnect");
+    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Overview").PerformClick();
+    settingsWindow.Size = new Size(1200, 800);
+    settingsWindow.PerformLayout();
+    using (var wideBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
+    {
+        settingsWindow.DrawToBitmap(wideBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
+        wideBitmap.Save("artifacts/ui-review/overview-wide.png");
+    }
+    settingsWindow.Size = SettingsWindow.GetMinimumWindowSizeForTests();
     FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Shortcuts").PerformClick();
     System.Windows.Forms.Application.DoEvents();
     settingsWindow.PerformLayout();
@@ -369,6 +614,69 @@ using (var settingsWindow = new SettingsWindow(new AgentState(), settingsRuntime
 
     AssertTrue(!SettingsWindow.ControlHasHorizontalScrollbarForTests(shortcutsBody), "shown settings shortcuts page body does not expose a horizontal scrollbar at 900x620");
     AssertTrue(shortcutsLists.All(list => !SettingsWindow.ControlHasHorizontalScrollbarForTests(list)), "shown settings shortcuts page lists do not expose horizontal scrollbars at 900x620");
+    var savedShortcutList = shortcutsLists.Single(list => list.AccessibleName == "Agent-side shortcuts");
+    savedShortcutList.Items[0].Selected = true;
+    Application.DoEvents();
+    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Move down").PerformClick();
+    Application.DoEvents();
+    AssertEqual("test-second", shortcutFixtureStore.LoadOrDefault().Shortcuts![0].Id, "Move down persists the selected shortcut order");
+    var reorderedList = FlattenControls(settingsWindow).OfType<ListView>().Single(list => list.AccessibleName == "Agent-side shortcuts");
+    AssertEqual("Second shortcut", reorderedList.Items[0].Text, "Move down updates the visible list");
+    AssertTrue(reorderedList.Items[1].Selected, "Move down retains selection on the moved shortcut");
+    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Move up").PerformClick();
+    Application.DoEvents();
+    AssertEqual("test-first", shortcutFixtureStore.LoadOrDefault().Shortcuts![0].Id, "Move up restores order without restarting Agent");
+    using (var shortcutBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
+    {
+        settingsWindow.DrawToBitmap(shortcutBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
+        shortcutBitmap.Save("artifacts/ui-review/shortcuts-minimum.png");
+    }
+    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Appearance").PerformClick();
+    Application.DoEvents();
+    AssertTrue(FlattenControls(settingsWindow).OfType<Button>().Any(button => button.Text == "First shortcut" && button.Enabled), "Appearance preview uses readable real shortcut names");
+    var appearancePreviewButton = FlattenControls(settingsWindow).OfType<Button>().Single(button => button.AccessibleName == "CYD shortcut preview slot 1");
+    AssertTrue(appearancePreviewButton.ForeColor.GetBrightness() > 0.7f, "dark Appearance preview keeps light text");
+    var appearanceBody = FlattenControls(settingsWindow).OfType<Panel>().Single(body => Equals(body.Tag, "settings-page-body"));
+    var finalDisplaySlider = FlattenControls(settingsWindow).OfType<TrackBar>().Last();
+    appearanceBody.ScrollControlIntoView(finalDisplaySlider);
+    Application.DoEvents();
+    var sliderBounds = BoundsInClient(settingsWindow, finalDisplaySlider);
+    var appearanceBodyBounds = BoundsInClient(settingsWindow, appearanceBody);
+    AssertTrue(sliderBounds.Top >= appearanceBodyBounds.Top && sliderBounds.Bottom <= appearanceBodyBounds.Bottom, "Appearance display controls can be fully scrolled above the footer");
+    using (var appearanceBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
+    {
+        settingsWindow.DrawToBitmap(appearanceBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
+        appearanceBitmap.Save("artifacts/ui-review/appearance-scrolled.png");
+    }
+
+    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Pairing").PerformClick();
+    Application.DoEvents();
+    var stablePairingLists = FlattenControls(settingsWindow).OfType<ListView>().ToArray();
+    AssertTrue(!FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Approve").Enabled, "empty Pairing never enables Approve");
+    settingsUiState.SetMode("live");
+    Application.DoEvents();
+    AssertTrue(stablePairingLists.All(list => !list.IsDisposed && FlattenControls(settingsWindow).Contains(list)), "telemetry leaves Pairing controls and user interaction intact");
+    using (var pairingBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
+    {
+        settingsWindow.DrawToBitmap(pairingBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
+        pairingBitmap.Save("artifacts/ui-review/pairing-minimum.png");
+    }
+    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Logs").PerformClick();
+    System.Windows.Forms.Application.DoEvents();
+    var visibleLogSearch = FlattenControls(settingsWindow).OfType<TextBox>()
+        .Single(control => control.Visible && control.AccessibleName == "Search recent logs");
+    var visibleLogSeverityFilter = FlattenControls(settingsWindow).OfType<CheckBox>()
+        .Single(control => control.Visible && control.AccessibleName == "Show error log entries only");
+    AssertTrue(visibleLogSearch.Width >= 250, "Logs search input remains usable at minimum window size");
+    AssertEqual("Errors only", visibleLogSeverityFilter.Text, "Logs severity filter communicates error-only results");
+    for (var round = 0; round < 12; round++)
+        foreach (var pageName in new[] { "Overview", "Shortcuts", "Appearance", "Device", "Pairing", "Updates", "Logs" })
+        {
+            FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == pageName).PerformClick();
+            settingsUiState.SetMode("live");
+            Application.DoEvents();
+            AssertTrue(!settingsWindow.IsDisposed, $"page switching stress stays alive: {pageName}");
+        }
     settingsWindow.CloseForExit();
 }
 SynchronizationContext.SetSynchronizationContext(previousSettingsShortcutsContext);
@@ -397,10 +705,11 @@ using (var shortcutEditor = new ShortcutEditorDialog())
     AssertShortcutEditorLayout(shortcutEditor, new Size(720, 600), "regular");
 }
 SynchronizationContext.SetSynchronizationContext(previousShortcutEditorContext);
+});
 var liveOverview = SettingsWindow.CreateLiveInfoValues("Overview", new AgentStatusSnapshot(
     "connected", "device-1", "CYD", "192.168.1.8:1234", 8765, 5000, "live", ["192.168.1.10"]));
 AssertEqual("Connected", liveOverview["CYD"], "overview live device state");
-AssertEqual("Connected", liveOverview["WebSocket"], "overview live websocket state");
+AssertEqual("Connected", liveOverview["Agent service"], "overview live websocket state");
 AssertEqual("192.168.1.10", liveOverview["LAN IP"], "overview live lan address");
 AssertThrows<AgentConfigurationException>(
     () => ConfigurationExportService.Import("""{"formatVersion":999,"configuration":{}}"""),
@@ -461,7 +770,8 @@ await using (var dashboard = new LocalDashboardServer(state))
         typeof(LocalDashboardServer),
         typeof(WindowsStartupService),
         typeof(IPairingApprovalService),
-        typeof(Icon)]);
+        typeof(Icon),
+        typeof(AgentConfigurationStore)]);
     AssertTrue(settingsConstructor is not null, "settings window is wired with native pairing service");
 }
 
@@ -498,6 +808,8 @@ await using (var listener = new WindowsAgentWebSocketServer(
     AssertEqual("test-device", pending[0].DeviceId, "pending pairing device");
     await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "test complete", timeout.Token);
 }
+
+await TestWebSocketLoopbackBidirectionalPairingAsync();
 
 var coverCacheDirectory = Path.Combine(Path.GetTempPath(), $"streamdeck-covers-{Guid.NewGuid():N}");
 var coverId = new string('a', 64);
@@ -625,6 +937,414 @@ await TestArduinoOtaValidationFailuresAsync();
 
 Console.WriteLine("PASS StreamDeck.WindowsAgent smoke tests");
 
+static async Task TestWebSocketLoopbackBidirectionalPairingAsync()
+{
+    var state = new AgentState();
+    var pairing = new PairingApprovalService(Path.Combine(Path.GetTempPath(), $"streamdeck-ws-e2e-pairing-{Guid.NewGuid():N}.json"));
+    await using var listener = new WindowsAgentWebSocketServer(
+        new TransportOptions
+        {
+            BindAddress = IPAddress.Loopback,
+            Port = 0,
+            WebSocketPath = "/ws",
+            AllowRemoteClients = false
+        },
+        CreateTestDispatcher(),
+        pairing,
+        state,
+        new AppearanceConfiguration());
+
+    await listener.StartAsync();
+    AssertTrue(listener.Port > 0, "loopback websocket listener uses an ephemeral port");
+    AssertTrue(listener.Port != 8765, "loopback websocket acceptance test does not bind the default agent port");
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+    const string deviceId = "ws-e2e-device";
+
+    using var firstSocket = new ClientWebSocket();
+    await firstSocket.ConnectAsync(new Uri($"ws://127.0.0.1:{listener.Port}/ws"), timeout.Token);
+    await SendStringAsync(firstSocket, ProtocolSerializer.Serialize(
+        ProtocolConstants.MessageTypes.Hello,
+        requestId: null,
+        new HelloMessage(deviceId, "Loopback CYD", "esp32", [])), timeout.Token);
+
+    var pendingReply = await ReceiveStringAsync(firstSocket, timeout.Token);
+    AssertContains("reconnecting", pendingReply, "loopback websocket pending hello response");
+    var pending = await pairing.ListPendingAsync(timeout.Token);
+    AssertEqual(1, pending.Count, "loopback websocket pending pairing count");
+    AssertEqual(deviceId, pending[0].DeviceId, "loopback websocket pending device id");
+
+    AssertTrue(await pairing.ApproveAsync(deviceId, timeout.Token), "loopback websocket pairing approval succeeds");
+    var approvedMessages = await ReceiveUntilTypesAsync(firstSocket, [
+        ProtocolConstants.MessageTypes.PairingToken,
+        ProtocolConstants.MessageTypes.Hello,
+        ProtocolConstants.MessageTypes.ConnectionState,
+        ProtocolConstants.MessageTypes.DeviceSettings
+    ], timeout.Token);
+    var pairingTokenFrame = approvedMessages.Single(message => MessageType(message) == ProtocolConstants.MessageTypes.PairingToken);
+    using var pairingTokenDocument = JsonDocument.Parse(pairingTokenFrame);
+    var bearerToken = pairingTokenDocument.RootElement.GetProperty("data").GetProperty("token").GetString();
+    AssertTrue(!string.IsNullOrWhiteSpace(bearerToken), "loopback websocket approval returns bearer token in memory");
+    AssertEqual(ProtocolConstants.MessageTypes.PairingToken, MessageType(approvedMessages[0]), "pairing token precedes agent hello after approval");
+    AssertEqual(ProtocolConstants.MessageTypes.Hello, MessageType(approvedMessages[1]), "agent hello follows pairing token after approval");
+    AssertTrue(approvedMessages.Any(message => message.Contains("\"state\":\"connected\"", StringComparison.Ordinal)), "approved loopback websocket reports connected");
+
+    await firstSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "reconnect", timeout.Token);
+
+    using var reconnectSocket = new ClientWebSocket();
+    await reconnectSocket.ConnectAsync(new Uri($"ws://127.0.0.1:{listener.Port}/ws?token={Uri.EscapeDataString(bearerToken!)}"), timeout.Token);
+    await SendStringAsync(reconnectSocket, ProtocolSerializer.Serialize(
+        ProtocolConstants.MessageTypes.Hello,
+        requestId: null,
+        new HelloMessage(deviceId, "Loopback CYD", "esp32", [])), timeout.Token);
+    var reconnectMessages = await ReceiveUntilTypesAsync(reconnectSocket, [
+        ProtocolConstants.MessageTypes.Hello,
+        ProtocolConstants.MessageTypes.ConnectionState,
+        ProtocolConstants.MessageTypes.DeviceSettings
+    ], timeout.Token);
+    AssertTrue(!reconnectMessages.Any(message => MessageType(message) == ProtocolConstants.MessageTypes.PairingToken), "websocket bearer reconnect does not echo pairing token");
+    AssertTrue(reconnectMessages.Any(message => message.Contains("\"state\":\"connected\"", StringComparison.Ordinal)), "websocket bearer reconnect reports connected");
+
+    var hostToDeviceMessage = ProtocolStateMapper.CreateDeviceSettings("ws-settings-e2e", new AppearanceConfiguration());
+    AssertTrue(await listener.SendToActiveDeviceAsync(hostToDeviceMessage, timeout.Token), "loopback websocket sends host frame to active device");
+    var deviceReceived = await ReceiveUntilContainsAsync(reconnectSocket, "ws-settings-e2e", timeout.Token);
+    AssertContains("ws-settings-e2e", deviceReceived, "device receives host-to-device websocket frame");
+
+    await SendStringAsync(reconnectSocket, ProtocolSerializer.Serialize(
+        ProtocolConstants.MessageTypes.Ping,
+        requestId: "ws-ping-e2e",
+        new PingMessage(1234)), timeout.Token);
+    var pong = await ReceiveStringAsync(reconnectSocket, timeout.Token);
+    AssertContains(ProtocolConstants.MessageTypes.Pong, pong, "device-to-agent websocket ping receives pong");
+
+    await reconnectSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "test complete", timeout.Token);
+}
+
+static async Task TestUsbLineProtocolTransportAsync()
+{
+    var written = new List<string>();
+    var stream = new FakeUsbDuplexStream(written);
+    UsbLineProtocolTransport? transport = null;
+    var sink = new UsbProtocolSink((message, token) => transport!.SendFrameAsync(message, token));
+    var session = new DeviceProtocolSession(CreateTestDispatcher(), new RejectingDeviceAuthorizer(), sink);
+    transport = new UsbLineProtocolTransport(stream, session, sink, maxFrameBytes: 256);
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    var run = transport.RunAsync(cts.Token);
+    await stream.InjectAsync(Encoding.UTF8.GetBytes("{\"protocol\":1,\"type\":\"media.command\",\"requestId\":\"blocked\",\"data\":{\"command\":\"next\"}}\r\n"));
+    await WaitUntilAsync(() => written.Any(message => message.Contains("unauthorized", StringComparison.Ordinal)), cts.Token);
+    AssertTrue(written.Any(message => message.Contains("ack", StringComparison.Ordinal)), "usb pre-auth commands fail closed with ack");
+
+    await stream.InjectAsync(Encoding.UTF8.GetBytes(new string('x', 300) + "\n"));
+    await WaitUntilAsync(() => written.Any(message => message.Contains("too large", StringComparison.Ordinal)), cts.Token);
+    await stream.InjectAsync([0xC3, 0x28, (byte)'\n']);
+    await WaitUntilAsync(() => written.Any(message => message.Contains("valid UTF-8", StringComparison.Ordinal)), cts.Token);
+    await transport.SendFrameAsync("{}", cts.Token);
+    AssertTrue(written.Any(message => message == "{}\r\n"), "usb outgoing frames are CRLF delimited");
+    await Task.WhenAll(Enumerable.Range(0, 16).Select(index => transport.SendFrameAsync($"{{\"index\":{index}}}", cts.Token).AsTask()));
+    AssertEqual(16, written.Count(message => message.StartsWith("{\"index\":", StringComparison.Ordinal) && message.EndsWith("}\r\n", StringComparison.Ordinal)), "usb outgoing writes are serialized as complete frames");
+    await transport.DisposeAsync();
+    try { await run; } catch (ObjectDisposedException) { } catch (OperationCanceledException) { }
+}
+
+static async Task TestUsbCoverSenderAsync()
+{
+    var coverCacheDirectory = Path.Combine(Path.GetTempPath(), $"streamdeck-usb-covers-{Guid.NewGuid():N}");
+    var coverId = new string('c', 64);
+    Directory.CreateDirectory(Path.Combine(coverCacheDirectory, "covers"));
+    var coverBytes = Enumerable.Range(0, UsbCoverSender.MaxRawChunkBytes + 17).Select(index => (byte)(index % 251)).ToArray();
+    await File.WriteAllBytesAsync(Path.Combine(coverCacheDirectory, "covers", $"{coverId}.jpg"), coverBytes);
+    var sink = new MemoryProtocolSink();
+    var sender = new UsbCoverSender(coverCacheDirectory, TimeSpan.Zero);
+
+    AssertTrue(await sender.SendCoverAsync(coverId, sink), "usb cover sender returns true for cache hit");
+    AssertEqual(3, sink.Messages.Count, "usb cover sender sends bounded chunks and complete");
+    AssertTrue(!sink.Messages.Any(message => message.Contains("\\u002B", StringComparison.OrdinalIgnoreCase)), "USB base64 uses literal plus characters understood by firmware");
+    using var first = JsonDocument.Parse(sink.Messages[0]);
+    AssertEqual("cover.chunk", first.RootElement.GetProperty("type").GetString(), "usb cover chunk type");
+    AssertEqual(coverId, first.RootElement.GetProperty("data").GetProperty("coverId").GetString(), "usb cover chunk cover id");
+    AssertEqual(0, first.RootElement.GetProperty("data").GetProperty("offset").GetInt32(), "usb cover chunk offset");
+    AssertEqual(coverBytes.Length, first.RootElement.GetProperty("data").GetProperty("total").GetInt32(), "usb cover chunk total");
+    AssertTrue(Convert.FromBase64String(first.RootElement.GetProperty("data").GetProperty("data").GetString()!).Length <= UsbCoverSender.MaxRawChunkBytes, "usb cover chunk raw size bound");
+    using var complete = JsonDocument.Parse(sink.Messages[^1]);
+    AssertEqual("cover.complete", complete.RootElement.GetProperty("type").GetString(), "usb cover complete type");
+    var repeatedFrames = new List<string>();
+    var activeSink = new UsbDeviceRuntime.ActiveUsbSink(new AgentState(), coverCacheDirectory,
+        message => { repeatedFrames.Add(message); return ValueTask.CompletedTask; }, _ => { });
+    var update = ProtocolSerializer.Serialize(ProtocolConstants.MessageTypes.MediaUpdate, null,
+        new MediaUpdateMessage("Title", "Artist", "Album", true, 0, 1000, coverId, null));
+    await activeSink.TrySendCoverForMediaUpdateAsync(update);
+    await activeSink.TrySendCoverForMediaUpdateAsync(update);
+    AssertEqual(1, repeatedFrames.Count(message => message.Contains("cover.complete", StringComparison.Ordinal)), "unchanged artwork transfers only once per USB session");
+    var cacheFrames = new List<string>();
+    var cachedSink = new UsbDeviceRuntime.ActiveUsbSink(new AgentState(), coverCacheDirectory,
+        message => { cacheFrames.Add(message); return ValueTask.CompletedTask; }, _ => { });
+    cachedSink.TrackIncoming(ProtocolSerializer.Serialize(ProtocolConstants.MessageTypes.Hello, null,
+        new HelloMessage("cached-device", "CYD", "esp32", ["cover-cache-request"])));
+    await cachedSink.SendUpdateAsync(update);
+    await cachedSink.SendUpdateAsync(update);
+    AssertEqual(0, cacheFrames.Count(message => message.Contains("cover.chunk", StringComparison.Ordinal)), "SD cache hit sends metadata without artwork bytes");
+    await cachedSink.SendRequestedCoverAsync(new CoverRequestMessage(new string('d', 64)));
+    AssertEqual(0, cacheFrames.Count(message => message.Contains("cover.complete", StringComparison.Ordinal)), "stale cache request cannot transfer unrelated artwork");
+    await cachedSink.SendRequestedCoverAsync(new CoverRequestMessage(coverId));
+    await cachedSink.SendRequestedCoverAsync(new CoverRequestMessage(coverId));
+    AssertEqual(1, cacheFrames.Count(message => message.Contains("cover.complete", StringComparison.Ordinal)), "cache miss requests one transfer and duplicate requests are deduplicated");
+    await cachedSink.SendUpdateAsync(update);
+    AssertEqual(1, cacheFrames.Count(message => message.Contains("cover.complete", StringComparison.Ordinal)), "metadata after cached artwork does not retransmit it");
+    Directory.Delete(coverCacheDirectory, recursive: true);
+}
+
+static async Task TestUsbDeviceRuntimeHandshakeAsync()
+{
+    var written = new List<string>();
+    var stream = new FakeUsbDuplexStream(written);
+    var reconnectWritten = new List<string>();
+    var reconnectStream = new FakeUsbDuplexStream(reconnectWritten);
+    var streams = new Queue<IUsbDuplexStream>([stream, reconnectStream]);
+    var state = new AgentState();
+    state.SetHostListening(8765);
+    var pairing = new PairingApprovalService(Path.Combine(Path.GetTempPath(), $"streamdeck-usb-runtime-pairing-{Guid.NewGuid():N}.json"));
+    await using var runtime = new UsbDeviceRuntime(
+        () => streams.Dequeue(),
+        CreateTestDispatcher(),
+        pairing,
+        state,
+        new AppearanceConfiguration { Brightness = 42 },
+        new DeviceShortcutConfiguration([new DeviceShortcutDefinition("docs", "Docs", "browser", ShortcutDisplayModes.Both)]),
+        Path.Combine(Path.GetTempPath(), $"streamdeck-usb-runtime-covers-{Guid.NewGuid():N}"),
+        initialAudioProvider: () => new AudioSnapshot(31, false));
+
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await runtime.StartAsync(timeout.Token);
+    await stream.InjectAsync(Encoding.UTF8.GetBytes(ProtocolSerializer.Serialize(
+        ProtocolConstants.MessageTypes.Hello,
+        requestId: null,
+        new HelloMessage("usb-device", "USB CYD", "esp32", [])) + "\r\n"));
+
+    await WaitUntilAsync(() => written.Any(message => message.Contains("reconnecting", StringComparison.Ordinal)), timeout.Token);
+    var pending = await pairing.ListPendingAsync(timeout.Token);
+    AssertEqual(1, pending.Count, "usb runtime creates a pending pairing after hello");
+    AssertEqual("usb-device", pending[0].DeviceId, "usb pending device id");
+    AssertTrue(await pairing.ApproveAsync("usb-device", timeout.Token), "usb pending device approved");
+    await WaitUntilAsync(() => written.Any(message => message.Contains("\"type\":\"connection.state\"", StringComparison.Ordinal) && message.Contains("connected", StringComparison.Ordinal)), timeout.Token);
+    await WaitUntilAsync(() => state.Snapshot().HostStatus == "connected", timeout.Token);
+    var snapshot = state.Snapshot();
+    AssertEqual("usb-device", snapshot.DeviceId, "usb runtime connected device id");
+    AssertEqual("USB", snapshot.RemoteAddress, "usb runtime connected route");
+    AssertTrue(written.Any(message => message.Contains("\"type\":\"pairing.token\"", StringComparison.Ordinal)), "usb approval sends bearer token before ready state");
+    var pairingTokenFrame = written.Single(message => message.Contains("\"type\":\"pairing.token\"", StringComparison.Ordinal));
+    using var pairingTokenDocument = JsonDocument.Parse(pairingTokenFrame);
+    var bearerToken = pairingTokenDocument.RootElement.GetProperty("data").GetProperty("token").GetString();
+    AssertTrue(written.Any(message => message.Contains("\"type\":\"device.settings\"", StringComparison.Ordinal)), "usb approval sends initial device settings");
+    AssertTrue(written.Any(message => message.Contains("\"type\":\"shortcuts.update\"", StringComparison.Ordinal)), "usb approval sends initial shortcuts");
+    AssertTrue(written.Any(message => message.Contains("\"type\":\"audio.update\"", StringComparison.Ordinal)), "usb approval sends initial audio");
+
+    AssertTrue(await runtime.SendToActiveDeviceAsync(ProtocolStateMapper.CreateDeviceSettings("settings-test", new AppearanceConfiguration()), timeout.Token), "usb active device accepts host command after approval");
+    AssertTrue(written.Any(message => message.Contains("settings-test", StringComparison.Ordinal)), "usb active sink sends host command after approval");
+
+    state.MarkDeviceConnected("usb-device", "USB CYD", "192.168.1.80:1234");
+    await stream.FailAsync();
+    await WaitUntilAsync(() => stream.DisposeCount > 0, timeout.Token);
+    await WaitUntilAsync(() => !runtime.IsReady, timeout.Token);
+    var wifiSnapshot = state.Snapshot();
+    AssertEqual("connected", wifiSnapshot.HostStatus, "usb disconnect preserves simultaneous WiFi connection state");
+    AssertEqual("192.168.1.80:1234", wifiSnapshot.RemoteAddress, "usb disconnect preserves simultaneous WiFi remote address");
+
+    await reconnectStream.InjectAsync(Encoding.UTF8.GetBytes(ProtocolSerializer.Serialize(
+        ProtocolConstants.MessageTypes.Hello,
+        requestId: null,
+        new HelloMessage("usb-device", "USB CYD", "esp32", [], bearerToken)) + "\r\n"));
+    await WaitUntilAsync(() => reconnectWritten.Any(message => message.Contains("\"type\":\"connection.state\"", StringComparison.Ordinal) && message.Contains("connected", StringComparison.Ordinal)), timeout.Token);
+    var echoedTokenFrame = reconnectWritten.Single(message => message.Contains("\"type\":\"pairing.token\"", StringComparison.Ordinal));
+    using var echoedTokenDocument = JsonDocument.Parse(echoedTokenFrame);
+    AssertEqual(bearerToken, echoedTokenDocument.RootElement.GetProperty("data").GetProperty("token").GetString(), "USB reconnect echoes only the bearer token verified from hello");
+}
+
+static async Task TestUsbRuntimeAdvancesFromSilentCandidateToValidEsp32HelloAsync()
+{
+    var firstWritten = new List<string>();
+    var secondWritten = new List<string>();
+    var first = new FakeUsbDuplexStream(firstWritten);
+    var second = new FakeUsbDuplexStream(secondWritten);
+    var opened = new List<string>();
+    var pairing = new PairingApprovalService(Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-advance-{Guid.NewGuid():N}.json"));
+    await using var runtime = new UsbDeviceRuntime(
+        () => ["COM5", "COM8"],
+        port =>
+        {
+            opened.Add(port);
+            return port == "COM5" ? first : second;
+        },
+        CreateTestDispatcher(),
+        pairing,
+        new AgentState(),
+        new AppearanceConfiguration(),
+        new DeviceShortcutConfiguration([]),
+        Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-advance-covers-{Guid.NewGuid():N}"),
+        helloProbeTimeout: TimeSpan.FromMilliseconds(40));
+
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    await runtime.StartAsync(timeout.Token);
+    await WaitUntilAsync(() => first.DisposeCount > 0 && opened.Contains("COM8", StringComparer.Ordinal), timeout.Token);
+    await second.InjectAsync(Encoding.UTF8.GetBytes(CreateUsbHello("usb-probe-device", "esp32") + "\r\n"));
+    await WaitUntilAsync(() => secondWritten.Any(message => message.Contains("reconnecting", StringComparison.Ordinal)), timeout.Token);
+
+    AssertEqual("COM5,COM8", string.Join(',', opened.Take(2)), "USB probe advances from silent candidate to next CH340 port");
+    var pending = await pairing.ListPendingAsync(timeout.Token);
+    AssertEqual("usb-probe-device", pending.Single().DeviceId, "second valid ESP32 hello stays alive for user pairing");
+}
+
+static async Task TestUsbRuntimeRejectsWrongRoleHelloAsync()
+{
+    var wrongWritten = new List<string>();
+    var validWritten = new List<string>();
+    var wrong = new FakeUsbDuplexStream(wrongWritten);
+    var valid = new FakeUsbDuplexStream(validWritten);
+    var opened = new List<string>();
+    await using var runtime = new UsbDeviceRuntime(
+        () => ["COM5", "COM8"],
+        port =>
+        {
+            opened.Add(port);
+            return port == "COM5" ? wrong : valid;
+        },
+        CreateTestDispatcher(),
+        new PairingApprovalService(Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-role-{Guid.NewGuid():N}.json")),
+        new AgentState(),
+        new AppearanceConfiguration(),
+        new DeviceShortcutConfiguration([]),
+        Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-role-covers-{Guid.NewGuid():N}"),
+        helloProbeTimeout: TimeSpan.FromMilliseconds(200));
+
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    await runtime.StartAsync(timeout.Token);
+    await wrong.InjectAsync(Encoding.UTF8.GetBytes(CreateUsbHello("wrong-role", "desktop") + "\r\n"));
+    await WaitUntilAsync(() => wrong.DisposeCount > 0 && opened.Contains("COM8", StringComparer.Ordinal), timeout.Token);
+    await valid.InjectAsync(Encoding.UTF8.GetBytes(CreateUsbHello("valid-role", "esp32") + "\r\n"));
+    await WaitUntilAsync(() => validWritten.Any(message => message.Contains("reconnecting", StringComparison.Ordinal)), timeout.Token);
+
+    AssertTrue(!wrongWritten.Any(message => message.Contains("connected", StringComparison.Ordinal)), "wrong-role hello does not select a USB candidate");
+}
+
+static async Task TestUsbRuntimeHardOverrideRetriesSinglePortAsync()
+{
+    var first = new FakeUsbDuplexStream([]);
+    var second = new FakeUsbDuplexStream([]);
+    var opened = new List<string>();
+    await using var runtime = new UsbDeviceRuntime(
+        () => ["COM7"],
+        _ =>
+        {
+            opened.Add("COM7");
+            return opened.Count == 1 ? first : second;
+        },
+        CreateTestDispatcher(),
+        new PairingApprovalService(Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-override-{Guid.NewGuid():N}.json")),
+        new AgentState(),
+        new AppearanceConfiguration(),
+        new DeviceShortcutConfiguration([]),
+        Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-override-covers-{Guid.NewGuid():N}"),
+        helloProbeTimeout: TimeSpan.FromMilliseconds(40));
+
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    await runtime.StartAsync(timeout.Token);
+    await WaitUntilAsync(() => opened.Count >= 2, timeout.Token);
+
+    AssertTrue(opened.All(port => port == "COM7"), "hard USB override retries only the configured port");
+    AssertEqual(1, first.DisposeCount, "timed-out hard override probe is disposed before retry");
+}
+
+static async Task TestUsbRuntimeDisposesTimedOutProbeAsync()
+{
+    var stream = new FakeUsbDuplexStream([]);
+    await using var runtime = new UsbDeviceRuntime(
+        () => ["COM5"],
+        _ => stream,
+        CreateTestDispatcher(),
+        new PairingApprovalService(Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-timeout-{Guid.NewGuid():N}.json")),
+        new AgentState(),
+        new AppearanceConfiguration(),
+        new DeviceShortcutConfiguration([]),
+        Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-timeout-covers-{Guid.NewGuid():N}"),
+        helloProbeTimeout: TimeSpan.FromMilliseconds(40));
+
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    await runtime.StartAsync(timeout.Token);
+    await WaitUntilAsync(() => stream.DisposeCount > 0, timeout.Token);
+
+    AssertTrue(!runtime.IsReady, "timed-out USB probe is not marked ready");
+}
+
+static async Task TestUsbProbeDoesNotConsumeFrameAfterHelloAsync()
+{
+    var written = new List<string>();
+    var stream = new FakeUsbDuplexStream(written);
+    await using var runtime = new UsbDeviceRuntime(
+        () => ["COM5"],
+        _ => stream,
+        CreateTestDispatcher(),
+        new PairingApprovalService(Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-buffer-{Guid.NewGuid():N}.json")),
+        new AgentState(),
+        new AppearanceConfiguration(),
+        new DeviceShortcutConfiguration([]),
+        Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-buffer-covers-{Guid.NewGuid():N}"),
+        helloProbeTimeout: TimeSpan.FromMilliseconds(200));
+
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    await runtime.StartAsync(timeout.Token);
+    var hello = CreateUsbHello("usb-buffer-device", "esp32");
+    var followingFrame = ProtocolSerializer.Serialize(
+        ProtocolConstants.MessageTypes.MediaCommand,
+        requestId: "after-hello",
+        new MediaCommandMessage(MediaCommand.Next));
+    await stream.InjectAsync(Encoding.UTF8.GetBytes(hello + "\r\n" + followingFrame + "\r\n"));
+
+    await WaitUntilAsync(() => written.Any(message => message.Contains("after-hello", StringComparison.Ordinal)), timeout.Token);
+    AssertTrue(written.Any(message => message.Contains("unauthorized", StringComparison.Ordinal)), "frame immediately after probed hello reaches normal USB session");
+}
+
+static async Task TestUsbProbeRecoversFromLeadingEmptyLineAndFragmentAsync()
+{
+    var written = new List<string>();
+    var stream = new FakeUsbDuplexStream(written);
+    var pairing = new PairingApprovalService(Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-recover-{Guid.NewGuid():N}.json"));
+    await using var runtime = new UsbDeviceRuntime(
+        () => ["COM5"],
+        _ => stream,
+        CreateTestDispatcher(),
+        pairing,
+        new AgentState(),
+        new AppearanceConfiguration(),
+        new DeviceShortcutConfiguration([]),
+        Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-recover-covers-{Guid.NewGuid():N}"),
+        helloProbeTimeout: TimeSpan.FromMilliseconds(500));
+
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    await runtime.StartAsync(timeout.Token);
+    var hello = CreateUsbHello("usb-recovered-device", "esp32");
+    await stream.InjectAsync(Encoding.UTF8.GetBytes("\r\n\r\n{\"partial-fragment-mid-transmission\r\n" + hello + "\r\n"));
+
+    await WaitUntilAsync(() => written.Any(message => message.Contains("reconnecting", StringComparison.Ordinal)), timeout.Token);
+    var pending = await pairing.ListPendingAsync(timeout.Token);
+    AssertEqual("usb-recovered-device", pending.Single().DeviceId, "USB probe recovers from leading empty lines and mid-stream fragments");
+}
+
+static string CreateUsbHello(string deviceId, string role)
+{
+    return ProtocolSerializer.Serialize(
+        ProtocolConstants.MessageTypes.Hello,
+        requestId: null,
+        new HelloMessage(deviceId, "USB CYD", role, []));
+}
+
+static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)
+{
+    while (!condition())
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await Task.Delay(10, cancellationToken);
+    }
+}
+
 static async Task TestArduinoOtaUploadSuccessAsync()
 {
     var firmware = CreateFirmwareImage(4096);
@@ -735,6 +1455,38 @@ static async Task<string> ReceiveStringAsync(ClientWebSocket socket, Cancellatio
     var buffer = new byte[16 * 1024];
     var result = await socket.ReceiveAsync(buffer, cancellationToken);
     return Encoding.UTF8.GetString(buffer, 0, result.Count);
+}
+
+static async Task<List<string>> ReceiveUntilTypesAsync(ClientWebSocket socket, IEnumerable<string> expectedTypes, CancellationToken cancellationToken)
+{
+    var remaining = new HashSet<string>(expectedTypes, StringComparer.Ordinal);
+    var messages = new List<string>();
+    while (remaining.Count > 0)
+    {
+        var message = await ReceiveStringAsync(socket, cancellationToken);
+        messages.Add(message);
+        remaining.Remove(MessageType(message));
+    }
+
+    return messages;
+}
+
+static async Task<string> ReceiveUntilContainsAsync(ClientWebSocket socket, string expectedContent, CancellationToken cancellationToken)
+{
+    while (true)
+    {
+        var message = await ReceiveStringAsync(socket, cancellationToken);
+        if (message.Contains(expectedContent, StringComparison.Ordinal))
+        {
+            return message;
+        }
+    }
+}
+
+static string MessageType(string message)
+{
+    using var document = JsonDocument.Parse(message);
+    return document.RootElement.GetProperty("type").GetString() ?? string.Empty;
 }
 
 static async Task<byte[]> QueryMdnsAsync(int expectedPort, CancellationToken cancellationToken)
@@ -920,9 +1672,51 @@ static Rectangle BoundsInClient(System.Windows.Forms.Form form, System.Windows.F
     return new Rectangle(form.PointToClient(screenBounds.Location), screenBounds.Size);
 }
 
+static bool BitmapContainsColor(Bitmap bitmap, Color expected)
+{
+    for (var y = 0; y < bitmap.Height; y++)
+    {
+        for (var x = 0; x < bitmap.Width; x++)
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            if (Math.Abs(pixel.R - expected.R) <= 2
+                && Math.Abs(pixel.G - expected.G) <= 2
+                && Math.Abs(pixel.B - expected.B) <= 2)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 static string DescribeControl(System.Windows.Forms.Control control) => string.IsNullOrWhiteSpace(control.AccessibleName)
     ? $"{control.GetType().Name} '{control.Text}'"
     : control.AccessibleName;
+
+static Task RunOnStaAsync(Func<Task> test)
+{
+    var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var thread = new Thread(() =>
+    {
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+        using var context = new ApplicationContext();
+        using var dispatcher = new Control();
+        dispatcher.CreateControl();
+        dispatcher.BeginInvoke(async () =>
+        {
+            try { await test(); completion.TrySetResult(); }
+            catch (Exception exception) { completion.TrySetException(exception); }
+            finally { context.ExitThread(); }
+        });
+        Application.Run(context);
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.IsBackground = true;
+    thread.Start();
+    return completion.Task;
+}
 
 sealed class TestMediaController : IHostMediaController
 {
@@ -954,6 +1748,80 @@ sealed class TestShortcutExecutor : IHostShortcutExecutor
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(true);
+    }
+}
+
+sealed class FakeUsbDuplexStream(List<string> written) : IUsbDuplexStream
+{
+    private readonly MemoryStream pending = new();
+    private readonly SemaphoreSlim available = new(0);
+    private bool disposed;
+    private Exception? readFailure;
+
+    public int DisposeCount { get; private set; }
+
+    public async Task InjectAsync(byte[] bytes)
+    {
+        lock (pending)
+        {
+            var position = pending.Position;
+            pending.Position = pending.Length;
+            pending.Write(bytes);
+            pending.Position = position;
+        }
+        available.Release();
+        await Task.Yield();
+    }
+
+    public async Task CompleteAsync()
+    {
+        disposed = true;
+        available.Release();
+        await Task.Yield();
+    }
+
+    public async Task FailAsync()
+    {
+        readFailure = new IOException("simulated USB detach");
+        available.Release();
+        await Task.Yield();
+    }
+
+    public async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        await available.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (readFailure is not null) throw readFailure;
+        if (disposed) return 0;
+        lock (pending)
+        {
+            pending.Position = 0;
+            var count = pending.Read(buffer.Span);
+            var rest = pending.ToArray().AsSpan(count).ToArray();
+            pending.SetLength(0);
+            pending.Write(rest);
+            pending.Position = 0;
+            if (pending.Length > 0) available.Release();
+            return count;
+        }
+    }
+
+    public ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
+    {
+        lock (written)
+        {
+            written.Add(Encoding.UTF8.GetString(buffer.Span));
+        }
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        DisposeCount++;
+        disposed = true;
+        available.Release();
+        pending.Dispose();
+        available.Dispose();
+        return ValueTask.CompletedTask;
     }
 }
 

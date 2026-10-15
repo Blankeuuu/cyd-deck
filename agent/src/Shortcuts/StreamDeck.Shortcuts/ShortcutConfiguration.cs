@@ -19,6 +19,9 @@ public sealed record ShortcutDefinition
     [JsonPropertyName("icon")]
     public string Icon { get; init; } = string.Empty;
 
+    [JsonPropertyName("displayMode")]
+    public string DisplayMode { get; init; } = ShortcutDisplayModes.Label;
+
     [JsonPropertyName("action")]
     public ShortcutActionDefinition Action { get; init; } = new();
 }
@@ -47,7 +50,19 @@ public sealed record ShortcutActionDefinition
     public string? AdapterKey { get; init; }
 }
 
-public sealed record DeviceShortcutDefinition(string Id, string Name, string Icon, string ActionType);
+public static class ShortcutDisplayModes
+{
+    public const string Label = "label";
+    public const string Icon = "icon";
+    public const string Both = "both";
+
+    public static bool IsKnown(string? value)
+    {
+        return value is Label or Icon or Both;
+    }
+}
+
+public sealed record DeviceShortcutDefinition(string Id, string Name, string Icon, string DisplayMode);
 
 public sealed record DeviceShortcutConfiguration(IReadOnlyList<DeviceShortcutDefinition> Shortcuts);
 

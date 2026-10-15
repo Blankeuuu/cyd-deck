@@ -11,7 +11,7 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
     private readonly LocalDashboardServer dashboard;
     private readonly WindowsStartupService startup;
     private readonly IPairingApprovalService pairing;
-    private readonly SynchronizationContext uiContext;
+    private readonly Control uiControl;
     private readonly Icon appIcon;
     private readonly NotifyIcon notifyIcon;
     private readonly ToolStripMenuItem statusItem = new("Device: Disconnected");
@@ -28,18 +28,17 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
         LocalDashboardServer dashboard,
         WindowsStartupService startup,
         IPairingApprovalService pairing,
-        SingleInstanceGuard singleInstance)
+        SingleInstanceGuard singleInstance,
+        AgentOptions options)
     {
         this.state = state;
         this.runtime = runtime;
         this.dashboard = dashboard;
         this.startup = startup;
         this.pairing = pairing;
-        uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
-        if (SynchronizationContext.Current is null)
-        {
-            SynchronizationContext.SetSynchronizationContext(uiContext);
-        }
+
+        uiControl = new Control();
+        uiControl.CreateControl();
 
         appIcon = AppIconFactory.CreateIcon();
 
@@ -61,6 +60,10 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
             executeOnlyOnce: false);
         AgentDiagnosticLog.Write("ApplicationContext constructed");
         _ = Task.Run(StartAsync);
+        if (!options.StartMinimized)
+        {
+            PostShowMainWindow();
+        }
     }
 
     protected override void Dispose(bool disposing)
@@ -73,6 +76,7 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
             notifyIcon.Visible = false;
             notifyIcon.Dispose();
             appIcon.Dispose();
+            uiControl.Dispose();
         }
 
         base.Dispose(disposing);
@@ -164,22 +168,31 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
             return;
         }
 
-        if (mainWindow is null || mainWindow.IsDisposed)
+        try
         {
-            mainWindow = new SettingsWindow(state, runtime, dashboard, startup, pairing, appIcon);
-        }
+            AgentDiagnosticLog.Write("ShowMainWindow executing");
+            if (mainWindow is null || mainWindow.IsDisposed)
+            {
+                mainWindow = new SettingsWindow(state, runtime, dashboard, startup, pairing, appIcon);
+            }
 
-        if (!mainWindow.Visible)
+            if (!mainWindow.Visible)
+            {
+                mainWindow.Show();
+            }
+
+            if (mainWindow.WindowState == FormWindowState.Minimized)
+            {
+                mainWindow.WindowState = FormWindowState.Normal;
+            }
+
+            mainWindow.ShowAndActivateWindow();
+            AgentDiagnosticLog.Write("ShowMainWindow completed");
+        }
+        catch (Exception ex)
         {
-            mainWindow.Show();
+            AgentDiagnosticLog.Write($"ShowMainWindow error: {ex}");
         }
-
-        if (mainWindow.WindowState == FormWindowState.Minimized)
-        {
-            mainWindow.WindowState = FormWindowState.Normal;
-        }
-
-        mainWindow.ShowAndActivateWindow();
     }
 
     private void OnNotifyIconMouseUp(object? sender, MouseEventArgs e)
@@ -218,13 +231,13 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
             return;
         }
 
-        if (SynchronizationContext.Current == uiContext)
+        if (uiControl.IsHandleCreated && uiControl.InvokeRequired)
         {
-            UpdateMenu();
+            uiControl.BeginInvoke(new Action(UpdateMenu));
             return;
         }
 
-        uiContext.Post(_ => UpdateMenu(), null);
+        UpdateMenu();
     }
 
     private void PostShowMainWindow()
@@ -234,13 +247,14 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
             return;
         }
 
-        if (SynchronizationContext.Current == uiContext)
+        AgentDiagnosticLog.Write("PostShowMainWindow triggered");
+        if (uiControl.IsHandleCreated && uiControl.InvokeRequired)
         {
-            ShowMainWindow();
+            uiControl.BeginInvoke(new Action(ShowMainWindow));
             return;
         }
 
-        uiContext.Post(_ => ShowMainWindow(), null);
+        ShowMainWindow();
     }
 
     private static string TrimNotifyText(string value)

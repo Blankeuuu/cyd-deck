@@ -8,8 +8,10 @@
 #include <algorithm>
 #include <cstring>
 
+#include "network/agent_discovery.h"
 #include "network/agent_protocol.h"
 #include "network/cover_art.h"
+#include "network/usb_agent_protocol.h"
 #include "storage/sd_paths.h"
 
 #if __has_include(<WebSocketsClient.h>)
@@ -26,6 +28,7 @@ constexpr uint32_t kInitialBackoffMs = 2000;
 constexpr uint32_t kMaxBackoffMs = 30000;
 constexpr uint32_t kHeartbeatMs = 15000;
 constexpr uint32_t kDeviceInfoMs = 5000;
+constexpr uint32_t kUsbHelloMs = 1000;
 constexpr uint32_t kMdnsRetryMs = 10000;
 constexpr uint32_t kCoverHttpTimeoutMs = 2500;
 void copyText(char* target, size_t targetSize, const char* value, const char* fallback = "") {
@@ -59,30 +62,9 @@ String makeRequestId(const char* prefix) {
 }
 
 String quotedField(const char* json, size_t length, const char* field) {
-  String needle = "\"";
-  needle += field;
-  needle += "\"";
-  const char* begin = json;
-  const char* end = json + length;
-  const char* found = std::search(begin, end, needle.c_str(), needle.c_str() + needle.length());
-  if (found == end) return "";
-  const char* cursor = found + needle.length();
-  while (cursor < end && (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')) ++cursor;
-  if (cursor >= end || *cursor != ':') return "";
-  ++cursor;
-  while (cursor < end && (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')) ++cursor;
-  if (cursor >= end || *cursor != '"') return "";
-  ++cursor;
-
-  String out;
-  while (cursor < end && *cursor != '"') {
-    if (*cursor == '\\' && cursor + 1 < end) {
-      ++cursor;
-    }
-    out += *cursor;
-    ++cursor;
-  }
-  return out;
+  char value[usb::kMaxCoverChunkRawBytes * 4 / 3 + 1]{};
+  if (!protocol::readQuotedField(json, length, field, value, sizeof(value))) return "";
+  return String(value);
 }
 
 long integerField(const char* json, size_t length, const char* field, long fallback) {
@@ -243,17 +225,47 @@ class AgentClient::Impl {
     intents_ = intents;
     storage_ = storage;
     loadToken();
+    sendUsbHelloIfDue(true);
   }
 
   void loop() {
     if (!state_) return;
 
+    serviceUsb();
+    maybeUsbHeartbeat();
+    maybeSendUsbDeviceInfo();
+    if (expirePendingCover(state_->media.cover, millis())) {
+      resetUsbCoverTransfer();
+      if (intents_) intents_->push({IntentType::RefreshUi, 0});
+    }
+
+    // USB owns control while authenticated. Never run blocking DNS/TCP discovery
+    // on the touch/UI thread when there is already a working cable transport.
+    const bool usbHandshakePending = lastUsbRxAt_ != 0 && millis() - lastUsbRxAt_ < 6000;
+    if (usbAuthorized_ || usbHandshakePending) {
+      if (!wifiSuspended_) {
+        wifiSuspended_ = true;
+        socket_.disconnect();
+        connected_ = false;
+        authorized_ = false;
+        publishConnectionState();
+      }
+      return;
+    }
+    if (wifiSuspended_) {
+      wifiSuspended_ = false;
+      nextAttemptAt_ = 0;
+      nextMdnsAt_ = 0;
+      backoffMs_ = kInitialBackoffMs;
+    }
+
     if (WiFi.status() != WL_CONNECTED) {
       if (connected_) socket_.disconnect();
       connected_ = false;
       authorized_ = false;
-      state_->connection.agentConnected = false;
-      state_->connection.online = false;
+      publishConnectionState();
+      maybeUsbHeartbeat();
+      maybeSendUsbDeviceInfo();
       nextAttemptAt_ = millis() + kInitialBackoffMs;
       return;
     }
@@ -266,7 +278,7 @@ class AgentClient::Impl {
   }
 
   void sendIntent(const Intent& intent) {
-    if (!connected_ || !authorized_) return;
+    if (!canSend()) return;
 
     if (protocol::isMediaIntent(intent.type)) {
       sendMediaCommand(protocol::mediaCommandFor(intent.type));
@@ -275,6 +287,11 @@ class AgentClient::Impl {
 
     if (intent.type == IntentType::SetVolume) {
       sendSetVolume(intent.value);
+      return;
+    }
+
+    if (intent.type == IntentType::ToggleMute) {
+      sendToggleMute();
       return;
     }
 
@@ -301,7 +318,27 @@ class AgentClient::Impl {
     prefs.putString("token", token);
     prefs.end();
     token_ = token;
-    Serial.println("[NET] pairing token stored in NVS");
+    logLine("[NET] pairing token stored in NVS");
+  }
+
+  void clearToken() {
+    Preferences prefs;
+    prefs.begin("pairing", false);
+    prefs.remove("token");
+    prefs.end();
+    token_ = "";
+    authorized_ = false;
+    usbAuthorized_ = false;
+  }
+
+  void publishConnectionState() {
+    if (!state_) return;
+    const bool wifiOnline = connected_ && authorized_;
+    const bool agentOnline = wifiOnline || usbAuthorized_;
+    state_->connection.agentConnected = agentOnline;
+    state_->connection.online = agentOnline;
+    copyText(state_->connection.agentHost, sizeof(state_->connection.agentHost),
+        usbAuthorized_ ? "usb" : host_.c_str(), "");
   }
 
   void maybeConnect() {
@@ -309,8 +346,8 @@ class AgentClient::Impl {
     const uint32_t now = millis();
     if (now < nextAttemptAt_) return;
 
-    String host = discoverHost();
-    if (host.length() == 0) {
+    const AgentEndpoint endpoint = discoverEndpoint();
+    if (endpoint.host.length() == 0 || endpoint.port == 0) {
       scheduleRetry();
       return;
     }
@@ -322,34 +359,48 @@ class AgentClient::Impl {
     }
 
     socket_.disconnect();
-    socket_.begin(host.c_str(), config_.port, path.c_str());
+    socket_.begin(endpoint.host.c_str(), endpoint.port, path.c_str());
     socket_.setReconnectInterval(0);
     socket_.onEvent([this](WStype_t type, uint8_t* payload, size_t length) {
       handleEvent(type, payload, length);
     });
-    host_ = host;
+    host_ = endpoint.host;
     nextAttemptAt_ = now + backoffMs_;
-    Serial.printf("[NET] connecting to agent %s:%u%s\n",
-        host.c_str(), config_.port, protocol::kWebSocketPath);
+    logf("[NET] connecting to agent %s:%u%s\n",
+        endpoint.host.c_str(), endpoint.port, protocol::kWebSocketPath);
   }
 
-  String discoverHost() {
+  struct AgentEndpoint {
+    String host;
+    uint16_t port = 0;
+
+    AgentEndpoint() = default;
+    AgentEndpoint(const String& selectedHost, uint16_t selectedPort)
+        : host(selectedHost), port(selectedPort) {}
+  };
+
+  AgentEndpoint discoverEndpoint() {
     const uint32_t now = millis();
+    String mdnsHost;
+    uint16_t mdnsPort = 0;
     if (now >= nextMdnsAt_) {
       nextMdnsAt_ = now + kMdnsRetryMs;
       if (!mdnsStarted_) {
         mdnsStarted_ = MDNS.begin(config_.deviceId.c_str());
       }
       if (mdnsStarted_) {
+        if (state_) ++state_->performance.wifiDiscoveryCount;
         const int count = MDNS.queryService(protocol::kMdnsService, protocol::kMdnsProto);
         if (count > 0) {
-          config_.port = MDNS.port(0);
-          return MDNS.IP(0).toString();
+          mdnsHost = MDNS.IP(0).toString();
+          mdnsPort = MDNS.port(0);
         }
       }
     }
 
-    return config_.manualHost;
+    const auto selected = protocol::selectAgentEndpoint(
+        config_.manualHost.c_str(), config_.port, mdnsHost.c_str(), mdnsPort);
+    return AgentEndpoint(String(selected.host), selected.port);
   }
 
   void scheduleRetry() {
@@ -357,6 +408,7 @@ class AgentClient::Impl {
     backoffMs_ = std::min<uint32_t>(backoffMs_ * 2, kMaxBackoffMs);
     if (state_) state_->connection.online = false;
     if (state_) state_->connection.agentConnected = false;
+    publishConnectionState();
   }
 
   void handleEvent(WStype_t type, uint8_t* payload, size_t length) {
@@ -367,15 +419,12 @@ class AgentClient::Impl {
         backoffMs_ = kInitialBackoffMs;
         lastHeartbeatAt_ = 0;
         lastDeviceInfoAt_ = 0;
-        sendHello();
+        sendHello(false);
         break;
       case WStype_DISCONNECTED:
         connected_ = false;
         authorized_ = false;
-        if (state_) {
-          state_->connection.agentConnected = false;
-          state_->connection.online = false;
-        }
+        publishConnectionState();
         scheduleRetry();
         break;
       case WStype_TEXT:
@@ -389,7 +438,7 @@ class AgentClient::Impl {
   void handleText(const char* payload, size_t length) {
     const String type = quotedField(payload, length, "type");
     if (type.length() == 0) {
-      Serial.println("[NET] protocol parse failed");
+      logLine("[NET] protocol parse failed");
       return;
     }
 
@@ -400,10 +449,9 @@ class AgentClient::Impl {
       const String value = quotedField(payload, length, "state");
       authorized_ = value == "connected";
       if (state_) {
-        state_->connection.agentConnected = authorized_;
-        state_->connection.online = authorized_;
         copyText(state_->connection.agentHost, sizeof(state_->connection.agentHost), host_.c_str(), "");
       }
+      publishConnectionState();
       if (authorized_) {
         sendDeviceInfo();
         sendShortcutsReport();
@@ -415,12 +463,26 @@ class AgentClient::Impl {
       persistToken(token.c_str());
       authorized_ = true;
       if (state_) {
-        state_->connection.agentConnected = true;
-        state_->connection.online = true;
         copyText(state_->connection.agentHost, sizeof(state_->connection.agentHost), host_.c_str(), "");
       }
+      publishConnectionState();
       sendDeviceInfo();
       sendShortcutsReport();
+      return;
+    }
+    if (!authorized_) {
+      return;
+    }
+    if (type == "cover.chunk") {
+      handleCoverChunk(payload, length);
+      return;
+    }
+    if (type == "cover.complete") {
+      handleCoverComplete(payload, length);
+      return;
+    }
+    if (type == "device.status.request") {
+      sendDeviceInfo();
       return;
     }
     if (type == protocol::kDeviceRestart) {
@@ -432,6 +494,8 @@ class AgentClient::Impl {
     if (type == protocol::kDeviceFactoryReset) {
       const String requestId = quotedField(payload, length, "requestId");
       sendAck(requestId.c_str(), true);
+      clearToken();
+      publishConnectionState();
       if (intents_) intents_->push({IntentType::FactoryReset, 0});
       return;
     }
@@ -455,18 +519,27 @@ class AgentClient::Impl {
       if (state_) {
         state_->media.positionMs = integerField(payload, length, "positionMs", state_->media.positionMs);
         state_->media.durationMs = integerField(payload, length, "durationMs", state_->media.durationMs);
+        state_->media.timelineAtMs = millis();
+        state_->media.timelineAnchored = true;
       }
       return;
     }
     if (type == protocol::kMediaPlayback) {
-      if (state_) state_->media.playing = boolField(payload, length, "playing", state_->media.playing);
+      if (state_) {
+        state_->media.positionMs = mediaPositionAt(state_->media, millis());
+        state_->media.timelineAtMs = millis();
+        state_->media.timelineAnchored = true;
+        state_->media.playing = boolField(payload, length, "playing", state_->media.playing);
+      }
       return;
     }
     if (type == protocol::kAudioUpdate) {
       if (state_) {
         state_->audio.reportedVolume = static_cast<uint8_t>(
             constrain(integerField(payload, length, "volumePercent", state_->audio.reportedVolume), 0, 100));
+        state_->audio.muted = boolField(payload, length, "muted", false);
         state_->audio.available = true;
+        if (intents_) intents_->push({IntentType::RefreshUi, 0});
       }
       return;
     }
@@ -492,16 +565,30 @@ class AgentClient::Impl {
     copyText(state_->media.artist, sizeof(state_->media.artist), artist.c_str(), "Unknown artist");
     copyText(state_->media.album, sizeof(state_->media.album), album.c_str(), "");
     copyText(state_->media.coverId, sizeof(state_->media.coverId), coverId.c_str(), "");
-    updateCoverFetch(state_->media.cover, state_->media.coverId);
+    const CoverTransition transition = updateCoverFetch(state_->media.cover, state_->media.coverId, millis());
+    if (transition == CoverTransition::Requested) {
+      const bool cached = storage_ && config_.renderCover && config_.renderCover(state_->media.coverId, *state_);
+      if (cached) {
+        markCoverFetchComplete(state_->media.cover, state_->media.coverId, true, true);
+      } else if (usbAuthorized_) {
+        String request = "{\"protocol\":1,\"type\":\"cover.request\",\"data\":{\"coverId\":\"";
+        request += state_->media.coverId;
+        request += "\"}}";
+        sendText(request, false);
+      }
+    }
+    if (intents_) intents_->push({IntentType::RefreshUi, 0});
     state_->media.playing = boolField(payload, length, "playing", false);
     state_->media.positionMs = integerField(payload, length, "positionMs", 0);
     state_->media.durationMs = integerField(payload, length, "durationMs", 0);
+    state_->media.timelineAtMs = millis();
+    state_->media.timelineAnchored = true;
   }
 
   void applyShortcuts(const char* payload, size_t length) {
     if (!state_) return;
     protocol::applyShortcutsUpdateJson(state_->shortcuts, payload, length);
-    if (intents_) intents_->push({IntentType::RefreshUi, 0});
+    if (intents_) intents_->push({IntentType::ShortcutsUpdated, 0});
   }
 
   void applySettings(const char* payload, size_t length) {
@@ -529,11 +616,22 @@ class AgentClient::Impl {
     String message = "{\"protocol\":1,\"type\":\"ping\",\"data\":{\"sentAtUnixMs\":";
     message += now;
     message += "}}";
-    socket_.sendTXT(message);
+    sendText(message, false);
+  }
+
+  void maybeUsbHeartbeat() {
+    if (!usbAuthorized_) return;
+    const uint32_t now = millis();
+    if (lastHeartbeatAt_ != 0 && now - lastHeartbeatAt_ < usb::kUsbHeartbeatIntervalMs) return;
+    lastHeartbeatAt_ = now;
+    String message = "{\"protocol\":1,\"type\":\"ping\",\"data\":{\"sentAtUnixMs\":";
+    message += now;
+    message += "}}";
+    sendText(message, false);
   }
 
   void maybeFetchCover() {
-    if (!state_ || !storage_ || !authorized_ || WiFi.status() != WL_CONNECTED) return;
+    if (usbAuthorized_ || !state_ || !storage_ || !authorized_ || WiFi.status() != WL_CONNECTED) return;
     CoverFetchState& cover = state_->media.cover;
     if (cover.status != CoverStatus::Pending || cover.inFlight || !isValidCoverId(cover.requestedId)) return;
 
@@ -592,6 +690,8 @@ class AgentClient::Impl {
           const int read = client.read(buffer, want);
           if (read <= 0) break;
           if (!storage_->appendCoverTemp(out, buffer, static_cast<std::size_t>(read), received)) break;
+          if (!usb::accountBoundedBytes(received, static_cast<std::size_t>(contentLength),
+                  static_cast<std::size_t>(read))) break;
         }
         if (out) {
           out.flush();
@@ -613,8 +713,15 @@ class AgentClient::Impl {
     sendDeviceInfo();
   }
 
-  void sendDeviceInfo() {
-    if (!state_) return;
+  void maybeSendUsbDeviceInfo() {
+    if (!usbAuthorized_) return;
+    const uint32_t now = millis();
+    if (lastDeviceInfoAt_ != 0 && now - lastDeviceInfoAt_ < kDeviceInfoMs) return;
+    sendDeviceInfo();
+  }
+
+  String deviceInfoPayload() {
+    if (!state_) return "{}";
     lastDeviceInfoAt_ = millis();
     state_->device.uptimeSeconds = lastDeviceInfoAt_ / 1000;
     state_->connection.wifiConnected = WiFi.status() == WL_CONNECTED;
@@ -625,7 +732,7 @@ class AgentClient::Impl {
     state_->system.minHeap = ESP.getMinFreeHeap();
     state_->system.largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
 
-    String message = "{\"protocol\":1,\"type\":\"device.info\",\"data\":{\"firmwareVersion\":\"";
+    String message = "{\"firmwareVersion\":\"";
     message += escapeJson(state_->device.firmwareVersion);
     message += "\",\"uptimeSeconds\":";
     message += state_->device.uptimeSeconds;
@@ -653,25 +760,50 @@ class AgentClient::Impl {
     message += state_->system.minHeap;
     message += ",\"largestBlockBytes\":";
     message += state_->system.largestBlock;
-    message += "}}}";
-    socket_.sendTXT(message);
+    message += "},\"performance\":{\"loopMaxUs\":";
+    message += state_->performance.loopMaxUs;
+    message += ",\"renderMaxUs\":";
+    message += state_->performance.renderMaxUs;
+    message += ",\"networkMaxUs\":";
+    message += state_->performance.networkMaxUs;
+    message += ",\"slowLoops\":";
+    message += state_->performance.slowLoops;
+    message += ",\"wifiDiscoveryCount\":";
+    message += state_->performance.wifiDiscoveryCount;
+    message += "},\"audio\":{\"volumePercent\":";
+    message += state_->audio.reportedVolume;
+    message += ",\"muted\":";
+    message += state_->audio.muted ? "true" : "false";
+    message += "},\"cover\":{\"status\":";
+    message += static_cast<unsigned>(state_->media.cover.status);
+    message += ",\"rendered\":";
+    message += state_->media.cover.rendered ? "true" : "false";
+    message += "}}";
+    return message;
+  }
+
+  void sendDeviceInfo() {
+    sendText(String("{\"protocol\":1,\"type\":\"device.info\",\"data\":") + deviceInfoPayload() + "}", false);
   }
 
   void sendShortcutsReport() {
     if (!state_) return;
     char message[protocol::kShortcutsReportJsonCapacity]{};
     if (protocol::makeShortcutsReportJson(state_->shortcuts, message, sizeof(message))) {
-      socket_.sendTXT(message);
+      sendText(message, false);
     }
   }
 
-  void sendHello() {
+  void sendHello(bool allowUnauthedUsb) {
     String message = "{\"protocol\":1,\"type\":\"hello\",\"data\":{\"deviceId\":\"";
     message += escapeJson(config_.deviceId);
     message += "\",\"name\":\"";
     message += escapeJson(config_.deviceName);
-    message += "\",\"role\":\"esp32\",\"capabilities\":[\"media\",\"audio\",\"shortcuts\",\"system\",\"device-control\"]}}";
-    socket_.sendTXT(message);
+    message += "\",\"role\":\"esp32\",\"capabilities\":[\"media\",\"audio\",\"shortcuts\",\"system\",\"device-control\",\"cover-cache-request\"]";
+    message += ",\"deviceInfo\":";
+    message += deviceInfoPayload();
+    message += "}}";
+    sendText(message, allowUnauthedUsb);
   }
 
   void sendAck(const char* requestId, bool success) {
@@ -684,7 +816,7 @@ class AgentClient::Impl {
       message += ",\"error\":{\"code\":\"invalidSettings\",\"message\":\"Device settings payload is invalid.\"}";
     }
     message += "}";
-    socket_.sendTXT(message);
+    sendText(message, false);
   }
 
   void sendMediaCommand(const char* command) {
@@ -694,7 +826,7 @@ class AgentClient::Impl {
     message += "\",\"data\":{\"command\":\"";
     message += command;
     message += "\"}}";
-    socket_.sendTXT(message);
+    sendText(message, false);
   }
 
   void sendSetVolume(int value) {
@@ -704,15 +836,205 @@ class AgentClient::Impl {
     message += "\",\"data\":{\"volumePercent\":";
     message += constrain(value, 0, 100);
     message += "}}";
-    socket_.sendTXT(message);
+    sendText(message, false);
+  }
+
+  void sendToggleMute() {
+    String requestId = makeRequestId("mute");
+    String message = "{\"protocol\":1,\"type\":\"audio.toggleMute\",\"requestId\":\"";
+    message += requestId;
+    message += "\",\"data\":{}}";
+    sendText(message, false);
   }
 
   void sendShortcut(const char* shortcutId) {
     String requestId = makeRequestId("shortcut");
     char message[192]{};
     if (protocol::makeShortcutExecuteJson(requestId.c_str(), shortcutId, message, sizeof(message))) {
-      socket_.sendTXT(message);
+      sendText(message, false);
     }
+  }
+
+  void resetUsbCoverTransfer() {
+    if (usbCoverFile_) usbCoverFile_.close();
+    if (storage_ && usbCoverId_[0]) storage_->discardCoverTemp(usbCoverId_);
+    usbCoverId_[0] = '\0';
+    usbCoverTotal_ = 0;
+    usbCoverWritten_ = 0;
+  }
+
+  void handleCoverChunk(const char* payload, size_t length) {
+    if (!storage_) return;
+    const String coverId = quotedField(payload, length, "coverId");
+    const long offset = integerField(payload, length, "offset", -1);
+    const long total = integerField(payload, length, "total", -1);
+    const String data = quotedField(payload, length, "data");
+    uint8_t decoded[usb::kMaxCoverChunkRawBytes]{};
+    std::size_t decodedLength = 0;
+    const bool valid = isValidCoverId(coverId.c_str()) && offset >= 0 && total > 0 &&
+        static_cast<std::size_t>(total) <= storage::kMaxCoverBytes && data.length() > 0 &&
+        usb::decodeBase64(data.c_str(), data.length(), decoded, sizeof(decoded), decodedLength) &&
+        decodedLength > 0 && static_cast<std::size_t>(offset) + decodedLength <= static_cast<std::size_t>(total);
+    if (!valid) {
+      if (state_) markCoverFetchComplete(state_->media.cover, state_->media.cover.requestedId, false);
+      resetUsbCoverTransfer();
+      return;
+    }
+    if (usbCoverId_[0] == '\0') {
+      if (offset != 0) return;
+      copyText(usbCoverId_, sizeof(usbCoverId_), coverId.c_str(), "");
+      usbCoverTotal_ = static_cast<std::size_t>(total);
+      usbCoverWritten_ = 0;
+      usbCoverFile_ = storage_->openCoverTempWrite(usbCoverId_);
+    }
+    if (std::strcmp(usbCoverId_, coverId.c_str()) != 0 || usbCoverTotal_ != static_cast<std::size_t>(total) ||
+        usbCoverWritten_ != static_cast<std::size_t>(offset) || !usbCoverFile_) {
+      if (state_) markCoverFetchComplete(state_->media.cover, state_->media.cover.requestedId, false);
+      resetUsbCoverTransfer();
+      return;
+    }
+    if (!storage_->appendCoverTemp(usbCoverFile_, decoded, decodedLength, usbCoverWritten_)) {
+      if (state_) markCoverFetchComplete(state_->media.cover, state_->media.cover.requestedId, false);
+      resetUsbCoverTransfer();
+      return;
+    }
+    if (state_) state_->media.cover.requestedAtMs = millis();
+  }
+
+  void handleCoverComplete(const char* payload, size_t length) {
+    if (!storage_) return;
+    const String coverId = quotedField(payload, length, "coverId");
+    if (!isValidCoverId(coverId.c_str()) || std::strcmp(usbCoverId_, coverId.c_str()) != 0 ||
+        usbCoverWritten_ != usbCoverTotal_ || !usbCoverFile_) {
+      if (state_) markCoverFetchComplete(state_->media.cover, state_->media.cover.requestedId, false);
+      resetUsbCoverTransfer();
+      return;
+    }
+    usbCoverFile_.flush();
+    usbCoverFile_.close();
+    const bool committed = storage_->commitCoverTemp(usbCoverId_, usbCoverWritten_);
+    const bool isCurrent = state_ && std::strcmp(state_->media.cover.requestedId, usbCoverId_) == 0;
+    const bool rendered = committed && isCurrent && config_.renderCover && config_.renderCover(usbCoverId_, *state_);
+    if (state_ && std::strcmp(state_->media.cover.requestedId, usbCoverId_) == 0) {
+      markCoverFetchComplete(state_->media.cover, usbCoverId_, committed && rendered, rendered);
+    }
+    if (intents_) intents_->push({IntentType::RefreshUi, 0});
+    sendDeviceInfo();
+    usbCoverId_[0] = '\0';
+    usbCoverTotal_ = 0;
+    usbCoverWritten_ = 0;
+  }
+
+  bool canSend() const {
+    return (connected_ && authorized_) || (config_.usbProtocolEnabled && usbAuthorized_);
+  }
+
+  void sendText(String message, bool allowUnauthedUsb) {
+    if (!inUsbDispatch_ && !usbAuthorized_ && connected_ && authorized_) {
+      socket_.sendTXT(message);
+      return;
+    }
+    if (config_.usbProtocolEnabled && (usbAuthorized_ || allowUnauthedUsb)) {
+      Serial.print(message);
+      Serial.write(13);
+      Serial.write(10);
+    }
+  }
+
+  void sendUsbText(const String& message) {
+    if (!config_.usbProtocolEnabled) return;
+    Serial.print(message);
+    Serial.write(13);
+    Serial.write(10);
+  }
+
+  void sendUsbHelloIfDue(bool force = false) {
+    if (!config_.usbProtocolEnabled) return;
+    const uint32_t now = millis();
+    if (!force && !usb::shouldSendUnauthedHello(true, usbAuthorized_, now, lastUsbHelloAt_, kUsbHelloMs)) return;
+    lastUsbHelloAt_ = now;
+    String message = "{\"protocol\":1,\"type\":\"hello\",\"data\":{\"deviceId\":\"";
+    message += escapeJson(config_.deviceId);
+    message += "\",\"name\":\"";
+    message += escapeJson(config_.deviceName);
+    message += "\",\"role\":\"esp32\",\"capabilities\":[\"media\",\"audio\",\"shortcuts\",\"system\",\"device-control\",\"cover-cache-request\"]";
+    if (token_.length() > 0) {
+      message += usb::kHelloBearerTokenFieldPrefix;
+      message += escapeJson(token_);
+      message += "\"";
+    }
+    message += ",\"deviceInfo\":";
+    message += deviceInfoPayload();
+    message += "}}";
+    sendUsbText(message);
+  }
+
+  bool isUsbHandshakeOrRecoveryFrame(const char* payload, size_t length) const {
+    const String type = quotedField(payload, length, "type");
+    return type == protocol::kHello || type == protocol::kConnectionState || type == protocol::kPairingToken;
+  }
+
+  usb::UsbAuthDecision decideUsbFrameAuth(const char* payload, size_t length) const {
+    const String type = quotedField(payload, length, "type");
+    const String presentedToken = quotedField(payload, length, "token");
+    return usb::decideUsbAuth(type.c_str(), presentedToken.c_str(), token_.c_str(), usbAuthorized_);
+  }
+
+  void serviceUsb() {
+    if (!config_.usbProtocolEnabled) return;
+    const uint32_t now = millis();
+    if (usbAuthorized_ && lastUsbRxAt_ != 0 && now - lastUsbRxAt_ > usb::kUsbPeerTimeoutMs) {
+      usbAuthorized_ = false;
+      publishConnectionState();
+    }
+    sendUsbHelloIfDue();
+    const uint32_t readStarted = micros();
+    unsigned bytesRead = 0;
+    while (Serial.available() > 0 && bytesRead < 2048 && micros() - readStarted < 2000) {
+      ++bytesRead;
+      const usb::FrameReadResult result = usbReader_.push(static_cast<char>(Serial.read()));
+      if (result == usb::FrameReadResult::Complete) {
+        if (usb::decideIncomingUsbFrame(connected_ && authorized_,
+                isUsbHandshakeOrRecoveryFrame(usbReader_.data(), usbReader_.length())) == usb::IncomingUsbDecision::Dispatch) {
+          const usb::UsbAuthDecision authDecision = decideUsbFrameAuth(usbReader_.data(), usbReader_.length());
+          if (authDecision == usb::UsbAuthDecision::Reject) {
+            usbReader_.reset();
+            continue;
+          }
+          if (authDecision == usb::UsbAuthDecision::AllowHello) {
+            lastUsbRxAt_ = millis();
+            const String role = quotedField(usbReader_.data(), usbReader_.length(), "role");
+            if (usb::shouldReplyToHello(role.c_str())) sendUsbHelloIfDue(true);
+            handleText(usbReader_.data(), usbReader_.length());
+            usbReader_.reset();
+            continue;
+          }
+          lastUsbRxAt_ = millis();
+          const bool wifiAuthorized = authorized_;
+          const String wifiHost = host_;
+          authorized_ = usbAuthorized_;
+          usbAuthorized_ = true;
+          inUsbDispatch_ = true;
+          host_ = "usb";
+          handleText(usbReader_.data(), usbReader_.length());
+          inUsbDispatch_ = false;
+          usbAuthorized_ = authorized_;
+          authorized_ = wifiAuthorized;
+          host_ = wifiHost;
+        }
+        usbReader_.reset();
+      }
+    }
+  }
+
+  void logLine(const char* message) {
+    if (config_.usbProtocolEnabled) return;
+    Serial.println(message);
+  }
+
+  void logf(const char* format, const char* arg, uint16_t port, const char* path) {
+    if (config_.usbProtocolEnabled) return;
+    Serial.printf(format, arg, port, path);
   }
 
   AgentClientConfig config_{};
@@ -725,11 +1047,22 @@ class AgentClient::Impl {
   bool connected_ = false;
   bool authorized_ = false;
   bool mdnsStarted_ = false;
+  bool wifiSuspended_ = false;
   uint32_t nextAttemptAt_ = 0;
   uint32_t nextMdnsAt_ = 0;
   uint32_t backoffMs_ = kInitialBackoffMs;
   uint32_t lastHeartbeatAt_ = 0;
   uint32_t lastDeviceInfoAt_ = 0;
+  uint32_t lastUsbHelloAt_ = 0;
+  uint32_t lastUsbRxAt_ = 0;
+  char usbFrame_[usb::kMaxFrameBytes + 1]{};
+  usb::LineFrameReader usbReader_{usbFrame_, sizeof(usbFrame_)};
+  bool usbAuthorized_ = false;
+  bool inUsbDispatch_ = false;
+  File usbCoverFile_;
+  char usbCoverId_[kCoverIdLength + 1]{};
+  std::size_t usbCoverTotal_ = 0;
+  std::size_t usbCoverWritten_ = 0;
 };
 
 #else

@@ -30,14 +30,20 @@ public interface IPairingApprovalService : IDeviceAuthorizer
 {
     Task<IReadOnlyList<PendingDevice>> ListPendingAsync(CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<PairedDevice>> ListApprovedAsync(CancellationToken cancellationToken = default);
+
     Task<bool> ApproveAsync(string deviceId, CancellationToken cancellationToken = default);
 
     Task<bool> RejectAsync(string deviceId, CancellationToken cancellationToken = default);
+
+    Task<bool> ForgetAsync(string deviceId, CancellationToken cancellationToken = default);
 
     event EventHandler? PairingChanged;
 }
 
 public sealed record PendingDevice(string DeviceId, string Name, string? RemoteAddress, DateTimeOffset FirstSeenUtc);
+
+public sealed record PairedDevice(string DeviceId, string Name, string? RemoteAddress, DateTimeOffset FirstSeenUtc);
 
 public sealed class RejectingDeviceAuthorizer : IDeviceAuthorizer
 {

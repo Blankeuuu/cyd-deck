@@ -24,10 +24,7 @@ void lvglPortBegin(DisplayHal& display) {
   lv_tick_set_cb(tickNow);
   drawBuffer = static_cast<lv_color_t*>(heap_caps_malloc(
       sizeof(lv_color_t) * kDrawBufferPixels, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
-  if (!drawBuffer) {
-    Serial.println("[APP] LVGL draw buffer allocation failed");
-    abort();
-  }
+  if (!drawBuffer) abort();
   lv_display_t* d=lv_display_create(320,240);
   lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB565);
   lv_display_set_buffers(d,drawBuffer,nullptr,

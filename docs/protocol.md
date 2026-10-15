@@ -1,6 +1,14 @@
+---
+title: Protokół CYD-DECK
+tags: [cyd-deck, protocol, usb, websocket]
+aliases: [CYD-DECK protocol, synchronizacja stanu]
+updated: 2026-10-16
+status: active
+---
+
 # Protokół
 
-Komunikacja realtime między ESP32 i agentem Windows używa JSON po WebSocket. HTTP jest zarezerwowane dla binarnych zasobów, np. `GET /api/covers/{coverId}.jpg`; okładki nie są wysyłane jako Base64 w JSON.
+Komunikacja realtime między ESP32 i agentem Windows używa JSON po WebSocket lub USB Serial. WebSocket pobiera okładki przez HTTP (`GET /api/covers/{coverId}.jpg`); USB przesyła je w ramkach Base64 opisanych poniżej.
 
 ## Envelope
 
@@ -73,3 +81,36 @@ Parser odrzuca deterministycznie:
   - wartość poza zakresem, np. `volumePercent` poza `0..100`;
   - wartość spoza enuma, np. nieznany `media.command`;
   - dodatkowe pola w payloadzie komendy.
+
+
+## Synchronizacja po hello (2026-10-15)
+
+Wersja koperty pozostaje `protocol: 1`. Hello ESP32 może zawierać opcjonalny obiekt `deviceInfo`, o takim samym schemacie jak `device.info`: firmwareVersion, uptimeSeconds, wifi (connected, ssid, rssi, ip), sd (mounted, ready, capacityBytes, freeBytes), heap (freeBytes, minFreeBytes, largestBlockBytes). Adres Wi-Fi jest raportowany także przy sterowaniu przez USB. Agent akceptuje również starsze hello bez tego obiektu.
+
+Po autoryzacji USB/WebSocket Agent wysyła kolejno `shortcuts.update`, `device.settings`, `audio.update`, bieżące media i okładkę, `device.status.request`, a następnie `connection.state` connected. Pusta konfiguracja skrótów również jest wysyłana. `device.status.request` nie wymaga requestId ani payloadu i wywołuje natychmiastowe `device.info`. Firmware wysyła też telemetrię okresowo. Ostatnie sześć slotów skrótów jest przechowywane w NVS urządzenia.
+
+## Okładki i audio
+
+`coverId` w `media.update` identyfikuje zawartość okładki. Metadane poprzedzają transfer. Agent dekoduje miniaturę SMTC, wykonuje center-crop do 128x128 i koduje baseline JPEG quality 80. Klucz cache obejmuje rozmiar, jakość i wersję kodera.
+
+USB używa `cover.chunk` (512 bajtów obrazu przed Base64, odstęp 20 ms) i `cover.complete`. Zakończenie transferu wywołuje renderowanie i odświeżenie UI; wynik jest widoczny w diagnostyce urządzenia. Ten sam coverId nie resetuje stanu ani nie powoduje kolejnego transferu w tej samej sesji. Firmware odrzuca spóźniony wynik innej okładki. Po 15 s bez postępu przechodzi do fallback zamiast pozostawać w Loading. Bufor Serial RX wynosi 8192 bajty.
+
+`audio.update` zachowuje pola `volumePercent` i `muted` (nie `isMuted`). Agent odczytuje domyślne wyjście CoreAudio eRender/eMultimedia przy synchronizacji i wysyła audio przed mediami oraz po powiadomieniu endpointu.
+
+Logi Agenta maskują wartości bearerToken, token i password, także podczas odczytu historycznych wpisów do UI/eksportu. Nowy firmware i Agent należy wdrożyć razem; zgodność nowego hello ze starym Agentem nie została potwierdzona.
+
+
+## Diagnostyka responsywności i USB hello
+
+Opcjonalne device.info.performance (również w hello.deviceInfo): loopMaxUs, renderMaxUs, networkMaxUs, slowLoops, wifiDiscoveryCount — nieujemne uint32. Maksima obejmują pracę przy połączonym Agencie od startu firmware, w tym początkowe ładowanie okładki; nie są średnią ani FPS. networkMaxUs obejmuje obsługę usług sieciowych oraz USB. slowLoops liczy iteracje powyżej50ms. Agent waliduje te pola i udostępnia je w lokalnym /api/status. Starszy firmware bez performance pozostaje obsługiwany; nowy firmware wymaga aktualnego Agenta akceptującego to opcjonalne pole.
+
+USB discovery probe to hello z pustym data. Firmware odpowiada urządzeniowym hello na taki probe. Hello z role=agent jest odpowiedzią handshake i NIE wywołuje kolejnego hello urządzenia. To zapobiega pętli wielokrotnej autoryzacji, synchronizacji i transferu tej samej okładki.
+
+Przy autoryzowanym USB oraz przez krótki czas negocjacji USB nie uruchamia się discovery mDNS, WebSocket.loop ani HTTP cover fetch. Wi-Fi STA pozostaje połączone dla IP/OTA; po utracie USB wraca obsługa transportu sieciowego. RX8192, TX2048; odbiornik UART obrabia najwyżej2048bajtów lub2ms przed oddaniem sterowania pętli UI (kompletna ramka może wymagać dodatkowego czasu parsowania/dekodowania).
+
+
+## Cache SD steruje transferem USB
+
+Capability cover-cache-request w hello ESP32 uzgadnia tryb żądania przy cache miss. Dla takiego urządzenia media.update zawiera coverId, ale Agent nie przesyła automatycznie obrazu. CYD odczytuje plik SD; tylko gdy go brakuje lub dekoder go odrzuci, wysyła cover.request: {coverId: SHA256}. Żądanie nie wymaga requestId; Agent autoryzuje sesję, waliduje64hex i odpowiada wyłącznie dla aktualnego coverId. Odpowiedź zachowuje cover.chunk/cover.complete. Bez capability pozostaje legacy push. Pierwsza synchronizacja nie czeka na binaria: metadane i connected poprzedzają obsługę ewentualnego requestu z urządzenia.
+
+Heartbeat USB5s, timeout30s. Lokalny timeline interpoluje pozycję co100ms; pakiety media.timeline nadal korygują kotwicę bez zwiększania ruchu. Envelope protocol1; nową parę Agent/firmware wdrożono razem.

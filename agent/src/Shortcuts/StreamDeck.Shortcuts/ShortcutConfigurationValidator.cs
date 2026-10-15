@@ -80,6 +80,11 @@ public sealed class ShortcutConfigurationValidator
             issues.Add(new ShortcutValidationIssue($"{path}.icon", "Icon must be a non-empty token up to 64 characters."));
         }
 
+        if (!ShortcutDisplayModes.IsKnown(shortcut.DisplayMode))
+        {
+            issues.Add(new ShortcutValidationIssue($"{path}.displayMode", "Display mode must be label, icon or both."));
+        }
+
         ValidateAction(shortcut.Action, $"{path}.action", issues);
     }
 

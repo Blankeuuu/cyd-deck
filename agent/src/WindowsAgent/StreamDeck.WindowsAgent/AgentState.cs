@@ -84,6 +84,11 @@ public sealed class AgentState
     {
         lock (syncRoot)
         {
+            if (!string.Equals(deviceId, id, StringComparison.Ordinal))
+            {
+                deviceInfo = null;
+                deviceInfoUpdatedAtUtc = null;
+            }
             deviceId = id;
             deviceName = name;
             remoteAddress = address;

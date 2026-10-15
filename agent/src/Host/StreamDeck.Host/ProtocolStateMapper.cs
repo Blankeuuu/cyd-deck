@@ -57,7 +57,7 @@ public static class ProtocolStateMapper
     public static string CreateShortcutsUpdate(DeviceShortcutConfiguration configuration)
     {
         var shortcuts = configuration.Shortcuts
-            .Select(shortcut => new global::StreamDeck.Protocol.ShortcutDefinition(shortcut.Id, shortcut.Name, shortcut.ActionType))
+            .Select(shortcut => new global::StreamDeck.Protocol.ShortcutDefinition(shortcut.Id, shortcut.Name, shortcut.Icon, shortcut.DisplayMode))
             .ToArray();
 
         return ProtocolSerializer.Serialize(

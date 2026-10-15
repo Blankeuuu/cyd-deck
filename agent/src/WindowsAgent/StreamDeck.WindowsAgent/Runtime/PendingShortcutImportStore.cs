@@ -21,7 +21,7 @@ public sealed class PendingShortcutImportStore
                     continue;
                 }
 
-                pending[shortcut.Id] = new PendingShortcutImport(shortcut.Id, shortcut.Label, shortcut.ActionType);
+                pending[shortcut.Id] = new PendingShortcutImport(shortcut.Id, shortcut.Label, shortcut.ActionType ?? string.Empty);
             }
         }
     }

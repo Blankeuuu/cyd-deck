@@ -1,6 +1,6 @@
 namespace StreamDeck.Protocol;
 
-public sealed record HelloMessage(string DeviceId, string Name, string Role, string[] Capabilities);
+public sealed record HelloMessage(string DeviceId, string Name, string Role, string[] Capabilities, string? BearerToken = null, DeviceInfoMessage? DeviceInfo = null);
 
 public sealed record MediaCommandMessage(MediaCommand Command);
 
@@ -51,7 +51,16 @@ public sealed record DeviceInfoMessage(
     DeviceWifiInfo Wifi,
     string? AgentHost,
     DeviceStorageInfo Sd,
-    DeviceHeapInfo Heap);
+    DeviceHeapInfo Heap,
+    DeviceCoverInfo? Cover = null,
+    DeviceAudioInfo? Audio = null,
+    DevicePerformanceInfo? Performance = null);
+
+public sealed record DevicePerformanceInfo(long LoopMaxUs, long RenderMaxUs, long NetworkMaxUs, long SlowLoops, long WifiDiscoveryCount);
+
+public sealed record DeviceAudioInfo(int VolumePercent, bool Muted);
+
+public sealed record DeviceCoverInfo(int Status, bool Rendered);
 
 public sealed record DeviceWifiInfo(bool Connected, string? Ssid, int? Rssi, string? Ip);
 
@@ -60,6 +69,8 @@ public sealed record DeviceStorageInfo(bool Mounted, bool Ready, long? CapacityB
 public sealed record DeviceHeapInfo(long FreeBytes, long MinFreeBytes, long LargestBlockBytes);
 
 public sealed record PingMessage(long SentAtUnixMs);
+
+public sealed record CoverRequestMessage(string CoverId);
 
 public sealed record MediaUpdateMessage(
     string? Title,
@@ -79,7 +90,7 @@ public sealed record AudioUpdateMessage(int VolumePercent, bool Muted);
 
 public sealed record SystemStatsMessage(double CpuPercent, int MemoryPercent, long MemoryUsedBytes, long MemoryTotalBytes);
 
-public sealed record ShortcutDefinition(string Id, string Label, string ActionType);
+public sealed record ShortcutDefinition(string Id, string Label, string? Icon = null, string? DisplayMode = null, string? ActionType = null);
 
 public sealed record ShortcutsUpdateMessage(IReadOnlyList<ShortcutDefinition> Shortcuts);
 

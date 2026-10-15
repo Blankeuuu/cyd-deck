@@ -12,11 +12,14 @@
 #define LV_SYMBOL_PAUSE "[pause]"
 #define LV_SYMBOL_NEXT "[next]"
 #define LV_SYMBOL_VOLUME_MAX "[volume]"
+#define LV_SYMBOL_MUTE "[mute]"
 
 struct lv_font_t {};
-inline lv_font_t lv_font_montserrat_14;
+#define LV_FONT_DECLARE(font_name) extern lv_font_t font_name;
 inline lv_font_t lv_font_montserrat_16;
-inline lv_font_t lv_font_montserrat_20;
+inline lv_font_t streamdeck_polish_14;
+inline lv_font_t streamdeck_polish_16;
+inline lv_font_t streamdeck_polish_20;
 
 using lv_color_t = uint32_t;
 
@@ -43,23 +46,34 @@ struct lv_image_dsc_t {
 
 enum {
   LV_LABEL_LONG_DOT = 0,
+  LV_TEXT_ALIGN_CENTER = 2,
+  LV_TEXT_ALIGN_RIGHT = 3,
   LV_OPA_COVER = 255,
   LV_OPA_TRANSP = 0,
   LV_RADIUS_CIRCLE = 32767,
   LV_EVENT_CLICKED = 1,
   LV_EVENT_RELEASED = 2,
   LV_EVENT_LONG_PRESSED = 3,
+  LV_EVENT_VALUE_CHANGED = 4,
   LV_ANIM_OFF = 0,
   LV_OBJ_FLAG_HIDDEN = 1 << 0,
   LV_OBJ_FLAG_SCROLLABLE = 1 << 1,
+  LV_OBJ_FLAG_CLICKABLE = 1 << 2,
   LV_SCROLLBAR_MODE_OFF = 0,
   LV_SCROLLBAR_MODE_AUTO = 1,
+  LV_PART_MAIN = 0,
+  LV_PART_INDICATOR = 1,
+  LV_PART_KNOB = 2,
 };
+
+inline uint32_t lv_tick_get() { return 0; }
 
 struct lv_event_t {
   void* user_data = nullptr;
   struct lv_obj_t* target = nullptr;
 };
+
+using lv_event_code_t = int;
 
 struct lv_indev_t {
   uint16_t long_press_time = 400;
@@ -80,17 +94,27 @@ struct lv_obj_t {
   uint32_t flags = LV_OBJ_FLAG_SCROLLABLE;
   int scrollbar_mode = LV_SCROLLBAR_MODE_AUTO;
   int pad_all = -1;
+  int radius = 0;
+  bool clip_corner = false;
+  int ext_click_area = 0;
+  int border_width = 0;
+  lv_color_t border_color = 0;
   int value = 0;
+  uint32_t state = 0;
+  const lv_font_t* font = nullptr;
   lv_color_t bg_color = 0;
   lv_color_t text_color = 0;
   int event_code = 0;
   int text_set_count = 0;
+  int text_align = 0;
   void* event_user_data = nullptr;
   lv_event_cb_t event_cb = nullptr;
   std::string text;
   const void* image_src = nullptr;
 };
 
+inline int lv_test_bg_writes = 0;
+inline int lv_test_position_writes = 0;
 inline std::vector<lv_obj_t*> lv_test_allocations;
 inline lv_indev_t lv_test_indev;
 inline lv_obj_t lv_test_screen = [] {
@@ -142,21 +166,31 @@ inline void lv_obj_move_to_index(lv_obj_t* object, int index) {
   siblings.insert(siblings.begin() + index, object);
 }
 
-inline void lv_obj_set_pos(lv_obj_t* object, int x, int y) { object->x = x; object->y = y; }
+inline void lv_obj_set_pos(lv_obj_t* object, int x, int y) { ++lv_test_position_writes; object->x = x; object->y = y; }
 inline void lv_obj_set_size(lv_obj_t* object, int w, int h) { object->w = w; object->h = h; }
 inline void lv_obj_set_width(lv_obj_t* object, int w) { object->w = w; }
 inline void lv_obj_center(lv_obj_t*) {}
 inline void lv_obj_add_flag(lv_obj_t* object, uint32_t flag) { object->flags |= flag; }
 inline void lv_obj_clear_flag(lv_obj_t* object, uint32_t flag) { object->flags &= ~flag; }
 inline void lv_obj_set_scrollbar_mode(lv_obj_t* object, int mode) { object->scrollbar_mode = mode; }
-inline void lv_obj_set_style_pad_all(lv_obj_t* object, int pad, int) { object->pad_all = pad; }
+inline void lv_obj_set_style_pad_all(lv_obj_t* object, int pad, int part) { if (part == 0) object->pad_all = pad; }
+inline void lv_obj_set_style_clip_corner(lv_obj_t* object, bool clip, int) { object->clip_corner = clip; }
+inline void lv_obj_set_ext_click_area(lv_obj_t* object, int area) { object->ext_click_area = area; }
 
-inline void lv_obj_set_style_bg_color(lv_obj_t* object, lv_color_t color, int) { object->bg_color = color; }
+inline lv_color_t lv_obj_get_style_bg_color(lv_obj_t* object, int) { return object->bg_color; }
+inline lv_color_t lv_obj_get_style_text_color(lv_obj_t* object, int) { return object->text_color; }
+inline bool lv_color_eq(lv_color_t a, lv_color_t b) { return a == b; }
+inline void lv_obj_set_style_bg_color(lv_obj_t* object, lv_color_t color, int part) { ++lv_test_bg_writes; if (part == 0) object->bg_color = color; }
 inline void lv_obj_set_style_bg_opa(lv_obj_t*, int, int) {}
-inline void lv_obj_set_style_radius(lv_obj_t*, int, int) {}
-inline void lv_obj_set_style_border_width(lv_obj_t*, int, int) {}
+inline void lv_obj_set_style_radius(lv_obj_t* object, int radius, int part) { if (part == 0) object->radius = radius; }
+inline void lv_obj_set_style_border_color(lv_obj_t* object, lv_color_t color, int) { object->border_color = color; }
+inline void lv_obj_set_style_border_width(lv_obj_t* object, int width, int) { object->border_width = width; }
+inline void lv_obj_set_style_text_align(lv_obj_t* object, int align, int) { object->text_align = align; }
 inline void lv_obj_set_style_text_color(lv_obj_t* object, lv_color_t color, int) { object->text_color = color; }
-inline void lv_obj_set_style_text_font(lv_obj_t*, lv_font_t*, int) {}
+inline void lv_obj_set_style_text_font(lv_obj_t* object, lv_font_t* font, int) { object->font = font; }
+inline void lv_obj_set_style_shadow_width(lv_obj_t*, int, int) {}
+constexpr uint32_t LV_STATE_PRESSED = 0x20;
+inline bool lv_obj_has_state(lv_obj_t* object, uint32_t state) { return (object->state & state) == state; }
 inline lv_obj_t* lv_obj_get_child(const lv_obj_t* object, int index) {
   return object && index >= 0 && static_cast<std::size_t>(index) < object->children.size()
       ? object->children[static_cast<std::size_t>(index)] : nullptr;
@@ -172,6 +206,9 @@ inline void lv_obj_add_event_cb(lv_obj_t* object, lv_event_cb_t cb, int code, vo
 }
 inline void* lv_event_get_user_data(lv_event_t* event) { return event->user_data; }
 inline lv_obj_t* lv_event_get_target(lv_event_t* event) { return event->target; }
+inline lv_event_code_t lv_event_get_code(lv_event_t* event) {
+  return event && event->target ? event->target->event_code : 0;
+}
 inline lv_indev_t* lv_indev_get_next(lv_indev_t* indev) { return indev ? nullptr : &lv_test_indev; }
 inline void lv_indev_set_long_press_time(lv_indev_t* indev, uint16_t long_press_time) {
   if (indev) indev->long_press_time = long_press_time;

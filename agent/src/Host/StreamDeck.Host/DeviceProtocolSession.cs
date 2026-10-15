@@ -15,7 +15,11 @@ public sealed class DeviceProtocolSession(
     DeviceShortcutConfiguration? shortcuts = null,
     Func<DeviceInfoMessage, CancellationToken, ValueTask>? deviceInfoHandler = null,
     Func<AudioSnapshot?>? initialAudioProvider = null,
-    Func<ShortcutsReportMessage, CancellationToken, ValueTask>? shortcutsReportHandler = null)
+    Func<ShortcutsReportMessage, CancellationToken, ValueTask>? shortcutsReportHandler = null,
+    Func<DeviceShortcutConfiguration>? shortcutsProvider = null,
+    Func<AppearanceConfiguration>? appearanceProvider = null,
+    Func<IProtocolSink, CancellationToken, ValueTask>? initialMediaSender = null,
+    Func<CoverRequestMessage, CancellationToken, ValueTask>? coverRequestHandler = null)
 {
     private readonly Guid pendingSessionId = Guid.NewGuid();
     private bool authorized;
@@ -46,6 +50,13 @@ public sealed class DeviceProtocolSession(
             return;
         }
 
+        if (envelope.Type == ProtocolConstants.MessageTypes.CoverRequest)
+        {
+            if (coverRequestHandler is not null)
+                await coverRequestHandler(ProtocolSerializer.DeserializeData<CoverRequestMessage>(envelope), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (envelope.Type == ProtocolConstants.MessageTypes.DeviceInfo)
         {
             if (deviceInfoHandler is not null)
@@ -72,16 +83,22 @@ public sealed class DeviceProtocolSession(
     private async Task HandleHelloAsync(ProtocolEnvelope envelope, CancellationToken cancellationToken)
     {
         var hello = ProtocolSerializer.DeserializeData<HelloMessage>(envelope);
+        var presentedBearerToken = bearerToken ?? hello.BearerToken;
         var result = authorizer is PairingApprovalService pairingService
-            ? await pairingService.AuthorizeAsync(hello, bearerToken, remoteAddress, pendingSessionId, cancellationToken).ConfigureAwait(false)
-            : await authorizer.AuthorizeAsync(hello, bearerToken, cancellationToken).ConfigureAwait(false);
+            ? await pairingService.AuthorizeAsync(hello, presentedBearerToken, remoteAddress, pendingSessionId, cancellationToken).ConfigureAwait(false)
+            : await authorizer.AuthorizeAsync(hello, presentedBearerToken, cancellationToken).ConfigureAwait(false);
         authorized = result.Status == DeviceAuthorizationStatus.Authorized;
 
         if (authorized)
         {
             await sink.SendTextAsync(ProtocolStateMapper.CreateAgentHello(), cancellationToken).ConfigureAwait(false);
-            await sink.SendTextAsync(ProtocolStateMapper.CreateConnectionState("connected", null), cancellationToken).ConfigureAwait(false);
+            if (ShouldEchoVerifiedUsbBearerToken(hello, presentedBearerToken))
+            {
+                await sink.SendTextAsync(ProtocolStateMapper.CreatePairingToken(hello.BearerToken!), cancellationToken).ConfigureAwait(false);
+            }
+
             await SendInitialStateAsync(cancellationToken).ConfigureAwait(false);
+            await sink.SendTextAsync(ProtocolStateMapper.CreateConnectionState("connected", null), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -92,6 +109,7 @@ public sealed class DeviceProtocolSession(
         {
             pendingHello = hello;
             SubscribeForPairingApproval();
+            await TryCompletePendingPairingAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -109,6 +127,13 @@ public sealed class DeviceProtocolSession(
     private void HandlePairingChanged(object? sender, EventArgs args)
     {
         _ = TryCompletePendingPairingAsync(CancellationToken.None);
+    }
+
+    private bool ShouldEchoVerifiedUsbBearerToken(HelloMessage hello, string? presentedBearerToken)
+    {
+        return string.Equals(remoteAddress, "USB", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(hello.BearerToken)
+            && string.Equals(presentedBearerToken, hello.BearerToken, StringComparison.Ordinal);
     }
 
     private async Task TryCompletePendingPairingAsync(CancellationToken cancellationToken)
@@ -138,27 +163,25 @@ public sealed class DeviceProtocolSession(
 
         await sink.SendTextAsync(ProtocolStateMapper.CreatePairingToken(token), cancellationToken).ConfigureAwait(false);
         await sink.SendTextAsync(ProtocolStateMapper.CreateAgentHello(), cancellationToken).ConfigureAwait(false);
-        await sink.SendTextAsync(ProtocolStateMapper.CreateConnectionState("connected", null), cancellationToken).ConfigureAwait(false);
         await SendInitialStateAsync(cancellationToken).ConfigureAwait(false);
+        await sink.SendTextAsync(ProtocolStateMapper.CreateConnectionState("connected", null), cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask SendInitialStateAsync(CancellationToken cancellationToken)
     {
-        if (appearance is not null)
-        {
-            await sink.SendTextAsync(ProtocolStateMapper.CreateDeviceSettings(CreateRequestId("settings"), appearance), cancellationToken).ConfigureAwait(false);
-        }
-
-        if (shortcuts is not null)
-        {
-            await sink.SendTextAsync(ProtocolStateMapper.CreateShortcutsUpdate(shortcuts), cancellationToken).ConfigureAwait(false);
-        }
+        var currentShortcuts = shortcutsProvider?.Invoke() ?? shortcuts ?? new DeviceShortcutConfiguration([]);
+        await sink.SendTextAsync(ProtocolStateMapper.CreateShortcutsUpdate(currentShortcuts), cancellationToken).ConfigureAwait(false);
+        var currentAppearance = appearanceProvider?.Invoke() ?? appearance;
+        if (currentAppearance is not null)
+            await sink.SendTextAsync(ProtocolStateMapper.CreateDeviceSettings(CreateRequestId("settings"), currentAppearance), cancellationToken).ConfigureAwait(false);
 
         var audioSnapshot = initialAudioProvider?.Invoke();
         if (audioSnapshot is not null)
         {
             await sink.SendTextAsync(ProtocolStateMapper.CreateAudioUpdate(audioSnapshot), cancellationToken).ConfigureAwait(false);
         }
+        if (initialMediaSender is not null) await initialMediaSender(sink, cancellationToken).ConfigureAwait(false);
+        await sink.SendTextAsync(ProtocolSerializer.Serialize(ProtocolConstants.MessageTypes.DeviceStatusRequest, null, new { }), cancellationToken).ConfigureAwait(false);
     }
 
     private static string CreateRequestId(string prefix)

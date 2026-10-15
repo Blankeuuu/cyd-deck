@@ -95,15 +95,18 @@ inline bool readQuotedField(const char* json, std::size_t length, const char* fi
   if (needleLength <= 0 || static_cast<std::size_t>(needleLength) >= sizeof(needle)) return false;
   const char* begin = json;
   const char* end = json + length;
-  const char* found = std::search(begin, end, needle, needle + needleLength);
-  if (found == end) return false;
-  const char* read = found + needleLength;
-  while (read < end && (*read == ' ' || *read == '\t' || *read == '\r' || *read == '\n')) ++read;
-  if (read >= end || *read != ':') return false;
-  ++read;
-  while (read < end && (*read == ' ' || *read == '\t' || *read == '\r' || *read == '\n')) ++read;
-  if (read >= end || *read != '"') return false;
-  ++read;
+  const char* read = begin;
+  while (true) {
+    const char* found = std::search(read, end, needle, needle + needleLength);
+    if (found == end) return false;
+    read = found + needleLength;
+    while (read < end && (*read == ' ' || *read == '\t' || *read == '\r' || *read == '\n')) ++read;
+    if (read >= end || *read != ':') continue;
+    ++read;
+    while (read < end && (*read == ' ' || *read == '\t' || *read == '\r' || *read == '\n')) ++read;
+    // The envelope also has a data object. Only the string payload is a match.
+    if (read < end && *read == '"') { ++read; break; }
+  }
   std::size_t written = 0;
   while (read < end && *read != '"') {
     char value = *read;
@@ -115,11 +118,40 @@ inline bool readQuotedField(const char* json, std::size_t length, const char* fi
   return true;
 }
 
+inline std::size_t utf8SafeLength(const char* value, std::size_t maxBytes) {
+  std::size_t safe = 0;
+  for (std::size_t i = 0; value && value[i] && i < maxBytes;) {
+    const unsigned char c = static_cast<unsigned char>(value[i]);
+    std::size_t length = 1;
+    if ((c & 0x80U) == 0) length = 1;
+    else if ((c & 0xE0U) == 0xC0U) length = 2;
+    else if ((c & 0xF0U) == 0xE0U) length = 3;
+    else if ((c & 0xF8U) == 0xF0U) length = 4;
+    else break;
+    if (i + length > maxBytes) break;
+    bool continuation = true;
+    for (std::size_t j = 1; j < length; ++j) {
+      const unsigned char next = static_cast<unsigned char>(value[i + j]);
+      if ((next & 0xC0U) != 0x80U) continuation = false;
+    }
+    if (!continuation) break;
+    safe = i + length;
+    i += length;
+  }
+  return safe;
+}
+
 inline void copyShortcutText(char* target, std::size_t targetSize, const char* value, const char* fallback = "") {
   if (targetSize == 0) return;
   const char* source = value && value[0] ? value : fallback;
-  std::strncpy(target, source, targetSize - 1);
-  target[targetSize - 1] = '\0';
+  const std::size_t length = utf8SafeLength(source, targetSize - 1);
+  std::memcpy(target, source, length);
+  target[length] = '\0';
+}
+
+inline bool validShortcutDisplayMode(const char* value) {
+  return value && (std::strcmp(value, "label") == 0 || std::strcmp(value, "icon") == 0 ||
+      std::strcmp(value, "both") == 0);
 }
 
 inline const char* mediaCommandFor(IntentType type) {
@@ -164,7 +196,7 @@ inline bool makeShortcutExecuteJson(const char* requestId, const char* shortcutI
 
 inline void applyShortcutsUpdateJson(ShortcutState& shortcuts, const char* payload, std::size_t length) {
   resetShortcuts(shortcuts);
-  if (!payload) return;
+  if (!payload || length == 0) return;
   uint8_t index = 0;
   const char* cursor = payload;
   const char* end = payload + length;
@@ -172,17 +204,27 @@ inline void applyShortcutsUpdateJson(ShortcutState& shortcuts, const char* paylo
   while (cursor < end && index < 6) {
     const char* idAt = std::search(cursor, end, kIdNeedle, kIdNeedle + sizeof(kIdNeedle) - 1);
     if (idAt == end) break;
-    const std::size_t remaining = static_cast<std::size_t>(end - idAt);
+    const char* objStart = idAt;
+    while (objStart > cursor && *objStart != '{') --objStart;
+    const char* objEnd = std::find(idAt, end, '}');
+    const std::size_t objLen = static_cast<std::size_t>((objEnd == end ? end : objEnd) - objStart);
     char id[kMaxShortcutIdLength + 1]{};
     char label[20]{};
-    readQuotedField(idAt, remaining, "id", id, sizeof(id));
-    readQuotedField(idAt, remaining, "label", label, sizeof(label));
+    char icon[16]{};
+    char displayMode[6]{};
+    readQuotedField(objStart, objLen, "id", id, sizeof(id));
+    readQuotedField(objStart, objLen, "label", label, sizeof(label));
+    readQuotedField(objStart, objLen, "icon", icon, sizeof(icon));
+    readQuotedField(objStart, objLen, "displayMode", displayMode, sizeof(displayMode));
     if (id[0] != '\0') {
-      copyShortcutText(shortcuts.names[index], sizeof(shortcuts.names[index]), label, shortcuts.names[index]);
-      copyShortcutText(shortcuts.ids[index], sizeof(shortcuts.ids[index]), id, shortcuts.ids[index]);
+      copyShortcutText(shortcuts.names[index], sizeof(shortcuts.names[index]), label, "Shortcut");
+      copyShortcutText(shortcuts.ids[index], sizeof(shortcuts.ids[index]), id, "");
+      copyShortcutText(shortcuts.icons[index], sizeof(shortcuts.icons[index]), icon, "");
+      copyShortcutText(shortcuts.displayModes[index], sizeof(shortcuts.displayModes[index]),
+          validShortcutDisplayMode(displayMode) ? displayMode : "label", "label");
+      ++index;
     }
-    ++index;
-    cursor = idAt + 4;
+    cursor = (objEnd == end) ? end : objEnd + 1;
   }
 }
 

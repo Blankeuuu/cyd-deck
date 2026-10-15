@@ -64,6 +64,20 @@ int main() {
   assert(defaults.pageOrder[0] == Page::Media);
   assert(defaults.pageOrder[1] == Page::Shortcuts);
 
+  MediaState timeline;
+  timeline.positionMs = 27000;
+  timeline.durationMs = 30000;
+  timeline.playing = true;
+  timeline.timelineAtMs = 1000;
+  timeline.timelineAnchored = true;
+  assert(mediaPositionAt(timeline, 1100) == 27100);
+  assert(mediaPositionAt(timeline, 9000) == 30000);
+  timeline.playing = false;
+  assert(mediaPositionAt(timeline, 9000) == 27000);
+  timeline.playing = true;
+  timeline.timelineAtMs = UINT32_MAX - 50;
+  assert(mediaPositionAt(timeline, 49) == 27100);
+
   AppState idleState;
   idleState.appearance.dimAfterSeconds = 30;
   idleState.appearance.screenOffAfterSeconds = 60;
@@ -79,6 +93,14 @@ int main() {
   assert(!idle.dimmed && !idle.off && idle.resetIdleTimer);
   idle = computeDisplayIdleDecision(idleState, 3600, true, false);
   assert(!idle.dimmed && !idle.off && idle.resetIdleTimer);
+  idle = computeDisplayIdleDecision(idleState, 3600, false, true);
+  assert(!idle.dimmed && !idle.off && idle.resetIdleTimer);
+  idleState.connection.agentConnected = false;
+  idleState.connection.wifiConnected = true;
+  idle = computeDisplayIdleDecision(idleState, 29, false, false);
+  assert(!idle.dimmed && !idle.off);
+  idle = computeDisplayIdleDecision(idleState, 30, false, false);
+  assert(idle.dimmed && !idle.off);
   idleState.connection.agentConnected = false;
   idle = computeDisplayIdleDecision(idleState, 0, false, false);
   assert(!idle.dimmed && !idle.off && !idle.resetIdleTimer);

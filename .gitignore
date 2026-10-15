@@ -37,3 +37,8 @@ Desktop.ini
 *.key
 *.p12
 *.pfx
+
+# Local deployment output and private serial captures.
+agent/publish-release/
+serial_out.txt
+serial_*.txt

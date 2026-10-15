@@ -13,13 +13,14 @@ public sealed class ShortcutConfigurationTests
         var deviceConfiguration = catalog.DeviceConfiguration;
 
         Assert.Equal(6, deviceConfiguration.Shortcuts.Count);
-        Assert.Contains(deviceConfiguration.Shortcuts, shortcut => shortcut.Id == "screenshot" && shortcut.ActionType == ShortcutActionTypes.Hotkey);
+        Assert.Contains(deviceConfiguration.Shortcuts, shortcut => shortcut.Id == "screenshot" && shortcut.Icon == "camera" && shortcut.DisplayMode == ShortcutDisplayModes.Label);
 
         var json = ShortcutJson.SerializeDeviceConfiguration(deviceConfiguration);
         Assert.DoesNotContain("scriptPath", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("executablePath", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("C:\\Tools", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("https://example.com/docs", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("actionType", json, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -1,14 +1,52 @@
 using System.Security.Cryptography;
 using StreamDeck.Covers;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using Xunit;
 
 namespace StreamDeck.Covers.Tests;
 
 public sealed class CoverProcessorTests
 {
+    [Fact]
+    public async Task CacheSeparatesDeviceSizeAndAlwaysProducesBaselineJpeg()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cyd-cover-profile-{Guid.NewGuid():N}");
+        await using var source = CreateWideSource();
+        var large = new CoverProcessor(new CoverProcessingOptions { CacheDirectory = directory, CoverSizePixels = 140 });
+        await large.ProcessAsync(source, TestContext.Current.CancellationToken);
+        source.Position = 0;
+        var target = new CoverProcessor(new CoverProcessingOptions { CacheDirectory = directory, CoverSizePixels = 128, JpegQuality = 80 });
+        var result = await target.ProcessAsync(source, TestContext.Current.CancellationToken);
+        using var bitmap = SKBitmap.Decode(result!.FilePath);
+        Assert.Equal(128, bitmap.Width);
+        Assert.Equal(128, bitmap.Height);
+        var bytes = await File.ReadAllBytesAsync(result.FilePath, TestContext.Current.CancellationToken);
+        Assert.Contains(Enumerable.Range(0, bytes.Length - 1), i => bytes[i] == 0xff && bytes[i + 1] == 0xc0);
+        Assert.DoesNotContain(Enumerable.Range(0, bytes.Length - 1), i => bytes[i] == 0xff && bytes[i + 1] == 0xc2);
+    }
+
+    [Theory]
+    [InlineData(SKEncodedImageFormat.Png)]
+    [InlineData(SKEncodedImageFormat.Webp)]
+    public async Task ThumbnailFormatsBecomeDeviceSizedBaselineJpeg(SKEncodedImageFormat format)
+    {
+        using var bitmap = new SKBitmap(256, 180);
+        bitmap.Erase(SKColors.CornflowerBlue);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var encoded = image.Encode(format, 90);
+        await using var source = new MemoryStream(encoded.ToArray());
+        var processor = new CoverProcessor(new CoverProcessingOptions
+        {
+            CacheDirectory = Path.Combine(Path.GetTempPath(), $"cyd-cover-format-{Guid.NewGuid():N}"), CoverSizePixels = 128
+        });
+        var result = await processor.ProcessAsync(source, TestContext.Current.CancellationToken);
+        using var output = SKBitmap.Decode(result!.FilePath);
+        Assert.Equal(128, output.Width);
+        Assert.Equal(128, output.Height);
+        var bytes = await File.ReadAllBytesAsync(result.FilePath, TestContext.Current.CancellationToken);
+        Assert.Contains(Enumerable.Range(0, bytes.Length - 1), i => bytes[i] == 0xff && bytes[i + 1] == 0xc0);
+    }
+
     [Fact]
     public async Task MissingThumbnailReturnsNull()
     {
@@ -35,7 +73,8 @@ public sealed class CoverProcessorTests
         var bytes = await File.ReadAllBytesAsync(result.FilePath, TestContext.Current.CancellationToken);
         Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), result.CoverId);
 
-        using var image = await Image.LoadAsync<Rgba32>(result.FilePath, TestContext.Current.CancellationToken);
+        using var image = SKBitmap.Decode(result.FilePath);
+        Assert.NotNull(image);
         Assert.Equal(140, image.Width);
         Assert.Equal(140, image.Height);
         Assert.StartsWith("#", result.AccentHex, StringComparison.Ordinal);
@@ -86,21 +125,59 @@ public sealed class CoverProcessorTests
         Assert.NotNull(result);
         Assert.NotNull(result.AccentHex);
         var accent = ParseHex(result.AccentHex);
-        Assert.InRange(accent.R, 205, 220);
-        Assert.InRange(accent.G, 50, 70);
-        Assert.InRange(accent.B, 65, 80);
+        Assert.InRange(accent.Red, 205, 220);
+        Assert.InRange(accent.Green, 50, 70);
+        Assert.InRange(accent.Blue, 65, 80);
     }
 
     [Fact]
     public async Task AccentIsNullForUnsaturatedCover()
     {
-        await using var source = CreateSolidSource(new Rgba32(128, 128, 128));
+        await using var source = CreateSolidSource(new SKColor(128, 128, 128));
         var processor = CreateProcessor();
 
         var result = await processor.ProcessAsync(source, TestContext.Current.CancellationToken);
 
         Assert.NotNull(result);
         Assert.Null(result.AccentHex);
+    }
+
+    [Fact]
+    public async Task TransparentPixelsAreCompositedAgainstWhiteBeforeJpegEncoding()
+    {
+        var processor = CreateProcessor();
+        await using var source = CreateTransparentPngSource();
+
+        var result = await processor.ProcessAsync(source, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(result);
+        using var image = SKBitmap.Decode(result.FilePath);
+        Assert.NotNull(image);
+        var transparentRegion = image.GetPixel(10, 10);
+        Assert.InRange(transparentRegion.Red, 245, 255);
+        Assert.InRange(transparentRegion.Green, 245, 255);
+        Assert.InRange(transparentRegion.Blue, 245, 255);
+    }
+
+    [Fact]
+    public async Task CancellationDuringImageDecodeIsPropagated()
+    {
+        using var cancellation = new CancellationTokenSource();
+        await using var source = new CancelOnDecodeStream(CreateWideSource().ToArray(), cancellation);
+        var processor = CreateProcessor();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => processor.ProcessAsync(source, cancellation.Token));
+    }
+
+    [Fact]
+    public async Task UnsupportedImageDataThrowsInvalidDataException()
+    {
+        var processor = CreateProcessor();
+        await using var source = new MemoryStream([1, 2, 3, 4, 5]);
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => processor.ProcessAsync(source, TestContext.Current.CancellationToken));
     }
 
     private static CoverProcessor CreateProcessor()
@@ -114,62 +191,76 @@ public sealed class CoverProcessorTests
 
     private static MemoryStream CreateWideSource()
     {
-        using var image = new Image<Rgba32>(300, 100);
-        Fill(image, new Rgba32(230, 230, 230));
-        FillRectangle(image, new Rectangle(100, 0, 100, 100), new Rgba32(42, 88, 210));
+        using var image = new SKBitmap(new SKImageInfo(300, 100, SKColorType.Rgba8888, SKAlphaType.Premul));
+        Fill(image, new SKColor(230, 230, 230));
+        FillRectangle(image, new SKRectI(100, 0, 200, 100), new SKColor(42, 88, 210));
 
         return SaveJpeg(image);
     }
 
     private static MemoryStream CreateAccentSource()
     {
-        using var image = new Image<Rgba32>(140, 140);
-        Fill(image, new Rgba32(245, 245, 245));
-        FillRectangle(image, new Rectangle(0, 0, 24, 140), new Rgba32(12, 12, 12));
-        FillRectangle(image, new Rectangle(24, 0, 24, 140), new Rgba32(120, 120, 120));
-        FillRectangle(image, new Rectangle(48, 0, 92, 140), new Rgba32(212, 59, 72));
+        using var image = new SKBitmap(new SKImageInfo(140, 140, SKColorType.Rgba8888, SKAlphaType.Premul));
+        Fill(image, new SKColor(245, 245, 245));
+        FillRectangle(image, new SKRectI(0, 0, 24, 140), new SKColor(12, 12, 12));
+        FillRectangle(image, new SKRectI(24, 0, 48, 140), new SKColor(120, 120, 120));
+        FillRectangle(image, new SKRectI(48, 0, 140, 140), new SKColor(212, 59, 72));
 
         return SaveJpeg(image);
     }
 
-    private static MemoryStream CreateSolidSource(Rgba32 color)
+    private static MemoryStream CreateSolidSource(SKColor color)
     {
-        using var image = new Image<Rgba32>(140, 140);
+        using var image = new SKBitmap(new SKImageInfo(140, 140, SKColorType.Rgba8888, SKAlphaType.Premul));
         Fill(image, color);
         return SaveJpeg(image);
     }
 
-    private static void Fill(Image<Rgba32> image, Rgba32 color)
+    private static MemoryStream CreateTransparentPngSource()
     {
-        FillRectangle(image, new Rectangle(0, 0, image.Width, image.Height), color);
-    }
+        using var image = new SKBitmap(new SKImageInfo(140, 140, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var canvas = new SKCanvas(image);
+        canvas.Clear(SKColors.Transparent);
+        using var paint = new SKPaint { Color = new SKColor(210, 45, 55), Style = SKPaintStyle.Fill };
+        canvas.DrawRect(new SKRectI(40, 40, 100, 100), paint);
+        canvas.Flush();
 
-    private static void FillRectangle(Image<Rgba32> image, Rectangle rectangle, Rgba32 color)
-    {
-        image.ProcessPixelRows(accessor =>
-        {
-            for (var y = rectangle.Top; y < rectangle.Bottom; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (var x = rectangle.Left; x < rectangle.Right; x++)
-                {
-                    row[x] = color;
-                }
-            }
-        });
-    }
-
-    private static MemoryStream SaveJpeg(Image<Rgba32> image)
-    {
         var stream = new MemoryStream();
-        image.SaveAsJpeg(stream, new JpegEncoder { Quality = 95 });
+        using var skImage = SKImage.FromBitmap(image);
+        using var data = skImage.Encode(SKEncodedImageFormat.Png, 100);
+        Assert.NotNull(data);
+        data.SaveTo(stream);
         stream.Position = 0;
         return stream;
     }
 
-    private static Rgba32 ParseHex(string value)
+    private static void Fill(SKBitmap image, SKColor color)
     {
-        return new Rgba32(
+        FillRectangle(image, new SKRectI(0, 0, image.Width, image.Height), color);
+    }
+
+    private static void FillRectangle(SKBitmap image, SKRectI rectangle, SKColor color)
+    {
+        using var canvas = new SKCanvas(image);
+        using var paint = new SKPaint { Color = color, Style = SKPaintStyle.Fill };
+        canvas.DrawRect(rectangle, paint);
+        canvas.Flush();
+    }
+
+    private static MemoryStream SaveJpeg(SKBitmap image)
+    {
+        var stream = new MemoryStream();
+        using var skImage = SKImage.FromBitmap(image);
+        using var data = skImage.Encode(SKEncodedImageFormat.Jpeg, 95);
+        Assert.NotNull(data);
+        data.SaveTo(stream);
+        stream.Position = 0;
+        return stream;
+    }
+
+    private static SKColor ParseHex(string value)
+    {
+        return new SKColor(
             Convert.ToByte(value[1..3], 16),
             Convert.ToByte(value[3..5], 16),
             Convert.ToByte(value[5..7], 16));
@@ -178,5 +269,45 @@ public sealed class CoverProcessorTests
     private sealed class NonSeekableMemoryStream(byte[] buffer) : MemoryStream(buffer)
     {
         public override bool CanSeek => false;
+    }
+
+    private sealed class CancelOnDecodeStream(byte[] buffer, CancellationTokenSource cancellation) : MemoryStream(buffer)
+    {
+        private bool decodeStarted;
+
+        public override long Position
+        {
+            get => base.Position;
+            set
+            {
+                if (value == 0 && base.Position == Length)
+                {
+                    decodeStarted = true;
+                }
+
+                base.Position = value;
+            }
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            CancelWhenDecoding();
+            return base.Read(buffer, offset, count);
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            CancelWhenDecoding();
+            return base.Read(buffer);
+        }
+
+        private void CancelWhenDecoding()
+        {
+            if (decodeStarted)
+            {
+                cancellation.Cancel();
+                cancellation.Token.ThrowIfCancellationRequested();
+            }
+        }
     }
 }

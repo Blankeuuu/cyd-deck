@@ -5,6 +5,7 @@ $zig = Join-Path $projectRoot '.tools\ziglang-host\ziglang\zig.exe'
 $source = Join-Path $projectRoot 'tests\ui_logic_test.cpp'
 $includeDir = Join-Path $projectRoot 'firmware\include'
 $fakeIncludeDir = Join-Path $projectRoot 'tests\fakes'
+$lvglDir = Join-Path $projectRoot 'firmware\.pio\libdeps\cyd28_st7789_app\lvgl'
 $arduinoJsonIncludeDir = Join-Path $projectRoot 'firmware\.pio\libdeps\cyd28_st7789_app\ArduinoJson\src'
 $zigCache = Join-Path $projectRoot '.tools\zig-cache'
 if (-not (Test-Path -LiteralPath $python)) { throw "Run scripts/setup-tools.ps1 first." }
@@ -21,11 +22,25 @@ try {
     $env:ZIG_GLOBAL_CACHE_DIR = $zigCache
     $env:ZIG_LOCAL_CACHE_DIR = $zigCache
     $tests = @(
-        @{ Source = $source; Executable = (Join-Path $projectRoot '.tools\ui_logic_test.exe'); Includes = @($includeDir) },
-        @{ Source = (Join-Path $projectRoot 'tests\onboarding_state_test.cpp'); Executable = (Join-Path $projectRoot '.tools\onboarding_state_test.exe'); Includes = @($includeDir) },
-        @{ Source = (Join-Path $projectRoot 'tests\network_protocol_test.cpp'); Executable = (Join-Path $projectRoot '.tools\network_protocol_test.exe'); Includes = @($includeDir) },
-        @{ Source = (Join-Path $projectRoot 'tests\paged_index_test.cpp'); Executable = (Join-Path $projectRoot '.tools\paged_index_test.exe'); Includes = @($includeDir) },
-        @{ Source = (Join-Path $projectRoot 'tests\ui_layout_test.cpp'); Executable = (Join-Path $projectRoot '.tools\ui_layout_test.exe'); Includes = @($fakeIncludeDir, $includeDir) }
+        @{ Compiler = 'c++'; Standard = 'c++17'; Sources = @($source); Executable = (Join-Path $projectRoot '.tools\ui_logic_test.exe'); Includes = @($includeDir) },
+        @{ Compiler = 'c++'; Standard = 'c++17'; Sources = @((Join-Path $projectRoot 'tests\onboarding_state_test.cpp')); Executable = (Join-Path $projectRoot '.tools\onboarding_state_test.exe'); Includes = @($includeDir) },
+        @{ Compiler = 'c++'; Standard = 'c++17'; Sources = @((Join-Path $projectRoot 'tests\network_protocol_test.cpp')); Executable = (Join-Path $projectRoot '.tools\network_protocol_test.exe'); Includes = @($includeDir) },
+        @{ Compiler = 'c++'; Standard = 'c++17'; Sources = @((Join-Path $projectRoot 'tests\usb_protocol_test.cpp')); Executable = (Join-Path $projectRoot '.tools\usb_protocol_test.exe'); Includes = @($includeDir) },
+        @{ Compiler = 'c++'; Standard = 'c++17'; Sources = @((Join-Path $projectRoot 'tests\paged_index_test.cpp')); Executable = (Join-Path $projectRoot '.tools\paged_index_test.exe'); Includes = @($includeDir) },
+        @{ Compiler = 'c++'; Standard = 'c++17'; Sources = @((Join-Path $projectRoot 'tests\ui_layout_test.cpp')); Executable = (Join-Path $projectRoot '.tools\ui_layout_test.exe'); Includes = @($fakeIncludeDir, $includeDir) },
+        @{
+            Compiler = 'cc'
+            Standard = 'c11'
+            Sources = @(
+                (Join-Path $projectRoot 'tests\font_glyph_test.c'),
+                (Join-Path $projectRoot 'firmware\src\ui\fonts\streamdeck_polish_14.c'),
+                (Join-Path $projectRoot 'firmware\src\ui\fonts\streamdeck_polish_16.c'),
+                (Join-Path $projectRoot 'firmware\src\ui\fonts\streamdeck_polish_20.c'),
+                (Join-Path $lvglDir 'src\font\lv_font_montserrat_16.c')
+            )
+            Executable = (Join-Path $projectRoot '.tools\font_glyph_test.exe')
+            Includes = @($lvglDir, (Join-Path $lvglDir 'src'), $includeDir)
+        }
     )
     foreach ($test in $tests) {
         $includeArgs = @()
@@ -34,7 +49,7 @@ try {
             $includeArgs += $include
         }
         $buildLog = "$($test.Executable).build.log"
-        & $zig c++ -std=c++17 -Wall -Wextra @includeArgs $test.Source -o $test.Executable *> $buildLog
+        & $zig $test.Compiler "-std=$($test.Standard)" -Wall -Wextra @includeArgs @($test.Sources) -o $test.Executable *> $buildLog
         if ($LASTEXITCODE -ne 0) {
             Get-Content -LiteralPath $buildLog
             $exitCode = $LASTEXITCODE

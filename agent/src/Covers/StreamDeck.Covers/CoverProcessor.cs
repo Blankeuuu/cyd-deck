@@ -1,10 +1,7 @@
 using System.Buffers;
 using System.Security.Cryptography;
 using System.Text.Json;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace StreamDeck.Covers;
 
@@ -41,26 +38,28 @@ public sealed class CoverProcessor
 
         try
         {
-            var cached = await TryReadExistingAsync(preparedSource.SourceHash, cancellationToken).ConfigureAwait(false);
+            var cacheKey = $"baseline-v2-{options.CoverSizePixels}-{options.JpegQuality}-{preparedSource.SourceHash}";
+            var cached = await TryReadExistingAsync(cacheKey, cancellationToken).ConfigureAwait(false);
             if (cached is not null)
             {
                 Touch(cached.FilePath);
                 return cached with { WasCacheHit = true };
             }
 
-            await using var decodeStream = preparedSource.OpenRead();
-            using var image = await Image.LoadAsync<Rgba32>(decodeStream, cancellationToken).ConfigureAwait(false);
+            await using var decodeStream = new CancellationAwareStream(preparedSource.OpenRead(), cancellationToken);
+            using var sourceBitmap = SKBitmap.Decode(decodeStream);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (sourceBitmap is null)
+            {
+                throw new InvalidDataException("Thumbnail stream is not a supported image.");
+            }
 
-            CenterCropAndResize(image, options.CoverSizePixels);
+            using var image = CenterCropAndResize(sourceBitmap, options.CoverSizePixels);
+            cancellationToken.ThrowIfCancellationRequested();
             var accentHex = CoverAccentExtractor.ExtractAccentHex(image);
-
-            await using var jpegStream = new MemoryStream();
-            await image.SaveAsJpegAsync(
-                jpegStream,
-                new JpegEncoder { Quality = options.JpegQuality },
-                cancellationToken).ConfigureAwait(false);
-
-            var jpegBytes = jpegStream.ToArray();
+            cancellationToken.ThrowIfCancellationRequested();
+            var jpegBytes = EncodeJpeg(image, options.JpegQuality);
+            cancellationToken.ThrowIfCancellationRequested();
             var coverId = Convert.ToHexString(SHA256.HashData(jpegBytes)).ToLowerInvariant();
             var finalPath = GetCoverPath(coverId);
 
@@ -72,7 +71,7 @@ public sealed class CoverProcessor
             }
 
             var result = new CoverProcessResult(coverId, finalPath, accentHex, jpegBytes.Length, WasCacheHit: false);
-            await WriteIndexAsync(preparedSource.SourceHash, result, cancellationToken).ConfigureAwait(false);
+            await WriteIndexAsync(cacheKey, result, cancellationToken).ConfigureAwait(false);
             PruneCache();
 
             return result;
@@ -83,16 +82,34 @@ public sealed class CoverProcessor
         }
     }
 
-    private static void CenterCropAndResize(Image<Rgba32> image, int size)
+    private static SKBitmap CenterCropAndResize(SKBitmap image, int size)
     {
         var square = Math.Min(image.Width, image.Height);
-        var crop = new Rectangle(
+        var crop = new SKRectI(
             (image.Width - square) / 2,
             (image.Height - square) / 2,
-            square,
-            square);
+            (image.Width + square) / 2,
+            (image.Height + square) / 2);
 
-        image.Mutate(context => context.Crop(crop).Resize(size, size));
+        var output = new SKBitmap(new SKImageInfo(size, size, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var canvas = new SKCanvas(output);
+        canvas.Clear(SKColors.White);
+        var sampling = new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None);
+        canvas.DrawBitmap(image, crop, new SKRect(0, 0, size, size), sampling);
+        canvas.Flush();
+        return output;
+    }
+
+    private static byte[] EncodeJpeg(SKBitmap image, int quality)
+    {
+        using var skImage = SKImage.FromBitmap(image);
+        using var data = skImage.Encode(SKEncodedImageFormat.Jpeg, quality);
+        if (data is null)
+        {
+            throw new InvalidOperationException("Failed to encode cover JPEG.");
+        }
+
+        return data.ToArray();
     }
 
     private async Task<PreparedSource> PrepareSourceAsync(Stream stream, CancellationToken cancellationToken)
@@ -277,5 +294,62 @@ public sealed class CoverProcessor
         {
             throw new NotSupportedException();
         }
+    }
+
+    private sealed class CancellationAwareStream(Stream inner, CancellationToken cancellationToken) : Stream
+    {
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+
+        public override long Position
+        {
+            get => inner.Position;
+            set
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                inner.Position = value;
+            }
+        }
+
+        public override void Flush() => inner.Flush();
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = inner.Read(buffer, offset, count);
+            cancellationToken.ThrowIfCancellationRequested();
+            return read;
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = inner.Read(buffer);
+            cancellationToken.ThrowIfCancellationRequested();
+            return read;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return inner.Seek(offset, origin);
+        }
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        public override ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 }

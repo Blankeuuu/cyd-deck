@@ -7,7 +7,7 @@ internal static class AgentStatusFormatter
         return hostStatus switch
         {
             "connected" => "Connected",
-            "listening" => "Connecting",
+            "listening" => "Listening",
             "pairing pending" => "Pairing pending",
             "starting" => "Connecting",
             var value when value.StartsWith("faulted:", StringComparison.Ordinal) => "Error",
@@ -29,6 +29,7 @@ internal static class AgentStatusFormatter
 
     public static string FormatLastSeen(AgentStatusSnapshot snapshot)
     {
+        if (snapshot.HostStatus == "connected") return "Connected now";
         if (snapshot.DeviceInfoUpdatedAtUtc is not { } updatedAtUtc)
         {
             return "not connected";
@@ -48,5 +49,16 @@ internal static class AgentStatusFormatter
 
         var minutes = Math.Max(1, (int)elapsed.TotalMinutes);
         return minutes == 1 ? "1 minute ago" : $"{minutes} minutes ago";
+    }
+
+    public static string FormatRelativeTime(DateTimeOffset timestamp, DateTimeOffset? now = null)
+    {
+        var elapsed = (now ?? DateTimeOffset.UtcNow) - timestamp;
+        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+        if (elapsed.TotalSeconds < 10) return "just now";
+        if (elapsed.TotalSeconds < 60) return $"{(int)elapsed.TotalSeconds}s ago";
+        if (elapsed.TotalMinutes < 60) return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed.TotalHours < 24) return $"{(int)elapsed.TotalHours}h ago";
+        return timestamp.ToLocalTime().ToString("g");
     }
 }

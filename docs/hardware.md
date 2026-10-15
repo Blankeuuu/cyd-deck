@@ -1,6 +1,6 @@
 # CYD hardware
 
-Płytka bazowa: ESP32-2432S028R / Cheap Yellow Display, klasyczny ESP32 bez PSRAM. Moduł jest opisany jako ST7789 / ILI9341; sterownika nie wybieramy bez fizycznej obserwacji. Kod konfiguruje oba warianty.
+Płytka bazowa: ESP32-2432S028R / Cheap Yellow Display, klasyczny ESP32 bez PSRAM. **KONTROLER WYŚWIETLACZA: ST7789 — POTWIERDZONY PRZEZ UŻYTKOWNIKA.** Fizyczne buildy tej płytki używają środowiska `cyd28_st7789`; wariant ILI9341 pozostaje dodatkową konfiguracją projektu.
 
 ## Pinout
 
@@ -33,7 +33,7 @@ GPIO36 i GPIO39 są input-only. TFT korzysta z hardware SPI host 2, SD z drugieg
 
 ## Display HAL
 
-Dwa środowiska PlatformIO, cyd28_ili9341 oraz cyd28_st7789, budują ten sam diagnostic app i zmieniają wyłącznie wybrany panel w LovyanGFX HAL. Landscape to 320×240. Nominalne offsety startują od zera i nie są fizycznie zweryfikowane. LovyanGFX daje lokalną konfigurację hardware w kodzie projektu i czysty wybór panelu; TFT_eSPI także potrafi sterować CYD, lecz jego setup jest zwykle wybierany przez nagłówki kompilacyjne/globalny User_Setup. Nie należy edytować globalnych plików bibliotek.
+Dwa środowiska PlatformIO, `cyd28_ili9341` oraz `cyd28_st7789`, budują ten sam diagnostic app i zmieniają wyłącznie wybrany panel w LovyanGFX HAL. Dla fizycznej płytki używaj `cyd28_st7789` (aplikacja: `cyd28_st7789_app`). Landscape to 320×240. Nominalne offsety startują od zera i nie są fizycznie zweryfikowane. LovyanGFX daje lokalną konfigurację hardware w kodzie projektu i czysty wybór panelu; TFT_eSPI także potrafi sterować CYD, lecz jego setup jest zwykle wybierany przez nagłówki kompilacyjne/globalny User_Setup. Nie należy edytować globalnych plików bibliotek.
 
 ## Diagnostic firmware
 
@@ -48,14 +48,14 @@ SD storage przy starcie mountuje kartę i tworzy katalogi /covers, /icons, /asse
 ## Procedura fizyczna
 
 1. Włóż kartę microSD z zachowanymi danymi, podłącz CYD przez USB.
-2. Uruchom scripts/build-firmware.ps1 run -e cyd28_ili9341, następnie scripts/build-firmware.ps1 run -e cyd28_ili9341 -t upload. Otwórz scripts/build-firmware.ps1 device monitor -b 115200 lub monitor Serial w PlatformIO. Przekaż linię [BOOT] i [MEM].
+2. Uruchom `scripts/build-firmware.ps1 run -e cyd28_st7789`, następnie `scripts/build-firmware.ps1 run -e cyd28_st7789 -t upload`. Otwórz `scripts/build-firmware.ps1 device monitor -b 115200` lub monitor Serial w PlatformIO. Przekaż linię [BOOT] i [MEM].
 3. Zapisz, czy widać kompletny obraz 320×240 landscape, oraz czytelność i brak przesunięć.
 4. Dotknij lewego górnego, prawego dolnego i środka; przekaż linie [TOUCH] raw. Uruchom CALIBRATE, dotknij pięciu krzyżyków w wyświetlonej kolejności, po czym sprawdź narożniki i środek. Zrestartuj i sprawdź, czy NVS zachowała kalibrację.
 5. Uruchom DISPLAY TEST. Zanotuj wygląd RED/GREEN/BLUE/WHITE/BLACK, gradient, tekst, prostokąt/koło i obramowanie krawędzi.
 6. Uruchom SD TEST i przekaż linię [SD]; oczekuj write/read/delete OK oraz PASS. Karta nie jest formatowana; plik testowy znika po teście.
 7. Przełącz LIGHT OFF/ON i zanotuj, czy podświetlenie gaśnie/wraca.
 8. Zostaw uruchomione 10 minut. Wklej kilka linii [MEM], zanotuj restarty i zachowanie heap.
-9. Wgraj także wariant alternatywny: scripts/build-firmware.ps1 run -e cyd28_st7789, scripts/build-firmware.ps1 run -e cyd28_st7789 -t upload; powtórz kroki 2–8 i przekaż logi oraz opis obu widoków. Nie wybieraj docelowego sterownika bez wyników fizycznych obu wariantów.
+9. Wariant ILI9341 pozostaje dostępny do diagnostyki innych rewizji CYD; ta fizyczna płytka ma potwierdzony kontroler ST7789 i nie wymaga rutynowego testowania obu wariantów.
 
 Przypadki matematyczne kalibracji (normalne, zamienione i odwrócone osie oraz punkty współliniowe) sprawdzisz bez płytki przez node --test tests/affine.test.mjs.
 

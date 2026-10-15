@@ -13,15 +13,21 @@ namespace streamdeck {
 constexpr std::size_t kMaxShortcutIdLength = 64;
 constexpr uint8_t kPageCount = 4;
 enum class Page : uint8_t { Media = 0, Shortcuts = 1, Pc = 2, Info = 3 };
-enum class IntentType : uint8_t { Previous, TogglePlayback, Next, SetVolume, RunShortcut, Recalibrate, RestartDevice, FactoryReset, SettingsUpdated, RefreshUi };
+enum class IntentType : uint8_t { Previous, TogglePlayback, Next, SetVolume, RunShortcut, Recalibrate, RestartDevice, FactoryReset, SettingsUpdated, RefreshUi, ShortcutsUpdated, ToggleMute };
 struct Intent { IntentType type; int16_t value; constexpr Intent(IntentType t = IntentType::Previous, int16_t v = 0) : type(t), value(v) {} };
-struct MediaState { char title[48] = "No track"; char artist[48] = "Waiting for PC"; char album[48] = ""; char coverId[kCoverIdLength + 1] = ""; CoverFetchState cover; uint32_t positionMs = 0; uint32_t durationMs = 0; bool playing = false; };
+struct MediaState { char title[48] = "No track"; char artist[48] = "Waiting for PC"; char album[48] = ""; char coverId[kCoverIdLength + 1] = ""; CoverFetchState cover; uint32_t positionMs = 0; uint32_t durationMs = 0; bool playing = false; uint32_t timelineAtMs = 0; bool timelineAnchored = false; };
+inline uint32_t mediaPositionAt(const MediaState& media, uint32_t nowMs) {
+  uint64_t position = media.positionMs;
+  if (media.playing && media.timelineAnchored) position += static_cast<uint32_t>(nowMs - media.timelineAtMs);
+  if (media.durationMs && position > media.durationMs) position = media.durationMs;
+  return static_cast<uint32_t>(position > UINT32_MAX ? UINT32_MAX : position);
+}
 struct DisplayIdleDecision { bool off = false; bool dimmed = false; bool resetIdleTimer = false; };
 enum class PendingSetupDecision : uint8_t { Wait, Success, Failure };
-struct AudioState { uint8_t reportedVolume = 0; bool available = false; };
+struct AudioState { uint8_t reportedVolume = 0; bool available = false; bool muted = false; };
 struct SystemState { uint32_t freeHeap = 0; uint32_t minHeap = 0; uint32_t largestBlock = 0; };
 struct StorageState { bool mounted = false; bool ready = false; uint32_t totalMb = 0; uint32_t freeMb = 0; char status[32] = "not started"; };
-struct DeviceInfoState { char firmwareVersion[16] = "1.0.0"; uint32_t uptimeSeconds = 0; };
+struct DeviceInfoState { char firmwareVersion[16] = "1.1.0"; uint32_t uptimeSeconds = 0; };
 struct ConnectionState {
   bool online = false;
   bool wifiConnected = false;
@@ -35,11 +41,15 @@ struct OtaState { bool enabled = false; bool running = false; uint8_t progress =
 struct ShortcutState {
   char names[6][20] = {"No shortcut","No shortcut","No shortcut","No shortcut","No shortcut","No shortcut"};
   char ids[6][kMaxShortcutIdLength + 1] = {"","","","","",""};
+  char icons[6][16] = {"","","","","",""};
+  char displayModes[6][6] = {"label","label","label","label","label","label"};
 };
 inline void resetShortcuts(ShortcutState& shortcuts) {
   for (std::size_t i = 0; i < 6; ++i) {
     std::memcpy(shortcuts.names[i], "No shortcut", sizeof("No shortcut"));
     shortcuts.ids[i][0] = '\0';
+    shortcuts.icons[i][0] = '\0';
+    std::memcpy(shortcuts.displayModes[i], "label", sizeof("label"));
   }
 }
 struct AppearanceState {
@@ -56,7 +66,15 @@ struct AppearanceState {
   bool pageVisible[kPageCount] = {true, true, true, true};
 };
 struct UiState { Page page = Page::Media; bool volumeOpen = false; };
+struct LoopPerformance {
+  uint32_t loopMaxUs = 0;
+  uint32_t renderMaxUs = 0;
+  uint32_t networkMaxUs = 0;
+  uint32_t slowLoops = 0;
+  uint32_t wifiDiscoveryCount = 0;
+};
 struct AppState {
+  LoopPerformance performance;
   MediaState media;
   AudioState audio;
   SystemState system;
@@ -119,14 +137,15 @@ inline void normalizeAppearance(AppearanceState& appearance) {
 
 inline DisplayIdleDecision computeDisplayIdleDecision(const AppState& state, uint32_t idleSeconds,
     bool currentOff, bool currentDimmed) {
+  (void)currentOff;
+  (void)currentDimmed;
+  DisplayIdleDecision decision;
+  // Authenticated Agent connection keeps the desk display awake on USB or Wi-Fi.
+  // Restart the idle countdown when the PC disconnects; Wi-Fi alone is not enough.
   if (state.connection.agentConnected) {
-    DisplayIdleDecision decision;
-    decision.off = false;
-    decision.dimmed = false;
-    decision.resetIdleTimer = currentOff || currentDimmed || idleSeconds > 0;
+    decision.resetIdleTimer = true;
     return decision;
   }
-  DisplayIdleDecision decision;
   decision.off = state.appearance.screenOffAfterSeconds > 0 &&
       idleSeconds >= state.appearance.screenOffAfterSeconds;
   decision.dimmed = !decision.off && state.appearance.dimAfterSeconds > 0 &&

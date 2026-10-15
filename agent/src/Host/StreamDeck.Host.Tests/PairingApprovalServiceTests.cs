@@ -279,6 +279,22 @@ public sealed class PairingApprovalServiceTests
         Assert.NotEqual(DeviceAuthorizationStatus.Authorized, previousTokenResult.Status);
     }
 
+    [Fact]
+    public async Task ListApprovedReturnsOnlyApprovedDevices()
+    {
+        var service = CreateService(out _);
+
+        await service.AuthorizeAsync(CreateHello(deviceId: "CYD-APP", name: "Approved CYD"), bearerToken: null, TestContext.Current.CancellationToken);
+        Assert.True(await service.ApproveAsync("CYD-APP", TestContext.Current.CancellationToken));
+
+        await service.AuthorizeAsync(CreateHello(deviceId: "CYD-PEND", name: "Pending CYD"), bearerToken: null, TestContext.Current.CancellationToken);
+
+        var approved = await service.ListApprovedAsync(TestContext.Current.CancellationToken);
+        var single = Assert.Single(approved);
+        Assert.Equal("CYD-APP", single.DeviceId);
+        Assert.Equal("Approved CYD", single.Name);
+    }
+
     private static PairingApprovalService CreateService(out string storagePath)
     {
         storagePath = Path.Combine(Path.GetTempPath(), "stream-deck-host-tests", Guid.NewGuid().ToString("N"), "pairing.json");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <cstdio>
 
@@ -19,6 +20,7 @@ struct CoverFetchState {
   CoverStatus status = CoverStatus::NoCover;
   bool inFlight = false;
   bool rendered = false;
+  uint32_t requestedAtMs = 0;
 };
 
 inline bool isHex(char value) {
@@ -41,7 +43,16 @@ inline bool makeCoverRequestPath(const char* coverId, char* out, std::size_t out
   return written > 0 && static_cast<std::size_t>(written) < outSize;
 }
 
-inline CoverTransition updateCoverFetch(CoverFetchState& state, const char* coverId) {
+inline uint16_t swapRgb565Bytes(uint16_t value) {
+  return static_cast<uint16_t>((value >> 8) | (value << 8));
+}
+
+inline void convertDisplayOrderRgb565ToLvgl(uint16_t* pixels, std::size_t count) {
+  if (!pixels) return;
+  for (std::size_t i = 0; i < count; ++i) pixels[i] = swapRgb565Bytes(pixels[i]);
+}
+
+inline CoverTransition updateCoverFetch(CoverFetchState& state, const char* coverId, uint32_t nowMs = 0) {
   if (!isValidCoverId(coverId)) {
     const bool changed = state.status != CoverStatus::NoCover || state.requestedId[0] || state.availableId[0] || state.inFlight;
     state = {};
@@ -49,7 +60,7 @@ inline CoverTransition updateCoverFetch(CoverFetchState& state, const char* cove
     return CoverTransition::Cleared;
   }
 
-  if (std::strcmp(state.requestedId, coverId) == 0 && state.status != CoverStatus::Failed) {
+  if (std::strcmp(state.requestedId, coverId) == 0) {
     return CoverTransition::Unchanged;
   }
 
@@ -57,6 +68,7 @@ inline CoverTransition updateCoverFetch(CoverFetchState& state, const char* cove
   state.requestedId[sizeof(state.requestedId) - 1] = '\0';
   state.availableId[0] = '\0';
   state.status = CoverStatus::Pending;
+  state.requestedAtMs = nowMs;
   state.inFlight = false;
   state.rendered = false;
   return CoverTransition::Requested;
@@ -87,6 +99,12 @@ inline CoverTransition markCoverFetchComplete(CoverFetchState& state, const char
   state.status = CoverStatus::Available;
   state.rendered = true;
   return CoverTransition::Available;
+}
+
+inline bool expirePendingCover(CoverFetchState& state, uint32_t nowMs, uint32_t timeoutMs = 15000) {
+  if (state.status != CoverStatus::Pending || nowMs - state.requestedAtMs < timeoutMs) return false;
+  markCoverFetchComplete(state, state.requestedId, false);
+  return true;
 }
 
 }  // namespace streamdeck

@@ -17,6 +17,7 @@
 #include "board_pins.h"
 #include "display/display_hal.h"
 #include "network/agent_client.h"
+#include "network/cover_art.h"
 #include "network/ota_update.h"
 #include "storage/sd_storage.h"
 #include "touch/xpt2046.h"
@@ -25,6 +26,10 @@
 #include "ui/lvgl_port.h"
 #include "ui/onboarding.h"
 #include "ui/ui_manager.h"
+
+#if defined(WOKWI_SIMULATOR)
+#include "../../../tests/fixtures/wokwi_cover_rgb_jpeg.inc"
+#endif
 
 namespace {
 using namespace streamdeck;
@@ -78,7 +83,7 @@ BootMode bootMode = BootMode::Calibration;
 bool down = false;
 bool calibrating = false;
 bool calibrationArmed = false;
-bool cancelled = false;
+[[maybe_unused]] bool cancelled = false;
 bool setupPortalActive = false;
 bool setupUiBuilt = false;
 bool setupQrNeedsDraw = false;
@@ -89,6 +94,11 @@ bool stationConnectStarted = false;
 bool sdMounted = false;
 String setupStatusMessage;
 constexpr uint16_t kCoverImageSize = 128;
+#if defined(WOKWI_SIMULATOR)
+constexpr bool kUsbProtocolEnabled = false;
+#else
+constexpr bool kUsbProtocolEnabled = true;
+#endif
 uint16_t* coverPixels = nullptr;
 lv_image_dsc_t coverImageDsc{};
 uint32_t lastUserInputAt = 0;
@@ -104,10 +114,24 @@ lv_indev_t* pointer = nullptr;
 lv_obj_t* setupStatusLabel = nullptr;
 
 bool renderCachedCover(const char* coverId, AppState& appState);
+#if defined(WOKWI_SIMULATOR)
+void renderWokwiCoverDiagnostic(AppState& appState);
+#endif
 void startWebConfigServer(bool provisioningMode);
 void servicePendingSetupResult();
 void sendHttp(WiFiClient& client, int status, const char* statusText,
               const char* contentType, const String& body);
+
+void appLogLine(const char* message) {
+  if (kUsbProtocolEnabled && bootMode == BootMode::App) return;
+  Serial.println(message);
+}
+
+template <typename... Args>
+void appLogf(const char* format, Args... args) {
+  if (kUsbProtocolEnabled && bootMode == BootMode::App) return;
+  Serial.printf(format, args...);
+}
 
 
 
@@ -149,7 +173,7 @@ lv_obj_t* makeLabel(lv_obj_t* parent, const char* text, int x, int y, int w,
 }
 
 void applyBacklight(uint8_t percent) {
-  const uint8_t brightness = onboarding::clampBrightness(percent);
+  const uint8_t brightness = percent == 0 ? 0 : onboarding::clampBrightness(percent);
   analogWrite(board::backlight, (255 * brightness) / 100);
 }
 
@@ -256,6 +280,33 @@ void loadSetupSettings() {
     prefs.putUChar("secver", 1);
   }
   prefs.putUChar("bright", setupSettings.brightness);
+  prefs.end();
+}
+
+void loadShortcutSettings() {
+  prefs.begin("shortcuts", true);
+  if (prefs.getUChar("version", 0) == 1 && prefs.getBytesLength("slots") == sizeof(state.shortcuts)) {
+    prefs.getBytes("slots", &state.shortcuts, sizeof(state.shortcuts));
+    for (int i = 0; i < 6; ++i) {
+      state.shortcuts.ids[i][sizeof(state.shortcuts.ids[i]) - 1] = '\0';
+      state.shortcuts.names[i][sizeof(state.shortcuts.names[i]) - 1] = '\0';
+      state.shortcuts.icons[i][sizeof(state.shortcuts.icons[i]) - 1] = '\0';
+      state.shortcuts.displayModes[i][sizeof(state.shortcuts.displayModes[i]) - 1] = '\0';
+    }
+  }
+  prefs.end();
+}
+
+void persistShortcutSettings() {
+  ShortcutState previous;
+  prefs.begin("shortcuts", false);
+  const bool unchanged = prefs.getUChar("version", 0) == 1 && prefs.getBytesLength("slots") == sizeof(previous)
+      && prefs.getBytes("slots", &previous, sizeof(previous)) == sizeof(previous)
+      && std::memcmp(&previous, &state.shortcuts, sizeof(previous)) == 0;
+  if (!unchanged) {
+    prefs.putBytes("slots", &state.shortcuts, sizeof(state.shortcuts));
+    prefs.putUChar("version", 1);
+  }
   prefs.end();
 }
 
@@ -394,6 +445,7 @@ void startAppUi() {
     config.deviceId = makeDeviceId();
     config.deviceName = setupSettings.deviceName;
     config.manualHost = setupSettings.agentIp;
+    config.usbProtocolEnabled = kUsbProtocolEnabled;
     config.renderCover = renderCachedCover;
     agentClient.begin(config, state, intents, sdStorage);
     agentClientStarted = true;
@@ -428,7 +480,7 @@ bool renderCachedCover(const char* coverId, AppState& appState) {
   const bool decoded = sprite.drawJpg(&jpeg, 0, 0, kCoverImageSize, kCoverImageSize, 0, 0, 1.0f);
   jpeg.close();
   if (!decoded) return false;
-
+  convertDisplayOrderRgb565ToLvgl(coverPixels, kCoverImageSize * kCoverImageSize);
   coverImageDsc.header.magic = LV_IMAGE_HEADER_MAGIC;
   coverImageDsc.header.cf = LV_COLOR_FORMAT_RGB565;
   coverImageDsc.header.flags = 0;
@@ -441,6 +493,45 @@ bool renderCachedCover(const char* coverId, AppState& appState) {
   appState.media.cover.rendered = true;
   return true;
 }
+
+#if defined(WOKWI_SIMULATOR)
+void renderWokwiCoverDiagnostic(AppState& appState) {
+  if (!appUiStarted) return;
+  if (!coverPixels) {
+    coverPixels = static_cast<uint16_t*>(std::calloc(kCoverImageSize * kCoverImageSize, sizeof(uint16_t)));
+    if (!coverPixels) {
+      appLogLine("[WOKWI] COVER_RGB_DIAG_ALLOC_FAILED");
+      return;
+    }
+  }
+
+  lgfx::LGFX_Sprite sprite;
+  sprite.setColorDepth(16);
+  sprite.setBuffer(coverPixels, kCoverImageSize, kCoverImageSize, 16);
+  sprite.fillScreen(0x0000);
+  const bool decoded = sprite.drawJpg(kWokwiCoverRgbJpeg, kWokwiCoverRgbJpegLength,
+      0, 0, kCoverImageSize, kCoverImageSize, 0, 0, 1.0f);
+  if (!decoded) {
+    appLogLine("[WOKWI] COVER_RGB_DIAG_DECODE_FAILED");
+    return;
+  }
+
+  convertDisplayOrderRgb565ToLvgl(coverPixels, kCoverImageSize * kCoverImageSize);
+  coverImageDsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+  coverImageDsc.header.cf = LV_COLOR_FORMAT_RGB565;
+  coverImageDsc.header.flags = 0;
+  coverImageDsc.header.w = kCoverImageSize;
+  coverImageDsc.header.h = kCoverImageSize;
+  coverImageDsc.header.stride = kCoverImageSize * sizeof(uint16_t);
+  coverImageDsc.data_size = kCoverImageSize * kCoverImageSize * sizeof(uint16_t);
+  coverImageDsc.data = reinterpret_cast<const uint8_t*>(coverPixels);
+  uiSetCoverImage(&coverImageDsc);
+  appState.media.cover.status = CoverStatus::Available;
+  appState.media.cover.rendered = true;
+  uiRefresh(appState);
+  appLogLine("[WOKWI] COVER_RGB_DIAG_READY");
+}
+#endif
 
 void beginSdStatus() {
   sdMounted = sdStorage.begin();
@@ -460,13 +551,13 @@ void clearNamespace(const char* name) {
 }
 
 void restartDevice() {
-  Serial.println("[APP] restarting device");
+  appLogLine("[APP] restarting device");
   delay(150);
   ESP.restart();
 }
 
 void factoryResetDevice() {
-  Serial.println("[APP] factory reset requested");
+  appLogLine("[APP] factory reset requested");
   stopSetupPortal();
   if (agentClientStarted) {
     agentClientStarted = false;
@@ -522,7 +613,7 @@ void startStationIfConfigured() {
   WiFi.setAutoReconnect(true);
   WiFi.begin(setupSettings.wifiSsid.c_str(), setupSettings.wifiPassword.c_str());
   stationConnectStarted = true;
-  Serial.printf("[SETUP] connecting STA for device %s\n",
+  appLogf("[SETUP] connecting STA for device %s\n",
       setupSettings.deviceName.c_str());
 }
 
@@ -667,7 +758,7 @@ void handleSetupSave(WiFiClient& client, const String& body) {
   setSetupStatus("Testing Wi-Fi credentials...");
   sendHttp(client, 202, "Accepted", "text/html",
       buildSetupPage("Testing Wi-Fi credentials. Refresh this page for the result."));
-  Serial.println("[SETUP] Wi-Fi credentials received; testing connection");
+  appLogLine("[SETUP] Wi-Fi credentials received; testing connection");
 }
 
 void serviceSetupHttp() {
@@ -756,7 +847,7 @@ void startSetupPortal() {
   startWebConfigServer(true);
   appUiStarted = false;
   buildSetupUi();
-  Serial.printf("[SETUP] portal started ssid=%s ip=%s\n",
+  appLogf("[SETUP] portal started ssid=%s ip=%s\n",
       setupSettings.apSsid.c_str(), WiFi.softAPIP().toString().c_str());
 }
 
@@ -789,7 +880,7 @@ void beginCalibration() {
   calibrationStep = 0;
   calibrationArmed = false;
   calibrationScreen();
-  Serial.println("[APP] tap each calibration target and release");
+  appLogLine("[APP] tap each calibration target and release");
 }
 
 void afterCalibrationComplete() {
@@ -825,7 +916,7 @@ void saveTap(RawTouch& raw) {
     } else {
       calibrationStep = 0;
       calibrationScreen();
-      Serial.println("[APP] touch calibration rejected; prior saved map remains active");
+      appLogLine("[APP] touch calibration rejected; prior saved map remains active");
     }
   } else {
     ++calibrationStep;
@@ -888,29 +979,14 @@ void readTouch(lv_indev_t*, lv_indev_data_t* data) {
     pt = touchcal::rotate180(pt, board::screenWidth, board::screenHeight);
     const int x = constrain(static_cast<int>(pt.x), 0, board::screenWidth - 1);
     const int y = constrain(static_cast<int>(pt.y), 0, board::screenHeight - 1);
-    const int swipe = gesture.update(x, y, true);
-    if (swipe) {
-      uiNavigate(static_cast<int8_t>(swipe));
-      cancelled = true;
-    } else if (!cancelled) {
-      if (!down) gesture.begin(x, y);
-      lastX = x;
-      lastY = y;
-      data->state = LV_INDEV_STATE_PRESSED;
-    }
-    if (cancelled) {
-      data->state = LV_INDEV_STATE_RELEASED;
-      data->point.x = -1;
-      data->point.y = -1;
-    } else {
-      data->point.x = x;
-      data->point.y = y;
-    }
+    lastX = x;
+    lastY = y;
+    data->state = LV_INDEV_STATE_PRESSED;
+    data->point.x = x;
+    data->point.y = y;
     down = true;
   } else {
-    gesture.update(0, 0, false);
     down = false;
-    cancelled = false;
     data->state = LV_INDEV_STATE_RELEASED;
     data->point.x = lastX;
     data->point.y = lastY;
@@ -930,9 +1006,15 @@ void handleIntent(const Intent& intent) {
       break;
     case IntentType::SettingsUpdated:
       persistAppearanceSettings();
+      // Settings wake the display: reset idle time as well as the flags.
+      lastUserInputAt = millis();
       displayOff = false;
       displayDimmed = false;
       applyConfiguredBacklight();
+      uiRefresh(state);
+      break;
+    case IntentType::ShortcutsUpdated:
+      persistShortcutSettings();
       uiRefresh(state);
       break;
     case IntentType::RefreshUi:
@@ -940,6 +1022,11 @@ void handleIntent(const Intent& intent) {
       break;
     case IntentType::SetVolume:
       state.audio.reportedVolume = constrain(intent.value, 0, 100);
+      uiRefresh(state);
+      agentClient.sendIntent(intent);
+      break;
+    case IntentType::ToggleMute:
+      state.audio.muted = !state.audio.muted;
       uiRefresh(state);
       agentClient.sendIntent(intent);
       break;
@@ -991,7 +1078,7 @@ void servicePendingSetupResult() {
       return;
     }
     setSetupStatus("Wi-Fi connected. Starting app...");
-    Serial.printf("[SETUP] Wi-Fi validated; setup complete ip=%s\n",
+    appLogf("[SETUP] Wi-Fi validated; setup complete ip=%s\n",
         WiFi.localIP().toString().c_str());
     stopSetupPortal();
     startStationIfConfigured();
@@ -1005,13 +1092,13 @@ void servicePendingSetupResult() {
       WiFi.disconnect(false, false);
       restorePreviousNetwork();
       setSetupStatus("Wi-Fi failed. Previous network restored.");
-      Serial.println("[SETUP] Wi-Fi validation failed; previous network restored");
+      appLogLine("[SETUP] Wi-Fi validation failed; previous network restored");
       return;
     }
     WiFi.disconnect(false, false);
     WiFi.mode(WIFI_AP_STA);
     setSetupStatus("Wi-Fi failed. Portal still open.");
-    Serial.println("[SETUP] Wi-Fi validation failed; portal remains open");
+    appLogLine("[SETUP] Wi-Fi validation failed; portal remains open");
   }
 }
 
@@ -1056,13 +1143,17 @@ namespace streamdeck {
 
 
 void appBegin() {
+  Serial.setRxBufferSize(8192);
+  Serial.setTxBufferSize(2048);
   Serial.begin(115200);
+  Serial.setDebugOutput(false);
   pinMode(board::backlight, OUTPUT);
   analogWriteFrequency(5000);
   analogWriteResolution(8);
 
   loadSetupSettings();
   loadAppearanceSettings();
+  loadShortcutSettings();
   applyConfiguredBacklight();
 
   display.init();
@@ -1086,7 +1177,7 @@ void appBegin() {
 #if defined(WOKWI_SIMULATOR)
   calibration.valid = true;
   setupSettings.done = true;
-  Serial.println("[WOKWI] booting app preview; touch and onboarding are not simulated");
+  appLogLine("[WOKWI] booting app preview; touch and onboarding are not simulated");
 #endif
   const onboarding::BootState bootState{calibration.valid, setupSettings.done};
   if (onboarding::needsCalibration(bootState)) {
@@ -1097,13 +1188,17 @@ void appBegin() {
     startStationIfConfigured();
     startAppUi();
 #if defined(WOKWI_SIMULATOR)
-    Serial.println("[WOKWI] APP_UI_READY");
+    renderWokwiCoverDiagnostic(state);
+    appLogLine("[WOKWI] APP_UI_READY");
 #endif
   }
 }
 
 void appLoop() {
+  const uint32_t loopStarted = micros();
   lv_timer_handler();
+  const uint32_t renderUs = micros() - loopStarted;
+  const uint32_t networkStarted = micros();
   if (setupQrNeedsDraw) drawSetupQr();
   if (bootMode == BootMode::Provisioning) serviceSetupPortal();
   if (bootMode == BootMode::App) {
@@ -1111,6 +1206,7 @@ void appLoop() {
     servicePendingSetupResult();
   }
   if (bootMode == BootMode::App) agentClient.loop();
+  const uint32_t networkUs = micros() - networkStarted;
   serviceOtaUpdate();
   serviceDisplayIdle();
 
@@ -1118,6 +1214,20 @@ void appLoop() {
   while (intents.pop(intent)) handleIntent(intent);
 
   refreshSystemState();
+  static uint32_t lastTimelinePaintAt = 0;
+  if (bootMode == BootMode::App && !calibrating && state.ui.page == Page::Media &&
+      state.media.playing && state.connection.agentConnected && millis() - lastTimelinePaintAt >= 100) {
+    lastTimelinePaintAt = millis();
+    uiRefresh(state);
+  }
+  if (state.connection.agentConnected) {
+    auto& perf = state.performance;
+    const uint32_t loopUs = micros() - loopStarted;
+    perf.loopMaxUs = std::max(perf.loopMaxUs, loopUs);
+    perf.renderMaxUs = std::max(perf.renderMaxUs, renderUs);
+    perf.networkMaxUs = std::max(perf.networkMaxUs, networkUs);
+    if (loopUs > 50000) ++perf.slowLoops;
+  }
 }
 
 }  // namespace streamdeck

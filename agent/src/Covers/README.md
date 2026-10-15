@@ -10,4 +10,4 @@ PC-side cover pipeline for media thumbnails:
 6. uses the SHA-256 of the final JPEG bytes as `coverId`,
 7. stores `{coverId}.jpg` on local disk for the later HTTP endpoint.
 
-The implementation uses `SixLabors.ImageSharp` pinned to `2.1.11`. It keeps the public API free of WinRT and HTTP concerns, works directly from streams, avoids buffering the full input bytes in memory, and writes non-seekable inputs to a temporary file while hashing them. ImageSharp decodes one image at a time; after decode the crop/resize mutation produces only the small final JPEG in memory.
+The implementation uses `SkiaSharp` 4.153.1 (MIT). It keeps the public API free of WinRT and HTTP concerns, works directly from streams, avoids buffering the full input bytes in memory, and writes non-seekable inputs to a temporary file while hashing them. SkiaSharp decodes one image at a time, then center-crops/resizes and encodes the small final JPEG. Native runtime assets are selected by the consuming target; the Windows Agent publish includes `SkiaSharp.NativeAssets.Win32`.

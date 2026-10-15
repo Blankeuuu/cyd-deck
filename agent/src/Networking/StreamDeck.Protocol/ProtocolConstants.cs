@@ -15,8 +15,10 @@ public static class ProtocolConstants
         public const string DeviceRestart = "device.restart";
         public const string DeviceFactoryReset = "device.factoryReset";
         public const string DeviceSettings = "device.settings";
+        public const string DeviceStatusRequest = "device.status.request";
         public const string DeviceInfo = "device.info";
         public const string Ping = "ping";
+        public const string CoverRequest = "cover.request";
         public const string MediaUpdate = "media.update";
         public const string MediaTimeline = "media.timeline";
         public const string MediaPlayback = "media.playback";

@@ -1,12 +1,29 @@
 #include <cassert>
 #include <cstring>
 
+#include "network/agent_discovery.h"
 #include "network/agent_protocol.h"
 #include "network/cover_art.h"
 #include "ui/app_state.h"
 
 int main() {
   using namespace streamdeck;
+
+  const char coverFrame[] = R"({"protocol":1,"type":"cover.chunk","data":{"coverId":"abc","offset":0,"total":5,"data":"SGVsbG8="}})";
+  char coverData[32]{};
+  assert(protocol::readQuotedField(coverFrame, sizeof(coverFrame) - 1, "data", coverData, sizeof(coverData)));
+  assert(std::strcmp(coverData, "SGVsbG8=") == 0);
+
+  CoverFetchState timeoutCover;
+  const char* stableCover = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+  assert(updateCoverFetch(timeoutCover, stableCover, 100) == CoverTransition::Requested);
+  assert(!expirePendingCover(timeoutCover, 15099));
+  assert(expirePendingCover(timeoutCover, 15100));
+  assert(timeoutCover.status == CoverStatus::Failed);
+  assert(updateCoverFetch(timeoutCover, stableCover, 16000) == CoverTransition::Unchanged);
+  assert(markCoverFetchComplete(timeoutCover, stableCover, true) == CoverTransition::Available);
+  assert(updateCoverFetch(timeoutCover, stableCover, 17000) == CoverTransition::Unchanged);
+  assert(timeoutCover.rendered);
 
   AppState state;
 
@@ -19,6 +36,27 @@ int main() {
   assert(std::strcmp(protocol::kShortcutsReport, "shortcuts.report") == 0);
   assert(std::strcmp(protocol::kMdnsService, "streamdeck") == 0);
   assert(std::strcmp(protocol::kMdnsProto, "tcp") == 0);
+
+  const auto mdnsEndpoint = protocol::selectAgentEndpoint(
+      "192.168.1.10", protocol::kDefaultPort, "192.168.1.50", 9001);
+  assert(mdnsEndpoint.valid);
+  assert(mdnsEndpoint.source == protocol::AgentEndpointSource::Mdns);
+  assert(std::strcmp(mdnsEndpoint.host, "192.168.1.50") == 0);
+  assert(mdnsEndpoint.port == 9001);
+
+  const auto fallbackEndpoint = protocol::selectAgentEndpoint(
+      "192.168.1.10", protocol::kDefaultPort, "", 0);
+  assert(fallbackEndpoint.valid);
+  assert(fallbackEndpoint.source == protocol::AgentEndpointSource::Manual);
+  assert(std::strcmp(fallbackEndpoint.host, "192.168.1.10") == 0);
+  assert(fallbackEndpoint.port == protocol::kDefaultPort);
+
+  const auto zeroPortEndpoint = protocol::selectAgentEndpoint(
+      "192.168.1.10", protocol::kDefaultPort, "192.168.1.50", 0);
+  assert(zeroPortEndpoint.valid);
+  assert(zeroPortEndpoint.source == protocol::AgentEndpointSource::Manual);
+  assert(std::strcmp(zeroPortEndpoint.host, "192.168.1.10") == 0);
+  assert(zeroPortEndpoint.port == protocol::kDefaultPort);
 
   assert(protocol::isMediaIntent(IntentType::Previous));
   assert(protocol::isMediaIntent(IntentType::TogglePlayback));
@@ -57,11 +95,21 @@ int main() {
   assert(cover.status == CoverStatus::Pending);
   assert(markCoverFetchComplete(cover, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", true, false) == CoverTransition::Failed);
   assert(!cover.rendered);
-  assert(updateCoverFetch(cover, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") == CoverTransition::Requested);
+  assert(updateCoverFetch(cover, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") == CoverTransition::Unchanged);
   assert(markCoverFetchComplete(cover, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", true, true) == CoverTransition::Available);
   assert(cover.status == CoverStatus::Available);
   assert(cover.rendered);
   assert(kMaxCoverBytes == 512U * 1024U);
+  uint16_t pixels[] = {0x1234, 0xABCD, 0x00F8};
+  convertDisplayOrderRgb565ToLvgl(pixels, 3);
+  assert(pixels[0] == 0x3412);
+  assert(pixels[1] == 0xCDAB);
+  assert(pixels[2] == 0xF800);
+  uint16_t rgbBands[] = {0x00F8, 0xE007, 0x1F00};
+  convertDisplayOrderRgb565ToLvgl(rgbBands, 3);
+  assert(rgbBands[0] == 0xF800);
+  assert(rgbBands[1] == 0x07E0);
+  assert(rgbBands[2] == 0x001F);
   assert(updateCoverFetch(cover, "") == CoverTransition::Cleared);
   assert(cover.status == CoverStatus::NoCover);
 
@@ -75,15 +123,48 @@ int main() {
   protocol::applyShortcutsUpdateJson(shortcutState, shortenedUpdate, std::strlen(shortenedUpdate));
   assert(std::strcmp(shortcutState.ids[0], "new-id") == 0);
   assert(std::strcmp(shortcutState.names[0], "New Label") == 0);
+  assert(std::strcmp(shortcutState.icons[0], "") == 0);
+  assert(std::strcmp(shortcutState.displayModes[0], "label") == 0);
   assert(std::strcmp(shortcutState.ids[1], "") == 0);
   assert(std::strcmp(shortcutState.names[1], "No shortcut") == 0);
+  const char* iconUpdate = "{\"protocol\":1,\"type\":\"shortcuts.update\",\"data\":{\"shortcuts\":[{\"id\":\"polish\",\"label\":\"Zażółć gęślą\",\"icon\":\"play\",\"displayMode\":\"both\"},{\"id\":\"icon-only\",\"label\":\"Ignored\",\"icon\":\"next\",\"displayMode\":\"icon\"},{\"id\":\"bad-mode\",\"label\":\"Fallback\",\"icon\":\"pause\",\"displayMode\":\"bad\"}]}}";
+  protocol::applyShortcutsUpdateJson(shortcutState, iconUpdate, std::strlen(iconUpdate));
+  assert(std::strcmp(shortcutState.ids[0], "polish") == 0);
+  assert(std::strcmp(shortcutState.names[0], "Zażółć gęślą") == 0);
+  assert(std::strcmp(shortcutState.icons[0], "play") == 0);
+  assert(std::strcmp(shortcutState.displayModes[0], "both") == 0);
+  assert(std::strcmp(shortcutState.icons[1], "next") == 0);
+  assert(std::strcmp(shortcutState.displayModes[1], "icon") == 0);
+  assert(std::strcmp(shortcutState.displayModes[2], "label") == 0);
   const char* emptyUpdate = "{\"protocol\":1,\"type\":\"shortcuts.update\",\"data\":{\"shortcuts\":[]}}";
   protocol::applyShortcutsUpdateJson(shortcutState, emptyUpdate, std::strlen(emptyUpdate));
   assert(std::strcmp(shortcutState.ids[0], "") == 0);
   assert(std::strcmp(shortcutState.names[0], "No shortcut") == 0);
+
   char reportJson[512]{};
   assert(protocol::makeShortcutsReportJson(shortcutState, reportJson, sizeof(reportJson)));
   assert(std::strcmp(reportJson, "{\"protocol\":1,\"type\":\"shortcuts.report\",\"data\":{\"shortcuts\":[]}}") == 0);
+
+  // Test Mic toggle with spaces/uppercase, label before id, and 7 shortcuts (limit 6)
+  ShortcutState micState;
+  const char* micAndSevenShortcuts = "{\"protocol\":1,\"type\":\"shortcuts.update\",\"data\":{\"shortcuts\":["
+      "{\"label\":\"Mic toggle\",\"id\":\"s-mic\",\"icon\":\"audio\",\"displayMode\":\"icon\"},"
+      "{\"id\":\"s-2\",\"label\":\"Spotify Video\",\"icon\":\"play\",\"displayMode\":\"both\"},"
+      "{\"id\":\"s-3\",\"label\":\"Discord\",\"icon\":\"audio\",\"displayMode\":\"label\"},"
+      "{\"id\":\"s-4\",\"label\":\"Lock\",\"icon\":\"record\",\"displayMode\":\"label\"},"
+      "{\"id\":\"s-5\",\"label\":\"Browser\",\"icon\":\"next\",\"displayMode\":\"icon\"},"
+      "{\"id\":\"s-6\",\"label\":\"Terminal\",\"icon\":\"prev\",\"displayMode\":\"label\"},"
+      "{\"id\":\"s-7-overflow\",\"label\":\"Overflow 7th\",\"icon\":\"audio\",\"displayMode\":\"both\"}"
+      "]}}";
+  protocol::applyShortcutsUpdateJson(micState, micAndSevenShortcuts, std::strlen(micAndSevenShortcuts));
+  assert(std::strcmp(micState.ids[0], "s-mic") == 0);
+  assert(std::strcmp(micState.names[0], "Mic toggle") == 0);
+  assert(std::strcmp(micState.icons[0], "audio") == 0);
+  assert(std::strcmp(micState.displayModes[0], "icon") == 0);
+  assert(std::strcmp(micState.ids[1], "s-2") == 0);
+  assert(std::strcmp(micState.names[1], "Spotify Video") == 0);
+  assert(std::strcmp(micState.ids[5], "s-6") == 0);
+  assert(std::strcmp(micState.names[5], "Terminal") == 0);
   std::strcpy(shortcutState.names[0], "Clip \"A\"");
   std::strcpy(shortcutState.ids[0], "clip-a");
   std::strcpy(shortcutState.names[1], "Ignored");

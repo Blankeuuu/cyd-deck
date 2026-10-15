@@ -136,6 +136,21 @@ public sealed class PairingApprovalService : IPairingApprovalService
         }
     }
 
+    public Task<IReadOnlyList<PairedDevice>> ListApprovedAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (gate)
+        {
+            return Task.FromResult<IReadOnlyList<PairedDevice>>(records.Values
+                .Where(record => record.State == PairingState.Approved)
+                .OrderBy(record => record.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(record => record.DeviceId, StringComparer.Ordinal)
+                .Select(record => new PairedDevice(record.DeviceId, record.Name, record.RemoteAddress, record.FirstSeenUtc))
+                .ToArray());
+        }
+    }
+
     public Task<bool> ApproveAsync(string deviceId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

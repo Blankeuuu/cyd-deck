@@ -1,7 +1,11 @@
+using System.Text.RegularExpressions;
+
 namespace StreamDeck.WindowsAgent;
 
 internal static class AgentDiagnosticLog
 {
+    private static readonly Regex SecretField = new("(\"(?:bearerToken|token|password)\"\\s*:\\s*\")(?:\\\\.|[^\"\\\\])*(?:\"|$)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    internal static string RedactSecrets(string value) => SecretField.Replace(value, match => match.Groups[1].Value + "***REDACTED***\"");
     private static readonly object Gate = new();
     private static readonly Queue<string> RecentLines = new();
     private const int MaxRecentLines = 200;
@@ -10,6 +14,7 @@ internal static class AgentDiagnosticLog
 
     public static void Write(string message)
     {
+        message = RedactSecrets(message);
         try
         {
             var directory = Path.Combine(
@@ -53,7 +58,7 @@ internal static class AgentDiagnosticLog
 
             try
             {
-                return File.ReadLines(path).TakeLast(MaxRecentLines).ToArray();
+                return File.ReadLines(path).TakeLast(MaxRecentLines).Select(RedactSecrets).ToArray();
             }
             catch
             {

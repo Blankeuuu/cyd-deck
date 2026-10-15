@@ -1,44 +1,39 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 
 namespace StreamDeck.Covers;
 
 public static class CoverAccentExtractor
 {
-    public static string? ExtractAccentHex(Image<Rgba32> image)
+    public static string? ExtractAccentHex(SKBitmap image)
     {
         Dictionary<int, Bucket> buckets = [];
 
-        image.ProcessPixelRows(accessor =>
+        for (var y = 0; y < image.Height; y++)
         {
-            for (var y = 0; y < accessor.Height; y++)
+            for (var x = 0; x < image.Width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (var x = 0; x < row.Length; x++)
+                var pixel = image.GetPixel(x, y);
+                if (pixel.Alpha < 32)
                 {
-                    var pixel = row[x];
-                    if (pixel.A < 32)
-                    {
-                        continue;
-                    }
-
-                    var color = ToCandidateColor(pixel);
-                    if (color is null)
-                    {
-                        continue;
-                    }
-
-                    var key = Quantize(color.Value.R, color.Value.G, color.Value.B);
-                    if (!buckets.TryGetValue(key, out var bucket))
-                    {
-                        bucket = new Bucket();
-                        buckets.Add(key, bucket);
-                    }
-
-                    bucket.Add(color.Value);
+                    continue;
                 }
+
+                var color = ToCandidateColor(pixel);
+                if (color is null)
+                {
+                    continue;
+                }
+
+                var key = Quantize(color.Value.R, color.Value.G, color.Value.B);
+                if (!buckets.TryGetValue(key, out var bucket))
+                {
+                    bucket = new Bucket();
+                    buckets.Add(key, bucket);
+                }
+
+                bucket.Add(color.Value);
             }
-        });
+        }
 
         if (buckets.Count == 0)
         {
@@ -54,11 +49,11 @@ public static class CoverAccentExtractor
         return $"#{best.R:X2}{best.G:X2}{best.B:X2}";
     }
 
-    private static CandidateColor? ToCandidateColor(Rgba32 pixel)
+    private static CandidateColor? ToCandidateColor(SKColor pixel)
     {
-        var r = pixel.R / 255d;
-        var g = pixel.G / 255d;
-        var b = pixel.B / 255d;
+        var r = pixel.Red / 255d;
+        var g = pixel.Green / 255d;
+        var b = pixel.Blue / 255d;
         var max = Math.Max(r, Math.Max(g, b));
         var min = Math.Min(r, Math.Min(g, b));
         var saturation = max <= 0 ? 0 : (max - min) / max;
@@ -74,7 +69,7 @@ public static class CoverAccentExtractor
             return null;
         }
 
-        return new CandidateColor(pixel.R, pixel.G, pixel.B, saturation);
+        return new CandidateColor(pixel.Red, pixel.Green, pixel.Blue, saturation);
     }
 
     private static int Quantize(byte r, byte g, byte b)
@@ -104,12 +99,13 @@ public static class CoverAccentExtractor
             saturation += color.Saturation;
         }
 
-        public Rgba32 Average()
+        public CandidateColor Average()
         {
-            return new Rgba32(
+            return new CandidateColor(
                 (byte)(r / Count),
                 (byte)(g / Count),
-                (byte)(b / Count));
+                (byte)(b / Count),
+                saturation / Count);
         }
     }
 }

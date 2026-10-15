@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using StreamDeck.Audio;
 using StreamDeck.Configuration;
 using StreamDeck.Media;
@@ -10,6 +11,22 @@ namespace StreamDeck.Host.Tests;
 
 public sealed class DeviceProtocolSessionTests
 {
+    [Fact]
+    public async Task HydrationSendsShortcutsBeforeAppearanceAndAudioBeforeConnected()
+    {
+        var sink = new MemoryProtocolSink();
+        var session = new DeviceProtocolSession(CreateDispatcher(), new AuthorizingDeviceAuthorizer(), sink,
+            appearance: new AppearanceConfiguration(), shortcuts: new DeviceShortcutConfiguration([]),
+            initialAudioProvider: () => new AudioSnapshot(57, false),
+            initialMediaSender: (target, token) => target.SendTextAsync(ProtocolStateMapper.CreateMediaUpdate(null), token));
+        await session.HandleTextMessageAsync(CreateHello(), TestContext.Current.CancellationToken);
+        var types = sink.Messages.Select(message => JsonDocument.Parse(message).RootElement.GetProperty("type").GetString()).ToArray();
+        Assert.True(Array.IndexOf(types, "shortcuts.update") < Array.IndexOf(types, "device.settings"));
+        Assert.True(Array.IndexOf(types, "audio.update") < Array.IndexOf(types, "media.update"));
+        Assert.True(Array.IndexOf(types, "media.update") < Array.IndexOf(types, "device.status.request"));
+        Assert.True(Array.IndexOf(types, "device.status.request") < Array.IndexOf(types, "connection.state"));
+    }
+
     [Fact]
     public async Task CommandsAreRejectedBeforeAuthorization()
     {
@@ -41,6 +58,74 @@ public sealed class DeviceProtocolSessionTests
         Assert.Equal(MediaCommand.PlayPause, media.LastCommand);
         Assert.Contains(sink.Messages, message => message.Contains("\"type\":\"hello\"", StringComparison.Ordinal));
         Assert.Contains(sink.Messages, message => message.Contains("\"requestId\":\"m-1\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task UsbHelloWithValidBearerTokenEchoesPairingTokenBeforeConnected()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), $"streamdeck-session-reconnect-{Guid.NewGuid():N}.json");
+        var service = new PairingApprovalService(storagePath);
+        var firstSink = new MemoryProtocolSink();
+        var firstSession = new DeviceProtocolSession(CreateDispatcher(), service, firstSink, remoteAddress: "USB");
+
+        await firstSession.HandleTextMessageAsync(CreateHello(), TestContext.Current.CancellationToken);
+        Assert.True(await service.ApproveAsync("CYD-A81F", TestContext.Current.CancellationToken));
+        var tokenMessage = firstSink.Messages.Single(message => message.Contains("\"type\":\"pairing.token\"", StringComparison.Ordinal));
+        using var tokenDocument = JsonDocument.Parse(tokenMessage);
+        var token = tokenDocument.RootElement.GetProperty("data").GetProperty("token").GetString();
+
+        var reconnectSink = new MemoryProtocolSink();
+        var reconnectSession = new DeviceProtocolSession(CreateDispatcher(), new PairingApprovalService(storagePath), reconnectSink, remoteAddress: "USB");
+        await reconnectSession.HandleTextMessageAsync(CreateHello(bearerToken: token), TestContext.Current.CancellationToken);
+
+        var pairingTokenIndex = FindMessageIndex(reconnectSink.Messages, message => message.Contains("\"type\":\"pairing.token\"", StringComparison.Ordinal));
+        var connectedIndex = FindMessageIndex(reconnectSink.Messages, message => message.Contains("\"type\":\"connection.state\"", StringComparison.Ordinal) && message.Contains("connected", StringComparison.Ordinal));
+        Assert.True(pairingTokenIndex >= 0, "valid USB bearer reconnect echoes a pairing token");
+        Assert.True(connectedIndex >= 0, "valid USB bearer reconnect sends connected state");
+        Assert.True(pairingTokenIndex < connectedIndex, "USB pairing token echo must precede connected state");
+        using var echoedTokenDocument = JsonDocument.Parse(reconnectSink.Messages[pairingTokenIndex]);
+        Assert.Equal(token, echoedTokenDocument.RootElement.GetProperty("data").GetProperty("token").GetString());
+    }
+
+    [Fact]
+    public async Task UsbHelloWithInvalidBearerTokenDoesNotEchoPairingTokenOrAuthorize()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), $"streamdeck-session-invalid-reconnect-{Guid.NewGuid():N}.json");
+        var service = new PairingApprovalService(storagePath);
+        var firstSink = new MemoryProtocolSink();
+        var firstSession = new DeviceProtocolSession(CreateDispatcher(), service, firstSink, remoteAddress: "USB");
+
+        await firstSession.HandleTextMessageAsync(CreateHello(), TestContext.Current.CancellationToken);
+        Assert.True(await service.ApproveAsync("CYD-A81F", TestContext.Current.CancellationToken));
+
+        var reconnectSink = new MemoryProtocolSink();
+        var reconnectSession = new DeviceProtocolSession(CreateDispatcher(), new PairingApprovalService(storagePath), reconnectSink, remoteAddress: "USB");
+        await reconnectSession.HandleTextMessageAsync(CreateHello(bearerToken: "not-the-issued-token"), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(reconnectSink.Messages, message => message.Contains("\"type\":\"pairing.token\"", StringComparison.Ordinal));
+        Assert.DoesNotContain(reconnectSink.Messages, message => message.Contains("\"type\":\"connection.state\"", StringComparison.Ordinal) && message.Contains("connected", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task WebSocketHelloWithValidBearerTokenDoesNotEchoPairingToken()
+    {
+        var storagePath = Path.Combine(Path.GetTempPath(), $"streamdeck-session-websocket-reconnect-{Guid.NewGuid():N}.json");
+        var service = new PairingApprovalService(storagePath);
+        var firstSink = new MemoryProtocolSink();
+        var firstSession = new DeviceProtocolSession(CreateDispatcher(), service, firstSink, remoteAddress: "USB");
+
+        await firstSession.HandleTextMessageAsync(CreateHello(), TestContext.Current.CancellationToken);
+        Assert.True(await service.ApproveAsync("CYD-A81F", TestContext.Current.CancellationToken));
+        var tokenMessage = firstSink.Messages.Single(message => message.Contains("\"type\":\"pairing.token\"", StringComparison.Ordinal));
+        using var tokenDocument = JsonDocument.Parse(tokenMessage);
+        var token = tokenDocument.RootElement.GetProperty("data").GetProperty("token").GetString();
+
+        var reconnectSink = new MemoryProtocolSink();
+        var reconnectSession = new DeviceProtocolSession(CreateDispatcher(), new PairingApprovalService(storagePath), reconnectSink, remoteAddress: "192.168.1.50");
+        await reconnectSession.HandleTextMessageAsync(CreateHello(bearerToken: token), TestContext.Current.CancellationToken);
+
+        Assert.Contains(reconnectSink.Messages, message => message.Contains("\"type\":\"connection.state\"", StringComparison.Ordinal) && message.Contains("connected", StringComparison.Ordinal));
+        Assert.DoesNotContain(reconnectSink.Messages, message => message.Contains("\"type\":\"pairing.token\"", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -89,8 +174,8 @@ public sealed class DeviceProtocolSessionTests
         var sink = new MemoryProtocolSink();
         var shortcuts = new DeviceShortcutConfiguration(
         [
-            new DeviceShortcutDefinition("calc", "Calculator", "calculator", "launch"),
-            new DeviceShortcutDefinition("notes", "Notes", "note", "url")
+            new DeviceShortcutDefinition("calc", "Calculator", "calculator", "both"),
+            new DeviceShortcutDefinition("notes", "Notes", "note", "icon")
         ]);
         var session = new DeviceProtocolSession(CreateDispatcher(), new AuthorizingDeviceAuthorizer(), sink, shortcuts: shortcuts);
 
@@ -102,12 +187,15 @@ public sealed class DeviceProtocolSessionTests
         Assert.Equal(2, definitions.GetArrayLength());
         Assert.Equal("calc", definitions[0].GetProperty("id").GetString());
         Assert.Equal("Calculator", definitions[0].GetProperty("label").GetString());
-        Assert.Equal("launch", definitions[0].GetProperty("actionType").GetString());
+        Assert.Equal("calculator", definitions[0].GetProperty("icon").GetString());
+        Assert.Equal("both", definitions[0].GetProperty("displayMode").GetString());
         Assert.Equal("notes", definitions[1].GetProperty("id").GetString());
         Assert.Equal("Notes", definitions[1].GetProperty("label").GetString());
-        Assert.Equal("url", definitions[1].GetProperty("actionType").GetString());
+        Assert.Equal("note", definitions[1].GetProperty("icon").GetString());
+        Assert.Equal("icon", definitions[1].GetProperty("displayMode").GetString());
         Assert.False(shortcutsMessage.Contains("executablePath", StringComparison.OrdinalIgnoreCase));
         Assert.False(shortcutsMessage.Contains("command", StringComparison.OrdinalIgnoreCase));
+        Assert.False(shortcutsMessage.Contains("actionType", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -134,7 +222,7 @@ public sealed class DeviceProtocolSessionTests
         var sink = new MemoryProtocolSink();
         var shortcuts = new DeviceShortcutConfiguration(
         [
-            new DeviceShortcutDefinition("calc", "Calculator", "calculator", "launch")
+            new DeviceShortcutDefinition("calc", "Calculator", "calculator", "label")
         ]);
         var session = new DeviceProtocolSession(CreateDispatcher(), new AuthorizingDeviceAuthorizer(), sink, shortcuts: shortcuts);
 
@@ -210,6 +298,28 @@ public sealed class DeviceProtocolSessionTests
         using var document = JsonDocument.Parse(sink.Messages.Single());
         Assert.Equal("connection.state", document.RootElement.GetProperty("type").GetString());
         Assert.Equal("degraded", document.RootElement.GetProperty("data").GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task UnsupportedProtocolVersionHelloOnlyPublishesDegradedConnectionState()
+    {
+        var sink = new MemoryProtocolSink();
+        var session = new DeviceProtocolSession(CreateDispatcher(), new AuthorizingDeviceAuthorizer(), sink);
+        var hello = JsonNode.Parse(CreateHello())!.AsObject();
+        hello["protocol"] = 999;
+
+        await session.HandleTextMessageAsync(hello.ToJsonString(), TestContext.Current.CancellationToken);
+
+        Assert.Single(sink.Messages);
+        using var document = JsonDocument.Parse(sink.Messages.Single());
+        Assert.Equal("connection.state", document.RootElement.GetProperty("type").GetString());
+        Assert.Equal("degraded", document.RootElement.GetProperty("data").GetProperty("state").GetString());
+        Assert.DoesNotContain(sink.Messages, message => message.Contains("\"type\":\"hello\"", StringComparison.Ordinal));
+        Assert.DoesNotContain(sink.Messages, message => message.Contains("\"type\":\"pairing.token\"", StringComparison.Ordinal));
+        Assert.DoesNotContain(sink.Messages, message => message.Contains("\"type\":\"connection.state\"", StringComparison.Ordinal) && message.Contains("connected", StringComparison.Ordinal));
+        Assert.DoesNotContain(sink.Messages, message => message.Contains("\"type\":\"device.settings\"", StringComparison.Ordinal));
+        Assert.DoesNotContain(sink.Messages, message => message.Contains("\"type\":\"shortcuts.update\"", StringComparison.Ordinal));
+        Assert.DoesNotContain(sink.Messages, message => message.Contains("\"type\":\"audio.update\"", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -312,12 +422,22 @@ public sealed class DeviceProtocolSessionTests
         Assert.False(data.TryGetProperty("imageBase64", out _));
     }
 
-    private static string CreateHello()
+    private static string CreateHello(string? bearerToken = null)
     {
         return ProtocolSerializer.Serialize(
             ProtocolConstants.MessageTypes.Hello,
             requestId: null,
-            new HelloMessage("CYD-A81F", "CYD", "esp32", []));
+            new HelloMessage("CYD-A81F", "CYD", "esp32", [], bearerToken));
+    }
+
+    private static int FindMessageIndex(IReadOnlyList<string> messages, Func<string, bool> predicate)
+    {
+        for (var index = 0; index < messages.Count; index++)
+        {
+            if (predicate(messages[index])) return index;
+        }
+
+        return -1;
     }
 
     private static string CreateDeviceInfo()

@@ -24,7 +24,10 @@ public sealed class WindowsAgentWebSocketServer(
     DeviceShortcutConfiguration? shortcuts = null,
     string? coverCacheDirectory = null,
     Func<AudioSnapshot?>? initialAudioProvider = null,
-    Func<ShortcutsReportMessage, CancellationToken, ValueTask>? shortcutsReportHandler = null) : IAsyncDisposable
+    Func<ShortcutsReportMessage, CancellationToken, ValueTask>? shortcutsReportHandler = null,
+    Func<DeviceShortcutConfiguration>? shortcutsProvider = null,
+    Func<AppearanceConfiguration>? appearanceProvider = null,
+    Func<IProtocolSink, CancellationToken, ValueTask>? initialMediaSender = null) : IAsyncDisposable
 {
     private WebApplication? app;
     private readonly object activeSinkGate = new();
@@ -110,7 +113,7 @@ public sealed class WindowsAgentWebSocketServer(
         var remoteAddress = FormatRemoteAddress(context);
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
         var sink = new TrackingProtocolSink(webSocket, new WebSocketProtocolSink(webSocket), state, remoteAddress, SetActiveSink);
-        var session = new DeviceProtocolSession(dispatcher, pairingService, sink, context.Request.Query["token"], remoteAddress, appearance ?? new AppearanceConfiguration(), shortcuts ?? new DeviceShortcutConfiguration([]), HandleDeviceInfoAsync, initialAudioProvider, shortcutsReportHandler);
+        var session = new DeviceProtocolSession(dispatcher, pairingService, sink, context.Request.Query["token"], remoteAddress, appearance ?? new AppearanceConfiguration(), shortcuts ?? new DeviceShortcutConfiguration([]), HandleDeviceInfoAsync, initialAudioProvider, shortcutsReportHandler, shortcutsProvider, appearanceProvider, initialMediaSender);
 
         try
         {
@@ -318,6 +321,7 @@ public sealed class WindowsAgentWebSocketServer(
             {
                 setActiveSink(this);
                 state.MarkDeviceConnected(hello.DeviceId, hello.Name, remoteAddress);
+                if (hello.DeviceInfo is not null) state.UpdateDeviceInfo(hello.DeviceInfo);
             }
         }
     }

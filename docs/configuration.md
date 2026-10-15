@@ -1,4 +1,4 @@
-# Konfiguracja PC Dock
+# Konfiguracja CYD-DECK
 
 ## Źródło prawdy i synchronizacja
 

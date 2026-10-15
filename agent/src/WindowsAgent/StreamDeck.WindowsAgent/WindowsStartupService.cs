@@ -31,6 +31,10 @@ public sealed class WindowsStartupService(AgentOptions options)
     private string GetCommand()
     {
         var command = $"\"{Environment.ProcessPath}\"";
-        return options.MockMode ? $"{command} --mock" : command;
+        if (options.MockMode)
+        {
+            command += " --mock";
+        }
+        return $"{command} --minimized";
     }
 }

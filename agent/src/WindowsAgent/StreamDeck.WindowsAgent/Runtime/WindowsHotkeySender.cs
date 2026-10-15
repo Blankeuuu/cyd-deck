@@ -12,6 +12,10 @@ internal sealed class WindowsHotkeySender : IHotkeySender
 
     internal static int NativeInputSize => Marshal.SizeOf<Input>();
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool LockWorkStation();
+
     public Task SendAsync(IReadOnlyList<string> keys, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(keys);
@@ -23,6 +27,15 @@ internal sealed class WindowsHotkeySender : IHotkeySender
         }
 
         var virtualKeys = keys.Select(ResolveVirtualKey).ToArray();
+        if (IsLockWorkstationHotkey(virtualKeys))
+        {
+            if (!LockWorkStation())
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows did not accept the configured lock-workstation hotkey.");
+            }
+
+            return Task.CompletedTask;
+        }
         var inputs = new Input[virtualKeys.Length * 2];
         for (var index = 0; index < virtualKeys.Length; index++)
         {
@@ -85,11 +98,25 @@ internal sealed class WindowsHotkeySender : IHotkeySender
             "RIGHT" => 0x27,
             "DOWN" => 0x28,
             "PRINTSCREEN" or "PRTSC" => 0x2C,
+            "PAUSE" or "BREAK" => 0x13,
+            "MEDIA_PLAY_PAUSE" => 0xB3,
+            "MEDIA_NEXT" or "MEDIA_NEXT_TRACK" => 0xB0,
+            "MEDIA_PREVIOUS" or "MEDIA_PREV" or "MEDIA_PREV_TRACK" => 0xB1,
+            "VOLUME_UP" => 0xAF,
+            "VOLUME_DOWN" => 0xAE,
+            "VOLUME_MUTE" => 0xAD,
             "CAPSLOCK" => 0x14,
             "NUMLOCK" => 0x90,
             "SCROLLLOCK" => 0x91,
             _ => throw new ArgumentException($"Unsupported hotkey key: {key}", nameof(key))
         };
+    }
+
+    internal static bool IsLockWorkstationHotkey(IReadOnlyList<ushort> virtualKeys)
+    {
+        return virtualKeys.Count == 2
+            && virtualKeys.Contains((ushort)0x4C)
+            && virtualKeys.Any(key => key is 0x5B or 0x5C);
     }
 
     private static Input CreateKeyboardInput(ushort virtualKey, bool keyUp)
@@ -116,7 +143,8 @@ internal sealed class WindowsHotkeySender : IHotkeySender
 
     private static bool IsExtendedKey(ushort virtualKey)
     {
-        return virtualKey is 0x21 or 0x22 or 0x23 or 0x24 or 0x25 or 0x26 or 0x27 or 0x28 or 0x2D or 0x2E or 0x5B or 0x5C or 0x90 or 0x91;
+        return virtualKey is 0x21 or 0x22 or 0x23 or 0x24 or 0x25 or 0x26 or 0x27 or 0x28 or 0x2D or 0x2E or 0x5B or 0x5C or 0x90 or 0x91
+            or 0xB0 or 0xB1 or 0xB3 or 0xAD or 0xAE or 0xAF;
     }
 
     [DllImport("user32.dll", SetLastError = true)]

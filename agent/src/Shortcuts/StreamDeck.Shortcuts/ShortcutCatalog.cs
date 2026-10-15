@@ -3,6 +3,7 @@ namespace StreamDeck.Shortcuts;
 public sealed class ShortcutCatalog
 {
     private readonly IReadOnlyDictionary<string, ShortcutDefinition> shortcuts;
+    private ShortcutCatalog? replacement;
 
     private ShortcutCatalog(ShortcutConfiguration configuration)
     {
@@ -13,11 +14,22 @@ public sealed class ShortcutCatalog
                     shortcut.Id,
                     shortcut.Name,
                     shortcut.Icon,
-                    shortcut.Action.Type))
+                    NormalizeDisplayMode(shortcut.DisplayMode)))
                 .ToArray());
     }
 
-    public DeviceShortcutConfiguration DeviceConfiguration { get; }
+    private DeviceShortcutConfiguration initialDeviceConfiguration = new([]);
+    public DeviceShortcutConfiguration DeviceConfiguration
+    {
+        get => Volatile.Read(ref replacement)?.DeviceConfiguration ?? initialDeviceConfiguration;
+        private set => initialDeviceConfiguration = value;
+    }
+
+    public void Replace(ShortcutConfiguration configuration)
+    {
+        // Validate and build before atomically publishing the complete new catalog.
+        Volatile.Write(ref replacement, Create(configuration));
+    }
 
     public static ShortcutCatalog Create(ShortcutConfiguration configuration, ShortcutConfigurationValidator? validator = null)
     {
@@ -33,6 +45,8 @@ public sealed class ShortcutCatalog
 
     public bool TryGetAction(string id, out ShortcutActionDefinition action)
     {
+        var current = Volatile.Read(ref replacement);
+        if (current is not null) return current.TryGetAction(id, out action);
         action = new ShortcutActionDefinition();
         if (string.IsNullOrWhiteSpace(id) || !shortcuts.TryGetValue(id, out var shortcut))
         {
@@ -41,5 +55,10 @@ public sealed class ShortcutCatalog
 
         action = shortcut.Action;
         return true;
+    }
+
+    private static string NormalizeDisplayMode(string? displayMode)
+    {
+        return ShortcutDisplayModes.IsKnown(displayMode) ? displayMode! : ShortcutDisplayModes.Label;
     }
 }

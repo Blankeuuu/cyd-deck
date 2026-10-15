@@ -8,6 +8,8 @@ The LAN listener is advertised with mDNS/DNS-SD as `_streamdeck._tcp.local`. The
 
 Run with `--mock` to start the same tray, LAN WebSocket and pairing dashboard without touching CoreAudio or Windows media sessions. Mock mode accepts protocol commands and returns success for media, audio and shortcut commands, which is useful for transport and pairing tests before exercising the live Windows integrations.
 
+USB serial transport automatically scans Windows `USB` and `USBSER` device-enumeration entries for WCH CH340 IDs (VID `1A86`, PID `7523`), including IDs stored on device instances, and cross-checks registered ports against the active COM-port list. It uses 115200 baud. A specific port can be selected with `--usb-port COM5` as a single-port override. Otherwise, the Agent tries sorted, unique matching ports in order. After a port opens, a bounded probe requires a valid ESP32 `hello` with a device ID before retaining the session for pairing; an invalid or silent port is closed and the next candidate is tried. When an authorized USB session is ready, Agent commands use USB first and fall back to the LAN WebSocket if USB is unavailable or fails. `SerialPort.Open()` itself is synchronous and not subject to the post-open hello timeout. Physical discovery and handshake validation remain open.
+
 The Windows Agent builds as a self-contained `win-x64` executable so `StreamDeck.WindowsAgent.exe` can run on a standard Windows user account without a machine-wide ASP.NET Core runtime install. Debug builds are emitted under `bin/Debug/net10.0-windows10.0.17763.0/win-x64/`.
 
 ## Portable deployment package
@@ -30,7 +32,7 @@ artifacts/windows-agent/StreamDeck.WindowsAgent-win-x64.zip
 
 Use `-SkipQualityGate` only when another build/test stage has already validated the same source revision. The package contains the publish output (excluding PDB debug symbols) and a `DEPLOYMENT.txt` quick guide. Symbols remain available in local build outputs; the portable ZIP must not contain exported configuration, pairing records, logs, cache files, secrets, or user data.
 
-Third-party notices: package verification for the pinned transitive artifact `SixLabors.ImageSharp 2.1.11` must use that exact published `.nupkg`, not the current ImageSharp repository or current NuGet page for newer versions. The inspected 2.1.11 `.nuspec` states `Apache-2.0` and `requireLicenseAcceptance=true`; it is not the current Six Labors Split License. The package script adds `THIRD-PARTY-NOTICES.txt` with the ImageSharp 2.1.11 attribution and a copy of Apache License 2.0, plus exact-version .NET runtime-pack license/notice files. It checks the published deps inventory and refuses to archive unknown or changed dependencies until their notices are reviewed. A legal/compliance review remains necessary before release.
+Third-party notices: the portable publish validates its actual `.deps.json` inventory and includes the exact-version licenses/notices for `SkiaSharp 4.153.1`, `SkiaSharp.NativeAssets.Win32 4.153.1`, `System.IO.Ports 10.0.0`, and the self-contained .NET runtime packs. SkiaSharp and its Win32 native-assets package declare MIT and `requireLicenseAcceptance=true`; the Win32 package's third-party notice file is copied from that exact NuGet artifact. The package script refuses to archive unknown or changed dependencies until their notices are reviewed. A legal/compliance review remains necessary before release.
 
 Recommended installation path for a user install is a stable, user-writable directory such as:
 

@@ -7,6 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Version>1.1.0</Version>
+    <ApplicationIcon>../../../assets/cyd-deck.ico</ApplicationIcon>
     <AssemblyName>StreamDeck.WindowsAgent</AssemblyName>
     <RootNamespace>StreamDeck.WindowsAgent</RootNamespace>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -19,6 +21,10 @@
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.IO.Ports" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>

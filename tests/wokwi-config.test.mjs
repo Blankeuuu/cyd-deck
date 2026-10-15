@@ -43,6 +43,11 @@ test('Wokwi uses a simulator-only app build and bypasses physical onboarding', (
   assert.match(app, /\[WOKWI\] APP_UI_READY/);
 });
 
+test('Wokwi reserves Serial for simulator diagnostics instead of USB protocol frames', () => {
+  const app = readProjectFile('firmware/src/ui/app.cpp');
+  assert.match(app, /#if defined\(WOKWI_SIMULATOR\)\s*constexpr bool kUsbProtocolEnabled = false;\s*#else\s*constexpr bool kUsbProtocolEnabled = true;/);
+});
+
 test('Web config sockets start only after Wi-Fi stack initialization', () => {
   const app = readProjectFile('firmware/src/ui/app.cpp');
   const startWebConfigServer = app.match(/void startWebConfigServer\(bool provisioningMode\) \{[\s\S]*?\n\}/)?.[0] ?? '';

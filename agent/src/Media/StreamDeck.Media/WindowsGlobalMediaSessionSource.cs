@@ -7,6 +7,7 @@ public sealed class WindowsGlobalMediaSessionSource : IWindowsMediaSessionSource
     private readonly Dictionary<GlobalSystemMediaTransportControlsSession, WindowsGlobalMediaSession> _sessions = [];
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private bool _disposed;
+    private readonly object _gate = new();
 
     public event EventHandler? SessionsChanged;
 
@@ -26,48 +27,57 @@ public sealed class WindowsGlobalMediaSessionSource : IWindowsMediaSessionSource
 
     public IReadOnlyList<IWindowsMediaSession> GetSessions()
     {
-        var manager = GetInitializedManager();
-        var nativeSessions = manager.GetSessions();
-        var wrappedSessions = new List<IWindowsMediaSession>(nativeSessions.Count);
-        var activeSessions = new HashSet<GlobalSystemMediaTransportControlsSession>();
-
-        foreach (var nativeSession in nativeSessions)
+        lock (_gate)
         {
-            activeSessions.Add(nativeSession);
-            wrappedSessions.Add(GetOrCreateSession(nativeSession));
-        }
+            var manager = GetInitializedManager();
+            var nativeSessions = manager.GetSessions();
+            var wrappedSessions = new List<IWindowsMediaSession>(nativeSessions.Count);
+            var activeSessions = new HashSet<GlobalSystemMediaTransportControlsSession>();
 
-        foreach (var staleSession in _sessions.Keys.Where(session => !activeSessions.Contains(session)).ToArray())
+            foreach (var nativeSession in nativeSessions)
         {
-            _sessions[staleSession].Dispose();
-            _sessions.Remove(staleSession);
-        }
+                activeSessions.Add(nativeSession);
+                wrappedSessions.Add(GetOrCreateSession(nativeSession));
+            }
 
-        return wrappedSessions;
+            foreach (var staleSession in _sessions.Keys.Where(session => !activeSessions.Contains(session)).ToArray())
+        {
+                _sessions[staleSession].Dispose();
+                _sessions.Remove(staleSession);
+            }
+
+            return wrappedSessions;
+        }
     }
 
     public IWindowsMediaSession? GetCurrentSession()
     {
-        var nativeSession = GetInitializedManager().GetCurrentSession();
-        return nativeSession is null ? null : GetOrCreateSession(nativeSession);
+        lock (_gate)
+        {
+            var nativeSession = GetInitializedManager().GetCurrentSession();
+            return nativeSession is null ? null : GetOrCreateSession(nativeSession);
+        }
     }
 
     public ValueTask DisposeAsync()
     {
-        if (_manager is not null)
+        lock (_gate)
         {
-            _manager.SessionsChanged -= HandleSessionsChanged;
-        }
-
-        foreach (var session in _sessions.Values)
+            if (_manager is not null)
         {
-            session.Dispose();
-        }
+                _manager.SessionsChanged -= HandleSessionsChanged;
+            }
 
-        _sessions.Clear();
-        _manager = null;
-        _disposed = true;
-        return ValueTask.CompletedTask;
+            foreach (var session in _sessions.Values)
+        {
+                session.Dispose();
+            }
+
+            _sessions.Clear();
+            _manager = null;
+            _disposed = true;
+            return ValueTask.CompletedTask;
+        }
     }
 
     private GlobalSystemMediaTransportControlsSessionManager GetInitializedManager()

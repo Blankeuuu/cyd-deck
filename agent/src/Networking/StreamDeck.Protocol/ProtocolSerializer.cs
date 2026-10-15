@@ -16,8 +16,10 @@ public static class ProtocolSerializer
         ProtocolConstants.MessageTypes.DeviceRestart,
         ProtocolConstants.MessageTypes.DeviceFactoryReset,
         ProtocolConstants.MessageTypes.DeviceSettings,
+        ProtocolConstants.MessageTypes.DeviceStatusRequest,
         ProtocolConstants.MessageTypes.DeviceInfo,
         ProtocolConstants.MessageTypes.Ping,
+        ProtocolConstants.MessageTypes.CoverRequest,
         ProtocolConstants.MessageTypes.MediaUpdate,
         ProtocolConstants.MessageTypes.MediaTimeline,
         ProtocolConstants.MessageTypes.MediaPlayback,
@@ -40,6 +42,7 @@ public static class ProtocolSerializer
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 
@@ -213,11 +216,25 @@ public static class ProtocolSerializer
             ProtocolConstants.MessageTypes.DeviceRestart => ValidateEmptyPayload(envelope),
             ProtocolConstants.MessageTypes.DeviceFactoryReset => ValidateEmptyPayload(envelope),
             ProtocolConstants.MessageTypes.DeviceSettings => ValidateDeviceSettings(envelope),
+            ProtocolConstants.MessageTypes.DeviceStatusRequest => ValidateEmptyPayload(envelope),
             ProtocolConstants.MessageTypes.DeviceInfo => ValidateDeviceInfo(envelope),
             ProtocolConstants.MessageTypes.ShortcutsReport => ValidateShortcutsReport(envelope),
+            ProtocolConstants.MessageTypes.CoverRequest => ValidateCoverRequest(envelope),
             ProtocolConstants.MessageTypes.Ping => ValidateIntegerRangePayload(envelope, "sentAtUnixMs", 0, long.MaxValue),
             _ => null
         };
+    }
+
+    private static ProtocolParseResult? ValidateCoverRequest(ProtocolEnvelope envelope)
+    {
+        var validation = RequireObjectPayload(envelope, out var data);
+        if (validation is not null) return validation;
+        validation = ValidateOnlyProperties(envelope, data, "coverId");
+        if (validation is not null) return validation;
+        if (!data.TryGetProperty("coverId", out var id) || id.ValueKind != JsonValueKind.String ||
+            id.GetString() is not { Length: 64 } value || !value.All(Uri.IsHexDigit))
+            return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "cover.request requires a SHA256 coverId.");
+        return null;
     }
 
     private static ProtocolParseResult? ValidateHello(ProtocolEnvelope envelope)
@@ -228,10 +245,16 @@ public static class ProtocolSerializer
             return payloadValidation;
         }
 
-        var propertiesValidation = ValidateOnlyProperties(envelope, data, "deviceId", "name", "role", "capabilities");
+        var propertiesValidation = ValidateOnlyProperties(envelope, data, "deviceId", "name", "role", "capabilities", "bearerToken", "deviceInfo");
         if (propertiesValidation is not null)
         {
             return propertiesValidation;
+        }
+
+        if (data.TryGetProperty("deviceInfo", out var deviceInfo) && deviceInfo.ValueKind != JsonValueKind.Null)
+        {
+            var infoValidation = ValidateDeviceInfo(new ProtocolEnvelope { Type = ProtocolConstants.MessageTypes.DeviceInfo, Data = deviceInfo });
+            if (infoValidation is not null) return infoValidation;
         }
 
         var deviceIdValidation = ValidateStableStringProperty(data, "deviceId");
@@ -263,6 +286,12 @@ public static class ProtocolSerializer
             {
                 return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "hello capabilities must be non-empty strings.");
             }
+        }
+
+        if (data.TryGetProperty("bearerToken", out var bearerToken)
+            && (bearerToken.ValueKind != JsonValueKind.String || !IsStableToken(bearerToken.GetString())))
+        {
+            return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "data.bearerToken must be a stable 1-64 character token.");
         }
 
         return null;
@@ -587,7 +616,7 @@ public static class ProtocolSerializer
             return payloadValidation;
         }
 
-        var propertiesValidation = ValidateOnlyProperties(envelope, data, "firmwareVersion", "uptimeSeconds", "wifi", "agentHost", "sd", "heap");
+        var propertiesValidation = ValidateOnlyProperties(envelope, data, "firmwareVersion", "uptimeSeconds", "wifi", "agentHost", "sd", "heap", "cover", "audio", "performance");
         if (propertiesValidation is not null)
         {
             return propertiesValidation;
@@ -607,7 +636,50 @@ public static class ProtocolSerializer
 
         return ValidateDeviceWifi(data)
             ?? ValidateDeviceStorage(data)
-            ?? ValidateDeviceHeap(data);
+            ?? ValidateDeviceHeap(data)
+            ?? ValidateDeviceCover(data)
+            ?? ValidateDeviceAudio(data)
+            ?? ValidateDevicePerformance(data);
+    }
+
+    private static ProtocolParseResult? ValidateDevicePerformance(JsonElement data)
+    {
+        if (!data.TryGetProperty("performance", out var perf) || perf.ValueKind == JsonValueKind.Null) return null;
+        if (perf.ValueKind != JsonValueKind.Object)
+            return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "device.info performance must be an object.");
+        var fields = new[] { "loopMaxUs", "renderMaxUs", "networkMaxUs", "slowLoops", "wifiDiscoveryCount" };
+        var properties = ValidateOnlyProperties(new ProtocolEnvelope { Type = "device.info" }, perf, fields);
+        if (properties is not null) return properties;
+        foreach (var field in fields)
+        {
+            var validation = ValidateRequiredIntegerRange(perf, field, 0, uint.MaxValue, "device.info");
+            if (validation is not null) return validation;
+        }
+        return null;
+    }
+
+    private static ProtocolParseResult? ValidateDeviceAudio(JsonElement data)
+    {
+        if (!data.TryGetProperty("audio", out var audio) || audio.ValueKind == JsonValueKind.Null) return null;
+        if (audio.ValueKind != JsonValueKind.Object)
+            return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "device.info audio must be an object.");
+        var properties = ValidateOnlyProperties(new ProtocolEnvelope { Type = "device.info" }, audio, "volumePercent", "muted");
+        if (properties is not null) return properties;
+        if (!audio.TryGetProperty("muted", out var muted) || muted.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+            return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "device.info audio.muted must be boolean.");
+        return ValidateRequiredIntegerRange(audio, "volumePercent", 0, 100, "device.info");
+    }
+
+    private static ProtocolParseResult? ValidateDeviceCover(JsonElement data)
+    {
+        if (!data.TryGetProperty("cover", out var cover) || cover.ValueKind == JsonValueKind.Null) return null;
+        if (cover.ValueKind != JsonValueKind.Object)
+            return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "device.info cover must be an object.");
+        var properties = ValidateOnlyProperties(new ProtocolEnvelope { Type = "device.info" }, cover, "status", "rendered");
+        if (properties is not null) return properties;
+        if (!cover.TryGetProperty("rendered", out var rendered) || rendered.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+            return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "device.info cover.rendered must be boolean.");
+        return ValidateRequiredIntegerRange(cover, "status", 0, 3, "device.info");
     }
 
     private static ProtocolParseResult? ValidateDeviceWifi(JsonElement data)

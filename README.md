@@ -1,6 +1,6 @@
-# Stream Deck / PC Dock
+# CYD-DECK
 
-Monorepo istniejącego docka PC opartego na ESP32-2432S028R (CYD) oraz Windows Agent. Projekt obejmuje firmware LVGL, komunikację WebSocket/HTTP, konfigurację w Windows i diagnostykę urządzenia.
+Monorepo docka CYD-DECK opartego na ESP32-2432S028R (CYD) oraz Windows Agent. Projekt obejmuje firmware LVGL, komunikację WebSocket/HTTP, konfigurację w Windows i diagnostykę urządzenia.
 
 Dokumentacja: [architektura](docs/architecture.md), [UI](docs/ui.md), [protokół](docs/protocol.md), [konfiguracja i recovery](docs/configuration.md), [hardware](docs/hardware.md), [troubleshooting](docs/troubleshooting.md).
 
@@ -57,3 +57,8 @@ Testy pokrywają normalne, zamienione i odwrócone osie, przypadki zdegenerowane
 Wymaga .NET SDK 10. Build: `dotnet build agent/src/WindowsAgent/StreamDeck.WindowsAgent/StreamDeck.WindowsAgent.csproj`. Agent działa w trayu, a centralne Settings Window zawiera Overview, Shortcuts, Appearance, Device, Updates i Logs. Zmiany wyglądu są synchronizowane z autoryzowanym CYD; pełny OTA workflow i weryfikacja na hardware wymagają osobnych testów.
 
 Więcej informacji: [docs/configuration.md](docs/configuration.md) oraz [docs/protocol.md](docs/protocol.md).
+
+
+## Wydanie 1.1.0
+
+[GitHub Releases](https://github.com/Blankeuuu/stream-deck/releases/tag/v1.1.0): instalator Windows x64, portable z runtime.NET, firmware ST7789 oraz sumySHA256. [Instrukcja i zmiany](docs/releases/1.1.0.md). Agent i firmware należy aktualizować razem.

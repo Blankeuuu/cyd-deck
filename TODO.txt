@@ -1,0 +1,383 @@
+# TODO.TXT — CYD-DECK
+
+## INSTRUKCJE DLA CODEXA — OBOWIĄZKOWE
+
+**JEŻELI CZYTASZ TO PO GOAL RESUME, NAJPIERW SPRAWDŹ STAN PROJEKTU I USTAL, KTÓRE POPRAWKI Z PONIŻSZEJ LISTY ZOSTAŁY JUŻ WPROWADZONE!**
+
+Nie implementuj ponownie ukończonych zmian. Sprawdź aktualny kod, historię zmian, wyniki testów i dokumentację wiki.
+
+### Skala priorytetów
+
+- `!!!!!` — KRYTYCZNE: naprawić w pierwszej kolejności.
+- `!!!!` — BARDZO WAŻNE: istotne problemy funkcjonalne i UI.
+- `!!!` — WAŻNE: poprawki interfejsu oraz UX.
+- `!!` — ŚREDNIE: dodatkowe udogodnienia.
+- `!` — NISKIE: kosmetyka i drobne ulepszenia.
+
+### Zasady pracy
+
+1. Przed naprawą każdego problemu sprawdź, czy nadal występuje.
+2. Nie oznaczaj zadania jako ukończonego wyłącznie na podstawie zmiany kodu.
+3. Każda naprawa wymaga odpowiedniego testu, najlepiej odtwarzającego pierwotny problem.
+4. Jeżeli test wymaga fizycznego CYD i nie masz do niego dostępu, oznacz zadanie jako `AWAITING HARDWARE VERIFICATION`, zamiast uznawać je za naprawione.
+5. Po zakończeniu każdego zadania utwórz lub zaktualizuj wpis w wiki zawierający:
+   - Identyfikator i opis zadania.
+   - Przyczynę problemu, jeżeli została ustalona.
+   - Zmodyfikowane komponenty/pliki.
+   - Opis wdrożonego rozwiązania.
+   - Wykonane testy i ich rzeczywiste wyniki.
+   - Status weryfikacji.
+6. Nie twórz fikcyjnych wyników testów ani wpisów sugerujących potwierdzenie naprawy bez dowodów.
+7. Aktualizuj TODO.TXT po zakończeniu zadania. Zachowuj informacje o zadaniach oczekujących na testy sprzętowe.
+8. Nie usuwaj działających funkcji podczas przebudowy UI.
+9. Unikaj niepotrzebnego przepisywania backendu, firmware, protokołu komunikacyjnego i systemu aktualizacji.
+10. Zachowaj kompatybilność konfiguracji użytkownika, istniejących skrótów i zapisanych ustawień. Zapewnij migrację, jeżeli zmienia się ich format.
+11. Pracuj iteracyjnie: implementacja → test → poprawki → dokumentacja → następne zadanie.
+12. W przypadku zmiany protokołu Agent ↔ CYD sprawdź kompatybilność obu stron i wersjonowanie protokołu.
+13. Nie blokuj całego projektu z powodu jednego zadania wymagającego niedostępnego sprzętu. Udokumentuj blokadę i przejdź do niezależnych zadań.
+
+---
+
+# 1. CYD — ESP32 / FIRMWARE
+
+## Łączność
+
+- [x] `!!!!!` CYD łączy się z Wi-Fi i jest podłączony przez USB do komputera, ale Windows Agent go nie wykrywa. Zdiagnozuj rzeczywistą przyczynę i napraw komunikację. (ZWERYFIKOWANO NA SPRZĘCIE COM5: usunięto aborty SerialStream w .NET, naprawiono DTR/RTS, wydłużono probe timeout do 6s).
+- [ ] `!!!!!` Sprawdź, czy firmware prawidłowo nawiązuje połączenie z adresem IP i portem Windows Agenta.
+- [ ] `!!!!!` Zweryfikuj połączenie WebSocket, handshake, autoryzację i kompatybilność wersji protokołu.
+- [ ] `!!!!!` Sprawdź mechanizm wykrywania Agenta w sieci lokalnej oraz przechowywania jego adresu.
+- [x] `!!!!` Zweryfikuj, czy po restarcie CYD automatycznie próbuje odzyskać połączenie z Agentem. (ZWERYFIKOWANO NA SPRZĘCIE: handshake USB następuje samoczynnie po restarcie płytki).
+- [ ] `!!!!` Dodaj solidny mechanizm ponownego łączenia z kontrolowanym backoffem. Unikaj niekończących się, intensywnych prób.
+- [x] `!!!!` Zweryfikuj proces parowania i ponownego nawiązywania zaufanej sesji po restarcie obu urządzeń. (ZWERYFIKOWANO NA SPRZĘCIE: sesja wznowiona, deviceId CYD-40C86C, status connected).
+- [ ] `!!!!` Sprawdź, czy zmiana IP komputera nie powoduje trwałej utraty połączenia.
+- [ ] `!!!` Dodaj czytelne komunikaty diagnostyczne na CYD: Wi-Fi disconnected, Agent unavailable, Connecting, Pairing required, Connected.
+- [ ] `!!!` Zadbaj, aby ekran CYD nie zawieszał się ani nie blokował interakcji podczas utraty połączenia.
+- [x] `!!!` Zapewnij poprawną synchronizację ustawień po odzyskaniu połączenia. (ZWERYFIKOWANO NA SPRZĘCIE: device.settings wysyłane automatycznie).
+
+## Stabilność firmware
+
+- [ ] `!!!!` Sprawdź obsługę utraty Wi-Fi w trakcie działania.
+- [ ] `!!!!` Zweryfikuj poprawność inicjalizacji sieci i usług po zimnym starcie.
+- [ ] `!!!` Przeanalizuj wykorzystanie pamięci ESP32 i potencjalne wycieki związane z ponownym łączeniem.
+- [ ] `!!!` Sprawdź, czy aktualizacje ustawień nie powodują zbędnych restartów lub przeładowań UI.
+- [x] `!!!` Zapewnij wiarygodne raportowanie wersji firmware, uptime, IP, RSSI i stanu karty SD. (ZWERYFIKOWANO NA SPRZĘCIE: fw 1.0.0, WiFi AS-19, RSSI -46 dBm, SD 62GB mounted).
+- [ ] `!!` Uzupełnij diagnostykę błędów połączenia przydatną dla Windows Agenta.
+
+---
+
+# 2. WINDOWS AGENT — KOMUNIKACJA I BACKEND
+
+## Wykrywanie urządzenia
+
+- [x] `!!!!!` Agent nie wykrywa CYD, mimo że CYD jest połączony z Wi-Fi i fizycznie podłączony do PC przez USB. Zidentyfikuj problem i napraw go. (ZWERYFIKOWANO NA SPRZĘCIE: zdiagnozowano i wyeliminowano Win32 ERROR_OPERATION_ABORTED w SerialStream, płytka wykrywana na COM5).
+- [x] `!!!!!` USB MA BYC PRIMARY OPCJA KOMUNIKACJI MIEDZY AGENTEM A CYD. (ZWERYFIKOWANO NA SPRZĘCIE: remoteAddress="USB", routing USB-first aktywny).
+- [x] `!!!!!` Sprawdź nasłuchiwanie Agenta na porcie 8765 i poprawność interfejsów sieciowych. (ZWERYFIKOWANO: serwer Kestrel i WebSocket aktywny na 8765, mDNS rozgłaszany).
+- [ ] `!!!!!` Zweryfikuj komunikację WebSocket w obu kierunkach.
+- [x] `!!!!!` Sprawdź discovery, pairing, autoryzację i obsługę identyfikatorów urządzeń. (ZWERYFIKOWANO NA SPRZĘCIE: deviceId CYD-40C86C, autoryzacja USB hello).
+- [ ] `!!!!` Zweryfikuj obsługę wielu interfejsów sieciowych, w tym VPN oraz wirtualnych kart sieciowych.
+- [ ] `!!!!` Sprawdź wpływ Windows Firewall na komunikację. Nie dodawaj szerokich reguł bezpieczeństwa bez uzasadnienia i zgody.
+- [ ] `!!!!` Napraw ewentualne zapętlanie procesu Connecting/Reconnecting.
+- [ ] `!!!!` Dodaj timeout prób połączenia i jednoznaczne raportowanie niepowodzeń.
+- [ ] `!!!!` Zweryfikuj, czy ręczne Reconnect rzeczywiście inicjuje nową próbę i prawidłowo obsługuje jej rezultat.
+- [x] `!!!!` Zapewnij automatyczne odzyskiwanie sesji po chwilowym zaniku połączenia. (ZWERYFIKOWANO NA SPRZĘCIE).
+- [ ] `!!!` Dodaj diagnostykę etapów połączenia: discovery → TCP/WebSocket → handshake → pairing/auth → synchronized.
+- [ ] `!!!` Zadbaj o poprawną obsługę powtarzających się kliknięć Reconnect.
+- [ ] `!!!` Sprawdź komunikację po uśpieniu/wybudzeniu Windows i zmianie sieci.
+- [ ] `!!!` Sprawdź, czy aplikacja nie wyświetla przestarzałych danych urządzenia jako aktualnych.
+
+> STATUS KRYTYCZNEJ ŚCIEŻKI USB (ZWERYFIKOWANE NA SPRZĘCIE): firmware cyd28_st7789_app wgrane na fizyczny CYD (ESP32-D0WD-V3 na COM5). Zdiagnozowano i usunięto błąd `IOException: The I/O operation has been aborted` (Win32 ERROR_OPERATION_ABORTED 995) w .NET SerialStream.ReadAsync na Windows przez wprowadzenie pollingu rejestru sprzętowego `BytesToRead` w `SerialPortUsbDuplexStream`. Usunięto zakłócenia linii DTR/RTS po otwarciu portu. Wydłużono probe timeout do 6.0s (start ST7789 z LVGL i Wi-Fi trwa 2.6s) oraz próg linii bootloadera do 25. Agent pomyślnie wykrywa CYD, łączy się jako `remoteAddress: "USB"` (hostStatus="connected"), odbiera pełną telemetrię urządzenia (WiFi, SD, heap, firmware) i przesyła ustawienia. Windows Agent działa w zasobniku systemowym (PID 18264).
+
+> STATUS DISCOVERY AGENTA W FIRMWARE (częściowo): wcześniej udane mDNS nadpisywało `config_.port`, więc późniejszy fallback na `manualHost` mógł użyć portu poprzedniego Agenta. Teraz skonfigurowany port pozostaje niezmieniony, port mDNS dotyczy tylko odkrytego endpointu, a reklamowany port 0 nie jest akceptowany. Test hostowy selekcji endpointu PASS; ST7789 PlatformIO build SUCCESS (RAM 72684/327680, flash 1478861/2031616). Punkt discovery/reconnect weryfikowany w warstwie USB; mDNS/LAN discovery pozostaje AWAITING HARDWARE VERIFICATION.
+
+> STATUS WEBSOCKET (częściowo): osobny test loopback na porcie efemerycznym (nie 8765) przeszedł przez hello CYD → pending → zatwierdzenie → pairing.token/hello/connected/device.settings → reconnect z bearerem bez echa tokenu po WebSocket. Test potwierdził ramkę Agent→device oraz ping/pong device→Agent; Windows Agent smoke PASS. Istniejący kod produkcyjny nie wymagał zmiany. Test nie weryfikuje fizycznego CYD, portu 8765, wielu interfejsów ani zapory na realnej sieci; te kryteria pozostają otwarte.
+
+## Diagnostyka
+
+- [ ] `!!!!` Dodaj do logów konkretne przyczyny niepowodzeń połączenia.
+- [ ] `!!!!` Oddziel stan usługi Agenta od stanu połączenia z CYD.
+- [ ] `!!!` Zapewnij logowanie zmian stanu WebSocket i procesu parowania.
+- [ ] `!!!` Dodaj możliwość wygenerowania raportu diagnostycznego z usuniętymi hasłami, tokenami i innymi sekretami.
+- [ ] `!!` Dodaj test połączenia pozwalający sprawdzić najważniejsze komponenty komunikacji niezależnie.
+
+---
+
+# 3. WINDOWS AGENT — GLOBALNY REDESIGN UI/UX
+
+**Cel:** doprowadzić interfejs aplikacji do spójnego, nowoczesnego standardu Windows 11, bez utraty istniejącej funkcjonalności.
+
+## Design system
+
+- [ ] `!!!!` Stwórz wspólny system komponentów: Buttons, Inputs, Selects, Sliders, Checkboxes, Tables, Dialogs, Cards, Status Indicators.
+- [ ] `!!!!` Ujednolić ciemny motyw. Wszystkie formularze i listy rozwijane powinny wizualnie pasować do reszty interfejsu.
+- [ ] `!!!!` Popraw globalne skalowanie UI i czytelność czcionek.
+- [ ] `!!!!` Wprowadź spójny system kolorów dla akcji zwykłych, głównych, ostrzeżeń, błędów i działań destrukcyjnych.
+- [ ] `!!!` Ogranicz stosowanie czerwieni do uzasadnionych sytuacji. Aktywna nawigacja i główne przyciski powinny mieć spójny kolor akcentu.
+- [ ] `!!!` Ujednolić wysokości kontrolek, odstępy, paddingi, promienie zaokrągleń i obramowania.
+- [ ] `!!!` Popraw wyrównanie wszystkich etykiet i pól.
+- [ ] `!!!` Uporządkuj typografię i hierarchię nagłówków.
+- [ ] `!!!` Zlikwiduj problem ogromnej pustej przestrzeni przy jednoczesnym skupieniu elementów w lewym górnym rogu.
+- [ ] `!!!` Wprowadź logiczne sekcje i karty zamiast długich list etykieta–wartość.
+- [ ] `!!!` Dostosuj rozkład elementów do zmiany rozmiaru okna.
+- [ ] `!!!` Dodaj widoczne stany Hover, Focus, Pressed, Disabled i Loading.
+- [ ] `!!!` Zapewnij jednolity wygląd pasków przewijania.
+- [ ] `!!!` Popraw kontrast tekstu i kontrolek.
+- [ ] `!!` Dodaj ikony do nawigacji i najważniejszych przycisków.
+- [ ] `!!` Zintegruj ciemny pasek tytułu z wyglądem aplikacji, jeżeli wspiera to obecny framework.
+- [ ] `!!` Dodaj krótkie podpowiedzi dla technicznych funkcji.
+- [ ] `!!` Dodaj spójne powiadomienia o powodzeniu lub niepowodzeniu operacji.
+- [ ] `!!` Zapewnij poprawną obsługę klawiatury, tabulacji i widocznego fokusu.
+
+---
+
+# 4. OVERVIEW — EKRAN GŁÓWNY
+
+- [ ] `!!!!` Przebuduj Overview w czytelny dashboard urządzenia.
+- [ ] `!!!!` Wyeksponuj status połączenia jako najważniejszy element.
+- [ ] `!!!!` Rozdziel i popraw prezentację stanów Connected, Connecting, Disconnected i Error.
+- [ ] `!!!!` Pokazuj przyczynę braku połączenia, jeśli została ustalona.
+- [ ] `!!!` Przenieś Reconnect bezpośrednio do sekcji statusu urządzenia.
+- [ ] `!!!` Podziel ekran na logiczne sekcje: Device, Windows Agent, Connection.
+- [ ] `!!!` Dodaj czytelne formatowanie wersji i ukryj pełny hash commita w szczegółach.
+- [ ] `!!!` Pokaż ostatnie udane połączenie, jeśli taka informacja jest dostępna.
+- [ ] `!!!` Zapewnij wyraźne komunikaty dla pustych/niedostępnych danych.
+- [ ] `!!` Zastąp techniczne opisy typu `Mode live` lub `Protocol 1` bardziej zrozumiałymi nazwami albo przenieś je do szczegółów.
+- [ ] `!!` Dodaj wygodny dostęp do ustawienia Start with Windows.
+- [ ] `!!` Wprowadź szybkie akcje prowadzące do Pairing, Device i Updates.
+
+---
+
+# 5. SHORTCUTS — ZARZĄDZANIE SKRÓTAMI
+
+- [ ] `!!!!` Przebuduj ekran zarządzania skrótami, aby był bardziej wizualny i intuicyjny.
+- [ ] `!!!!` Dodaj podgląd rzeczywistego układu skrótów na ekranie CYD.
+- [ ] `!!!!` Wyraźnie oznacz pierwsze 6 skrótów wyświetlanych przez firmware.
+- [ ] `!!!` Dodaj podgląd ikony i nazwy każdego skrótu.
+- [ ] `!!!` Dodaj zmianę kolejności przez drag-and-drop.
+- [ ] `!!!` Zachowaj alternatywne sterowanie kolejnością przyciskami/klawiaturą.
+- [ ] `!!!` Popraw rozmiar wierszy i czytelność tabeli.
+- [ ] `!!!` Ukryj techniczne ID w domyślnym widoku, pozostawiając dostęp do nich w szczegółach.
+- [ ] `!!!` Ujednolić nazwy typów akcji w tabeli i formularzu.
+- [ ] `!!!` Dodaj jednoznaczne stany nieaktywnych przycisków Edit/Delete/Move.
+- [ ] `!!!` Dodaj możliwość przetestowania wybranego skrótu bez urządzenia, z odpowiednimi zabezpieczeniami.
+- [ ] `!!!` Dodaj czytelne potwierdzanie usuwania skrótów.
+- [ ] `!!` Dodaj licznik wykorzystanych pozycji skrótów.
+- [ ] `!!` Wyjaśnij znaczenie akcji Move to.
+- [ ] `!!` Przenieś Import/Export full config do bardziej odpowiedniej sekcji lub menu.
+- [ ] `!!` Zastąp techniczny opis działania firmware krótkim komunikatem dla użytkownika.
+
+---
+
+# 6. ADD/EDIT SHORTCUT — FORMULARZE
+
+## Ogólne
+
+- [ ] `!!!!` Przebuduj wszystkie warianty formularza na bazie jednego spójnego komponentu.
+- [ ] `!!!!` Dodaj wizualny selektor ikon zamiast ręcznego wpisywania nazw.
+- [ ] `!!!!` Dodaj podgląd skrótu prezentujący rzeczywisty wygląd na CYD.
+- [ ] `!!!` Ukryj automatycznie generowane ID w sekcji Advanced.
+- [ ] `!!!` Dodaj walidację nazw, ścieżek, adresów URL i wymaganych pól.
+- [ ] `!!!` Podziel formularz na sekcje Appearance i Action.
+- [ ] `!!!` Popraw wysokości pól oraz rozmieszczenie przycisków Browse.
+- [ ] `!!!` Utrzymuj spójny układ okna po zmianie rodzaju akcji.
+- [ ] `!!!` Dodaj przycisk Test action, jeśli jest możliwe bezpieczne wykonanie danej operacji.
+- [ ] `!!!` Zapewnij czytelne komunikaty walidacyjne bezpośrednio przy odpowiednich polach.
+- [ ] `!!` Dodaj placeholdery i przykłady wartości.
+- [ ] `!!` Usuń zbędne techniczne opisy implementacji z podstawowego formularza.
+- [ ] `!!` Popraw etykiety przycisków Save/Cancel i zastosuj odpowiednią hierarchię kolorów.
+
+## Built-in action
+
+- [ ] `!!!` Zmień techniczną nazwę na bardziej zrozumiałą.
+- [ ] `!!!` Dodaj krótki opis działania każdej wbudowanej akcji.
+- [ ] `!!` Uporządkuj dostępne akcje w logiczne kategorie, jeżeli ich liczba to uzasadnia.
+
+## Run script
+
+- [ ] `!!!` Dodaj informację o obsługiwanych typach skryptów.
+- [ ] `!!!` Wyjaśnij sposób przekazywania argumentów i ich cytowania.
+- [ ] `!!!` Dodaj czytelne komunikaty błędów uruchomienia skryptu.
+- [ ] `!!` Dodaj możliwość wskazania katalogu roboczego, jeżeli mechanizm wykonawczy go obsługuje lub zostanie bezpiecznie rozszerzony.
+- [ ] `!!` Usuń komunikaty o wewnętrznej kompatybilności starych typów PowerShell z widoku podstawowego.
+
+## Send hotkey
+
+- [ ] `!!!!` Dodaj przechwytywanie kombinacji klawiszy zamiast wyłącznie ręcznego wpisywania tekstu.
+- [ ] `!!!` Pokazuj przechwyconą kombinację w czytelnej postaci.
+- [ ] `!!!` Dodaj walidację kombinacji i komunikaty dla skrótów zarezerwowanych przez system.
+- [ ] `!!` Dodaj łatwy sposób wyczyszczenia kombinacji.
+
+## Open URL
+
+- [ ] `!!!` Dodaj walidację absolutnych adresów HTTP/HTTPS.
+- [ ] `!!` Dodaj przykładowy placeholder URL.
+- [ ] `!!` Dodaj możliwość przetestowania otwarcia adresu.
+
+## Launch application
+
+- [ ] `!!!` Popraw wprowadzanie długich ścieżek wykonywalnych.
+- [ ] `!!!` Dodaj walidację lokalizacji aplikacji i czytelne błędy uruchomienia.
+- [ ] `!!` Wyjaśnij różnicę między pełną ścieżką a nazwą EXE wyszukiwaną w PATH.
+- [ ] `!!` Dodaj opcjonalny katalog roboczy, jeśli jest potrzebny do poprawnego uruchamiania aplikacji.
+
+---
+
+# 7. APPEARANCE — PERSONALIZACJA
+
+- [ ] `!!!!` Dodaj podgląd wyglądu CYD aktualizowany przy zmianie ustawień.
+- [ ] `!!!!` Rozdziel ustawienia wyglądu Windows Agenta od wyglądu firmware CYD, jeśli dotyczą różnych interfejsów.
+- [ ] `!!!!` Przebuduj zarządzanie kolejnością i widocznością stron.
+- [ ] `!!!` Ujednolić wygląd selectorów kolorów, suwaków i checkboxów.
+- [ ] `!!!` Zgrupuj Brightness, Dim timeout, Dim level i Screen-off timeout w sekcji Display.
+- [ ] `!!!` Dodaj czytelne jednostki do wszystkich wartości.
+- [ ] `!!!` Formatuj czas jako sekundy/minuty zamiast samych liczb.
+- [ ] `!!!` Dodaj precyzyjne wprowadzanie wartości suwaków, jeśli jest to zgodne z ograniczeniami firmware.
+- [ ] `!!!` Popraw wyrównanie checkboxów odpowiadających poszczególnym stronom.
+- [ ] `!!!` Pokaż, które strony można ukrywać, a które są wymagane.
+- [ ] `!!!` Dodaj widoczny stan zapisania i synchronizacji ustawień z urządzeniem.
+- [ ] `!!!` Przy braku połączenia pokaż informację, że ustawienia zapisano lokalnie i oczekują na synchronizację.
+- [ ] `!!` Dodaj podgląd wybranych kolorów na przykładowych kontrolkach.
+- [ ] `!!` Dodaj przywracanie domyślnego wyglądu.
+- [ ] `!!` Dodaj zrozumiałe nazwy motywów i stylów zamiast surowych wartości konfiguracji.
+- [ ] `!!` Dodaj opcję wyłączenia wygaszania, jeżeli firmware obsługuje taki tryb.
+
+---
+
+# 8. DEVICE — SZCZEGÓŁY URZĄDZENIA
+
+- [ ] `!!!!` Przebuduj ekran Device z osobnym widokiem Connected i Disconnected.
+- [ ] `!!!!` Usuń wielokrotne wyświetlanie Unavailable w stanie offline. Zastosuj wspólny komunikat o braku danych.
+- [ ] `!!!!` Przenieś Factory reset i Forget device do wyraźnie oddzielonej sekcji Danger zone.
+- [ ] `!!!!` Zweryfikuj potwierdzanie operacji destrukcyjnych i dodaj je, jeśli brakuje.
+- [ ] `!!!` Podziel szczegóły na Device info, Network, Storage, Memory i Connection.
+- [ ] `!!!` Przenieś zaawansowane dane pamięci ESP32 do rozwijanej sekcji diagnostycznej.
+- [ ] `!!!` Dodaj jednostki do pamięci, przestrzeni SD i siły sygnału.
+- [ ] `!!!` Popraw prezentację ostatniego połączenia.
+- [ ] `!!!` Rozróżnij aktualnie trwające łączenie od nieudanej próby połączenia.
+- [ ] `!!!` Dodaj czytelne przyczyny niedostępności działań.
+- [ ] `!!!` Ujednolić stany Reconnect, Restart, Factory reset i Forget device.
+- [ ] `!!` Dodaj możliwość kopiowania IP, Device ID i innych identyfikatorów.
+- [ ] `!!` Dodaj krótkie wyjaśnienia zaawansowanych parametrów.
+
+---
+
+# 9. PAIRING — PAROWANIE
+
+- [ ] `!!!!` Popraw pusty stan listy oczekujących urządzeń.
+- [ ] `!!!!` Zweryfikuj poprawne blokowanie Approve/Reject, gdy nie wybrano żadnego urządzenia.
+- [ ] `!!!!` Sprawdź cały proces przyjmowania i odrzucania żądań parowania.
+- [ ] `!!!` Dodaj instrukcję rozpoczęcia parowania na CYD.
+- [ ] `!!!` Dodaj czytelny status wyszukiwania/oczekiwania na urządzenia.
+- [ ] `!!!` Popraw proporcje szerokości kolumn.
+- [ ] `!!!` Rozróżnij wizualnie akcje Approve i Reject.
+- [ ] `!!!` Dodaj informację, czy lista aktualizuje się automatycznie.
+- [ ] `!!` Zaimplementuj lub zweryfikuj automatyczne odświeżanie listy.
+- [ ] `!!` Popraw prezentację czasu First seen.
+
+---
+
+# 10. UPDATES — AKTUALIZACJE
+
+- [ ] `!!!!` Zweryfikuj działanie mechanizmu wykrywania wersji firmware.
+- [ ] `!!!!` Sprawdź, dlaczego Firmware version, Available version i Release discovery pokazują Unavailable.
+- [ ] `!!!!` Zweryfikuj działanie instalowania aktualizacji firmware i poprawne raportowanie niepowodzeń.
+- [ ] `!!!` Rozdziel Windows Agent Updates i CYD Firmware Updates.
+- [ ] `!!!` Dodaj przycisk Check for updates.
+- [ ] `!!!` Popraw komunikaty o niedostępności aktualizacji.
+- [ ] `!!!` Zastąp surowy hash commita czytelnym numerem wersji z opcjonalnymi szczegółami builda.
+- [ ] `!!!` Dodaj czytelny status aktualizacji i pasek postępu, gdy operacja jest obsługiwana.
+- [ ] `!!!` Dodaj obsługę błędów pobierania/buildowania/wgrywania firmware.
+- [ ] `!!!` Nie dopuszczaj do jednoczesnego uruchomienia konfliktujących operacji aktualizacji.
+- [ ] `!!` Pokazuj datę ostatniego sprawdzenia aktualizacji.
+- [ ] `!!` Dodaj informacje o zmianach nowej wersji, jeśli są dostępne.
+- [ ] `!!` Popraw rozmieszczenie przycisków i danych aktualizacji.
+
+---
+
+# 11. LOGS — DZIENNIK ZDARZEŃ
+
+- [ ] `!!!!` Uzupełnij logowanie diagnostyki błędów połączenia CYD ↔ Agent.
+- [ ] `!!!` Dodaj poziomy logowania INFO, WARN, ERROR i DEBUG.
+- [ ] `!!!` Dodaj wizualne rozróżnienie poziomów.
+- [ ] `!!!` Popraw rozmiar czcionki i odstępy.
+- [ ] `!!!` Skróć domyślny format znaczników czasu. Zachowaj pełne znaczniki w surowych danych.
+- [x] `!!!` Dodaj wyszukiwanie logów.
+- [ ] `!!!` Dodaj filtry poziomów i źródeł zdarzeń.
+- [ ] `!!!` Dodaj możliwość eksportu logów.
+- [ ] `!!!` Zweryfikuj, czy żądania Reconnect zawsze kończą się zarejestrowanym wynikiem lub komunikatem o timeout.
+- [ ] `!!` Dodaj opcję automatycznego przewijania.
+- [ ] `!!` Dodaj kopiowanie pojedynczych zdarzeń.
+- [ ] `!!` Popraw wygląd Clear view — nie sugeruj usuwania plików logów, jeżeli operacja jedynie czyści widok.
+- [ ] `!!` Rozważ czytelny widok tabelaryczny z możliwością przełączenia na surowe logi.
+- [x] `!!` Dodaj szybką możliwość wyświetlenia wyłącznie błędów.
+
+---
+
+# 12. TESTY REGRESYJNE I WERYFIKACJA KOŃCOWA
+
+- [ ] `!!!!` Sprawdź proces uruchomienia Windows Agenta.
+- [ ] `!!!!` Sprawdź pełną komunikację CYD ↔ Agent, wykorzystując rzeczywiste urządzenie, gdy będzie dostępne.
+- [ ] `!!!!` Sprawdź proces parowania nowego CYD.
+- [ ] `!!!!` Sprawdź ponowne łączenie po restarcie Agenta, CYD i routera.
+- [ ] `!!!!` Sprawdź synchronizację ustawień i skrótów po chwilowej utracie połączenia.
+- [ ] `!!!!` Zweryfikuj zgodność zapisanych konfiguracji ze zmodernizowanym UI.
+- [ ] `!!!` Przetestuj dodawanie, edycję, usuwanie i zmianę kolejności skrótów.
+- [ ] `!!!` Przetestuj wszystkie typy akcji skrótów.
+- [ ] `!!!` Sprawdź działanie systemu aktualizacji bez wykonywania zbędnych operacji destrukcyjnych na urządzeniu.
+- [ ] `!!!` Zweryfikuj działanie aplikacji przy różnych rozmiarach okna i ustawieniach skalowania Windows.
+- [ ] `!!!` Przetestuj ekran każdego modułu w stanie Connected, Disconnected, Loading, Error i Empty, tam gdzie dany stan ma zastosowanie.
+- [ ] `!!!` Sprawdź poprawność wszystkich stanów disabled/loading i obsługi błędów formularzy.
+- [ ] `!!!` Dodaj testy automatyczne komponentów i krytycznych przepływów, tam gdzie są możliwe.
+- [ ] `!!` Sprawdź obsługę klawiatury, fokusu i kontrastu UI.
+- [ ] `!!` Zweryfikuj brak nowych błędów oraz ostrzeżeń w logach po wdrożeniu zmian.
+
+---
+
+# 13. KOŃCOWE ZASADY REALIZACJI
+
+1. Najpierw usuwaj problemy komunikacyjne z priorytetem `!!!!!`.
+2. Następnie wykonaj zadania funkcjonalne i bezpieczeństwa z priorytetem `!!!!`.
+3. Przed masową przebudową ekranów opracuj wspólny design system.
+4. Modernizuj kolejne ekrany tak, aby przez cały czas zachowywać działające funkcje.
+5. Każde zadanie testuj i dokumentuj osobno lub w ramach wyraźnie zidentyfikowanego zestawu zmian.
+6. Jeżeli zmiana dotyczy firmware i Agenta, sprawdź obie strony komunikacji.
+7. Nie uznawaj niepotwierdzonych napraw za zakończone.
+8. Po każdej zweryfikowanej naprawie **obowiązkowo utwórz wpis w wiki potwierdzający naprawę problemu**.
+9. Po GOAL RESUME ponownie sprawdzaj rzeczywisty stan zadań, zamiast rozpoczynać implementację od początku.
+10. Celem końcowym jest stabilny CYD-DECK z dopracowanym interfejsem, a nie wyłącznie zaliczenie pozycji z TODO.TXT.
+
+
+## Weryfikacja 2026-10-15 — statusy i interfejs Windows Agenta
+
+Zweryfikowany zestaw zmian opisuje `docs/wiki/2026-10-15-agent-ui.md`.
+
+- [x] Naprawiono wyjątek DragDrop w testach UI: kontrolki tworzone na dedykowanym wątku STA z pętlą komunikatów. Produkcyjny Main już miał STAThread.
+- [x] Nasłuch Agenta ma status Listening, niezależny od stanu połączenia CYD.
+- [x] Overview odświeża nazwę i ID po zmianie urządzenia; wyświetla USB/Network.
+- [x] Device ukrywa starą telemetrię po rozłączeniu i dodaje szczegóły po pierwszym raporcie bez ponownego otwierania strony.
+- [x] Restart i Factory reset aktualizują dostępność przy zmianie połączenia.
+- [x] Poprawiono zasłonięty nagłówek nawigacji, dodano panel statusu i niebieski akcent, rozróżniono działania destrukcyjne.
+- [x] Usunięto niepoparte sprawdzeniem zapewnienie o aktualnej wersji; OTA nie korzysta ze starego IP urządzenia offline.
+- [x] Build: 0 błędów, 0 ostrzeżeń. Pełny zestaw WindowsAgent smoke tests: PASS.
+- [ ] Fizyczny CYD, test OTA oraz różne skalowania Windows: AWAITING HARDWARE VERIFICATION / dalsze testy. Pozostałe pozycje głównej listy pozostają otwarte.
+
+
+## Weryfikacja 2026-10-15 — Bugfix & State Sync Refactor
+
+- [x] Kolejność metadata -> cover, deduplikacja coverId, baseline JPEG 128x128, timeout i fallback, Serial RX 8192.
+- [x] Pełna synchronizacja hello USB/WS i zapis sześciu skrótów w NVS.
+- [x] Wspólna telemetria hello/device.info, reaktywne Overview/Device/Updates.
+- [x] CoreAudio: odczyt przy połączeniu, audio przed media, powiadomienia i muted.
+- [x] Appearance: rzeczywiste nazwy skrótów, kontrast, przewijanie; nagłówki tabel, Address, Approve, maskowanie tokenów.
+- [x] CYD: Loading, fallback i kontrast statusów; bez resetowania gotowej okładki.
+- [ ] Spotify/YouTube, reconnect USB/Wi-Fi, kolory, wyciszenie, restart i OTA na fizycznym CYD: AWAITING HARDWARE VERIFICATION.
+
+Szczegóły: docs/wiki/2026-10-15-state-sync-refactor.md. Aktualnie uruchomiony Agent nie został zastąpiony; firmware nie został wgrany w tej rundzie.
+
+
+## Wydanie1.1.0 — ostatnia weryfikacja
+
+- [x] Kontrolny restart CYD: okładka odczytana z SD,0transferów USB, stabilne połączenie.
+- [x] Użytkownik potwierdził płynność/UI; Agent pozostaje uruchomiony.
+- [x] Timeline lokalnie co100ms, heartbeat5s / timeout30s.
+- [x] Installer per-user i self-contained portable wraz z runtime/licencjami.
+- [x] Wersjonowanie Agent/firmware1.1.0 i instrukcja wydania docs/releases/1.1.0.md.
