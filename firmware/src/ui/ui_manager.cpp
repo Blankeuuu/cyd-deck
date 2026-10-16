@@ -653,13 +653,39 @@ void updateShortcutTile(const ShortcutState& shortcuts, int index, lv_obj_t* til
   if (showLabel) lv_obj_clear_flag(label, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
   const int width = lv_obj_get_width(tile), height = lv_obj_get_height(tile);
   if (compact) {
-    setBoundsIfChanged(icon, showLabel ? 12 : (width - 24) / 2, (height - 24) / 2, 24, 24);
-    setBoundsIfChanged(label, showIcon ? 42 : 8, (height - 34) / 2, width - (showIcon ? 50 : 16), 34);
+    if (showIcon && showLabel) {
+      const char* text = lv_label_get_text(label);
+      const lv_font_t* font = lv_obj_get_style_text_font(label, 0);
+      if (!font) font = &streamdeck_polish_14;
+      const uint32_t textLen = text ? static_cast<uint32_t>(std::strlen(text)) : 0;
+      int textWidth = textLen > 0 ? lv_text_get_width(text, textLen, font, 0) : 0;
+      const int gap = 6;
+      const int iconWidth = 24;
+      const int padding = 6;
+      const int maxTextWidth = width - iconWidth - gap - (padding * 2);
+      if (textWidth > maxTextWidth) textWidth = maxTextWidth;
+      const int contentWidth = iconWidth + gap + textWidth;
+      int startX = (width - contentWidth) / 2;
+      if (startX < padding) startX = padding;
+      setBoundsIfChanged(icon, startX, (height - 24) / 2, 24, 24);
+      const int labelX = startX + iconWidth + gap;
+      const int labelW = width - labelX - padding;
+      const int labelH = 20;
+      setBoundsIfChanged(label, labelX, (height - labelH) / 2, labelW, labelH);
+      lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+    } else if (showIcon) {
+      setBoundsIfChanged(icon, (width - 24) / 2, (height - 24) / 2, 24, 24);
+    } else if (showLabel) {
+      const int labelH = 20;
+      setBoundsIfChanged(label, 6, (height - labelH) / 2, width - 12, labelH);
+      lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    }
   } else {
     const int labelHeight = height >= 120 ? 52 : 38;
     const int groupHeight = labelHeight + 28;
     setBoundsIfChanged(icon, (width - 24) / 2, showLabel ? (height - groupHeight) / 2 : (height - 24) / 2, 24, 24);
     setBoundsIfChanged(label, 6, showIcon ? (height - groupHeight) / 2 + 28 : (height - labelHeight) / 2, width - 12, labelHeight);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   }
 }
 

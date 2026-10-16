@@ -223,7 +223,7 @@ int main() {
   assert(findLabel(lv_test_root(), "Now playing")->text_color == 0xF7F8FA);
   streamdeck::uiSetPage(streamdeck::Page::Info);
   streamdeck::uiRefresh(state);
-  assert(findLabel(lv_test_root(), "FW 1.1.0  |  Calibration: Needed") != nullptr);
+  assert(findLabel(lv_test_root(), "FW 1.2.0  |  Calibration: Needed") != nullptr);
   assert(findLabel(lv_test_root(), "Wi-Fi  LabWiFi  -53 dBm") != nullptr);
   assert(findLabel(lv_test_root(), "IP      192.168.50.205") != nullptr);
   assert(findLabel(lv_test_root(), "Agent: Connected  |  192.168.50.190") != nullptr);
@@ -402,6 +402,8 @@ int main() {
   std::strcpy(state.shortcuts.displayModes[0], "both");
   streamdeck::uiRefresh(state);
   assert((homeShortcutLabels[0]->flags & LV_OBJ_FLAG_HIDDEN) == 0);
+  assert(homeShortcutIcons[0]->x > 12); // Dynamically centered horizontally with text
+  assert(homeShortcutIcons[0]->y == 10 && homeShortcutLabels[0]->y == 12); // Vertically aligned on common center axis
   const int beforeTilePositions = lv_test_position_writes;
   streamdeck::uiRefresh(state);
   assert(lv_test_position_writes == beforeTilePositions); // Repeated hydration must not repaint/reposition unchanged tiles.
@@ -411,10 +413,13 @@ int main() {
   streamdeck::uiRefresh(state);
   assert((homeShortcutIcons[0]->flags & LV_OBJ_FLAG_HIDDEN) != 0);
   assert((homeShortcutLabels[0]->flags & LV_OBJ_FLAG_HIDDEN) == 0);
+  assert(homeShortcutLabels[0]->text_align == LV_TEXT_ALIGN_CENTER);
   state.shortcuts.hasIconPixels[0] = true;
   ++state.shortcuts.iconRevision;
   std::strcpy(state.shortcuts.displayModes[0], "icon");
   streamdeck::uiRefresh(state);
+  assert(homeShortcutIcons[0]->x == (homeShortcutButtons[0]->w - 24) / 2);
+  assert(homeShortcutIcons[0]->y == (homeShortcutButtons[0]->h - 24) / 2);
   auto* customImage = lv_obj_get_child(homeShortcutIcons[0], 0);
   assert((customImage->flags & LV_OBJ_FLAG_HIDDEN) == 0);
   assert((homeShortcutIcons[0]->flags & LV_OBJ_FLAG_HIDDEN) == 0);

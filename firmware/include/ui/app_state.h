@@ -40,7 +40,7 @@ struct SystemState {
   uint32_t hostTimeSyncedAtSec = 0;
 };
 struct StorageState { bool mounted = false; bool ready = false; uint32_t totalMb = 0; uint32_t freeMb = 0; char status[32] = "not started"; };
-struct DeviceInfoState { char firmwareVersion[16] = "1.1.0"; uint32_t uptimeSeconds = 0; };
+struct DeviceInfoState { char firmwareVersion[16] = "1.2.0"; uint32_t uptimeSeconds = 0; };
 struct ConnectionState {
   bool online = false;
   bool wifiConnected = false;

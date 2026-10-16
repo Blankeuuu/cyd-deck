@@ -14,12 +14,18 @@ Pierwszy przycisk nawigacji ponownie pokazuje bieżący czas `HH:mm`, na wszystk
 
 ## Aktualizacja: Home, dok i ikony skrótów
 
-- Aktualny dok: **Home / Deck / Media / PC / koło zębate**. Szerokości wynikają z metryk fontu i poziomego paddingu 10 px; odstępy wynoszą 6 px. Etykiety nie używają wielokropków.
-- Zegar Home: duża godzina i wyśrodkowana data w formacie `Fri, Oct 16`, pole 132 px i kolor `#A1A1AA` w ciemnym motywie. Zastępuje wcześniejszą godzinę w doku i długą datę.
-- Skróty Home i Deck mają osobne etykiety tekstu i ikon. `cyd_icons_20` zawiera 19 symboli Font Awesome, w tym keyboard, globe, terminal, lock, star i app. Zachowano preferencje `icon` / `label` / `both`; tryb Label celowo ukrywa ikonę.
-- Generator fontu: `scripts/icon-font-generator`, bitmapy 4 bpp, 3312 B. Licencja: `firmware/src/ui/fonts/FONT-AWESOME-LICENSE.txt`.
-- Windows: kompaktowa szerokość selektora profilu i przycisku zapisu; podgląd kafelka respektuje ten sam Display Mode co CYD.
-- Protokół Serial JSON pozostaje `protocol:1`, bez nowych pól. Testy układu i rzeczywistych metryk fontów przechodzą, włącznie ze wszystkimi skróconymi dniami i miesiącami.
+- Aktualny dok: **HH:mm (zegar bieżący) / Deck / Media / PC / koło zębate**. Szerokości wynikają z metryk fontu i poziomego paddingu 10 px; odstępy wynoszą 6 px. Etykiety nie używają wielokropków. Zegar w doku pozostaje przywrócony i widoczny na wszystkich stronach.
+- Zegar Home: duża godzina i wyśrodkowana data w formacie `Fri, Oct 16`, pole 132 px i kolor `#A1A1AA` w ciemnym motywie.
+- Skróty Home i Deck mają osobne etykiety tekstu i ikon. `cyd_icons_20` zawiera 21 symboli Font Awesome (w tym dodane `camera` i `mic`/`microphone`). Zachowano preferencje `icon` / `label` / `both`; tryb Label celowo ukrywa ikonę.
+- Generator fontu: `scripts/icon-font-generator`, bitmapy 4 bpp, 3649 B. Generuje font C oraz JSON podglądów `shortcut-icons.json`. Licencja: `firmware/src/ui/fonts/FONT-AWESOME-LICENSE.txt`.
+- Wizualna galeria ikon i import URL (Windows Agent):
+  - Modalna galeria 21 ikon (`ShortcutIconPicker`) w siatce 5×5 z ciemnym motywem Apple HIG i podglądem na żywo.
+  - Możliwość wklejenia bezpośredniego URL do obrazu (PNG, JPEG, WebP, GIF, BMP) o rozmiarze do 4096×4096 px i pobrania go (limit 2 MB, SkiaSharp). Obraz jest automatycznie skalowany z zachowaniem proporcji i przezroczystością do 24×24 pikseli w formacie `RGB565A8` (1728 B) i kodowany jako Base64URL bez paddingu (2304 znaki).
+  - W razie błędu pobierania poprzednia ikona i URL są zachowywane.
+  - Firmware wspiera wyświetlanie własnych miniatur 24×24 jako dzieci `lv_image` wewnątrz etykiet kafelków na Home i Deck z unieważnianiem cache według rewizji.
+  - Persystencja NVS `shortcuts` v3 wspiera wsteczny odczyt v1/v2 i alokację sterty dla porównania zawartości bez przeciążania stosu.
+- Windows: kompaktowa szerokość selektora profilu i przycisku zapisu; podgląd kafelka respektuje ten sam Display Mode co CYD. Zmiany pozostają w stanie draftu do momentu jawnego `Save` / `Save & Sync`.
+- Protokół Serial JSON pozostaje `protocol:1`, z opcjonalnym polem `iconData` (Base64URL) mieszczącym się w limicie ramki 16 KB przy 6 ikonach.
 
 
 ## Nawigacja CYD Display

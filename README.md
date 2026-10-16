@@ -59,6 +59,10 @@ Wymaga .NET SDK 10. Build: `dotnet build agent/src/WindowsAgent/StreamDeck.Windo
 Więcej informacji: [docs/configuration.md](docs/configuration.md) oraz [docs/protocol.md](docs/protocol.md).
 
 
+## Wydanie 1.2.0
+
+[GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.2.0): instalator Windows x64, portable z runtime .NET, firmware ST7789 oraz sumy SHA256. [Instrukcja i zmiany](docs/releases/1.2.0.md).
+
 ## Wydanie 1.1.0
 
-[GitHub Releases](https://github.com/Blankeuuu/stream-deck/releases/tag/v1.1.0): instalator Windows x64, portable z runtime.NET, firmware ST7789 oraz sumySHA256. [Instrukcja i zmiany](docs/releases/1.1.0.md). Agent i firmware należy aktualizować razem.
+[GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.1.0): instalator Windows x64, portable z runtime .NET, firmware ST7789 oraz sumy SHA256. [Instrukcja i zmiany](docs/releases/1.1.0.md). Agent i firmware należy aktualizować razem.

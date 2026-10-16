@@ -55,6 +55,8 @@ enum {
   LV_LABEL_LONG_DOT = 0,
   LV_LABEL_LONG_MODE_CLIP = 4,
   LV_LABEL_LONG_MODE_WRAP = 5,
+  LV_TEXT_ALIGN_AUTO = 0,
+  LV_TEXT_ALIGN_LEFT = 1,
   LV_TEXT_ALIGN_CENTER = 2,
   LV_TEXT_ALIGN_RIGHT = 3,
   LV_OPA_COVER = 255,
@@ -200,6 +202,7 @@ inline void lv_obj_set_style_border_width(lv_obj_t* object, int width, int) { ob
 inline void lv_obj_set_style_text_align(lv_obj_t* object, int align, int) { object->text_align = align; }
 inline void lv_obj_set_style_text_color(lv_obj_t* object, lv_color_t color, int) { object->text_color = color; }
 inline void lv_obj_set_style_text_font(lv_obj_t* object, lv_font_t* font, int) { object->font = font; }
+inline const lv_font_t* lv_obj_get_style_text_font(const lv_obj_t* object, int) { return object ? object->font : nullptr; }
 inline void lv_obj_set_style_shadow_width(lv_obj_t*, int, int) {}
 constexpr uint32_t LV_STATE_PRESSED = 0x20;
 inline bool lv_obj_has_state(lv_obj_t* object, uint32_t state) { return (object->state & state) == state; }

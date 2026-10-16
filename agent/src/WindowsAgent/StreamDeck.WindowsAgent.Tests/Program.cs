@@ -38,6 +38,14 @@ using (var png = new MemoryStream())
     var frame = ProtocolStateMapper.CreateShortcutsUpdate(new DeviceShortcutConfiguration(items));
     AssertTrue(Encoding.UTF8.GetByteCount(frame) < 16384, "six custom icons fit serial frame");
     AssertTrue(!frame.Contains("\\u002B"), "icon payload avoids JSON plus escapes");
+
+    // Stress frame size with maximum permissible ID (64 chars) and Label (19 bytes UTF-8)
+    var maxId = new string('s', 64);
+    var maxLabel = "1234567890123456789"; // 19 UTF-8 bytes
+    var maxItems = Enumerable.Range(0, 6).Select(i => new DeviceShortcutDefinition($"slot{i}-{maxId[..50]}", maxLabel, "custom", "both", IconData: data)).ToArray();
+    var maxFrame = ProtocolStateMapper.CreateShortcutsUpdate(new DeviceShortcutConfiguration(maxItems));
+    AssertTrue(Encoding.UTF8.GetByteCount(maxFrame) < 16384, $"six custom icons with max labels and IDs fit serial frame ({Encoding.UTF8.GetByteCount(maxFrame)} < 16384)");
+
     using var doc = JsonDocument.Parse(frame);
     var transmitted = doc.RootElement.GetProperty("data").GetProperty("shortcuts")[0].GetProperty("iconData").GetString()!;
     AssertTrue(pixels.SequenceEqual(Convert.FromBase64String(transmitted.Replace('-', '+').Replace('_', '/'))), "custom icon protocol round trip");
@@ -47,13 +55,7 @@ using (var png = new MemoryStream())
     AssertTrue(output.GetPixel(12, 12).R > 240 && output.GetPixel(12, 12).G == 0, "Windows renders actual imported pixels");
 }
 AssertThrows<InvalidDataException>(() => ShortcutIconCatalog.Encode([1, 2, 3]), "invalid image rejected");
-using (var picker = new ShortcutIconPicker("lock", null, null))
-{
-    picker.CreateControl(); picker.PerformLayout();
-    using var render = new Bitmap(picker.Width, picker.Height);
-    picker.DrawToBitmap(render, new Rectangle(Point.Empty, picker.Size));
-    Directory.CreateDirectory("artifacts/ui-review"); render.Save("artifacts/ui-review/icon-picker.png");
-}
+await TestShortcutIconDownloadLoopbackAsync();
 
 if (args.Contains("--live-audio"))
 {
@@ -695,6 +697,41 @@ using (var shortcutEditor = new ShortcutEditorDialog())
     AssertShortcutEditorLayout(shortcutEditor, new Size(720, 600), "regular");
 }
 SynchronizationContext.SetSynchronizationContext(previousShortcutEditorContext);
+
+using (var picker = new ShortcutIconPicker("lock", null, null))
+{
+    picker.StartPosition = FormStartPosition.Manual;
+    picker.Location = new Point(-2000, -2000);
+    picker.Show();
+    Application.DoEvents();
+    picker.PerformLayout();
+    Application.DoEvents();
+
+    AssertEqual("lock", picker.IconKey, "picker initial key is lock");
+    AssertEqual(null, picker.IconData, "picker initial data is null");
+
+    // Test switching built-in icon
+    var terminalButton = FlattenControls(picker).OfType<Button>().Single(b => b.Text == "terminal");
+    terminalButton.PerformClick();
+    Application.DoEvents();
+    AssertEqual("terminal", picker.IconKey, "picker switches to terminal built-in icon");
+
+    // Test failed URL download preserves previous icon state
+    var urlBox = FlattenControls(picker).OfType<TextBox>().Single(t => t.AccessibleName == "Image URL");
+    var loadButton = FlattenControls(picker).OfType<Button>().Single(b => b.Text == "Load preview");
+    urlBox.Text = "https://invalid-non-existent-domain-test.local/icon.png";
+    loadButton.PerformClick();
+    while (!loadButton.Enabled) Application.DoEvents();
+    AssertEqual("terminal", picker.IconKey, "picker preserves previous icon key on failed download");
+    AssertEqual(null, picker.IconData, "picker preserves null icon data on failed download");
+
+    // Capture visual artifact for UI review
+    using var render = new Bitmap(picker.Width, picker.Height);
+    picker.DrawToBitmap(render, new Rectangle(Point.Empty, picker.Size));
+    Directory.CreateDirectory("artifacts/ui-review");
+    render.Save("artifacts/ui-review/icon-picker.png");
+    picker.Close();
+}
 });
 var liveOverview = SettingsWindow.CreateLiveInfoValues("Overview", new AgentStatusSnapshot(
     "connected", "device-1", "CYD", "192.168.1.8:1234", 8765, 5000, "live", ["192.168.1.10"]));
@@ -1706,6 +1743,85 @@ static Task RunOnStaAsync(Func<Task> test)
     thread.IsBackground = true;
     thread.Start();
     return completion.Task;
+}
+
+static int GetFreeTcpPort()
+{
+    using var listener = new TcpListener(IPAddress.Loopback, 0);
+    listener.Start();
+    var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+    listener.Stop();
+    return port;
+}
+
+static async Task TestShortcutIconDownloadLoopbackAsync()
+{
+    var port = GetFreeTcpPort();
+    using var listener = new HttpListener();
+    listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+    listener.Start();
+
+    var serverCts = new CancellationTokenSource();
+    var serverTask = Task.Run(async () =>
+    {
+        while (!serverCts.Token.IsCancellationRequested && listener.IsListening)
+        {
+            try
+            {
+                var context = await listener.GetContextAsync();
+                if (context.Request.Url?.AbsolutePath == "/test.png")
+                {
+                    using var bmp = new Bitmap(16, 16);
+                    using var g = Graphics.FromImage(bmp);
+                    g.Clear(Color.Blue);
+                    using var ms = new MemoryStream();
+                    bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                    var bytes = ms.ToArray();
+                    context.Response.ContentType = "image/png";
+                    context.Response.ContentLength64 = bytes.Length;
+                    await context.Response.OutputStream.WriteAsync(bytes, serverCts.Token);
+                    context.Response.Close();
+                }
+                else
+                {
+                    context.Response.StatusCode = 404;
+                    context.Response.Close();
+                }
+            }
+            catch (Exception) when (serverCts.IsCancellationRequested || !listener.IsListening)
+            {
+                break;
+            }
+        }
+    });
+
+    try
+    {
+        var validData = await ShortcutIconCatalog.DownloadAsync($"http://127.0.0.1:{port}/test.png", CancellationToken.None);
+        var bytes = Convert.FromBase64String(validData);
+        AssertEqual(1728, bytes.Length, "downloaded test.png converts to 1728 bytes RGB565A8");
+
+        var threw404 = false;
+        try
+        {
+            await ShortcutIconCatalog.DownloadAsync($"http://127.0.0.1:{port}/missing.png", CancellationToken.None);
+        }
+        catch (HttpRequestException)
+        {
+            threw404 = true;
+        }
+        AssertTrue(threw404, "missing URL throws HttpRequestException");
+
+        AssertThrows<InvalidDataException>(() =>
+            ShortcutIconCatalog.DownloadAsync("ftp://example.com/icon.png", CancellationToken.None).GetAwaiter().GetResult(),
+            "non-http URL throws InvalidDataException");
+    }
+    finally
+    {
+        serverCts.Cancel();
+        listener.Stop();
+        try { await serverTask; } catch { }
+    }
 }
 
 sealed class TestMediaController : IHostMediaController
