@@ -255,11 +255,49 @@ int main() {
   assert(findButtonByText(lv_test_root(), "Keep A") != nullptr);
   assert(findButtonByText(lv_test_root(), "Delete B") == nullptr);
   assert(findButtonByText(lv_test_root(), "No shortcut") != nullptr);
+  // With 1 active shortcut in auto mode (0), button 0 scales to hero-1 (296x182)
+  assert(shortcutButtons[0]->w == 296 && shortcutButtons[0]->h == 182);
+  assert((shortcutButtons[1]->flags & LV_OBJ_FLAG_HIDDEN) != 0);
+  // Explicit split-2 layout (2) scales buttons 0..1 to 144x182
+  state.appearance.shortcutsLayout = 2;
+  streamdeck::uiRefresh(state);
+  assert(shortcutButtons[0]->w == 144 && shortcutButtons[0]->h == 182);
+  assert(shortcutButtons[1]->w == 144 && shortcutButtons[1]->h == 182);
+  assert((shortcutButtons[1]->flags & LV_OBJ_FLAG_HIDDEN) == 0);
+  assert((shortcutButtons[2]->flags & LV_OBJ_FLAG_HIDDEN) != 0);
+  // Explicit quad-4 layout (3) scales buttons 0..3 to 144x86
+  state.appearance.shortcutsLayout = 3;
+  streamdeck::uiRefresh(state);
+  assert(shortcutButtons[0]->w == 144 && shortcutButtons[0]->h == 86);
+  assert(shortcutButtons[3]->w == 144 && shortcutButtons[3]->h == 86);
+  assert((shortcutButtons[3]->flags & LV_OBJ_FLAG_HIDDEN) == 0);
+  assert((shortcutButtons[4]->flags & LV_OBJ_FLAG_HIDDEN) != 0);
+  state.appearance.shortcutsLayout = 0;
   streamdeck::resetShortcuts(state.shortcuts);
   streamdeck::uiRefresh(state);
+  assert(shortcutButtons[0]->w == 94 && shortcutButtons[0]->h == 86);
   assert(findButtonByText(lv_test_root(), "Keep A") == nullptr);
   assert(findButtonByText(lv_test_root(), "Delete B") == nullptr);
   assert(findButtonByText(lv_test_root(), "No shortcut") != nullptr);
+
+  // Verify persistent Windows corner clock and 2x2 watchOS PC complications
+  state.system.hostLocalMinutes = 14 * 60 + 37;
+  state.system.hostTimeSyncedAtSec = state.device.uptimeSeconds;
+  state.system.cpuPercent = 34;
+  state.system.ramPercent = 62;
+  state.system.gpuPercent = 18;
+  state.system.tempCelsius = 54;
+  streamdeck::uiSetPage(streamdeck::Page::Pc);
+  assert(findLabel(lv_test_root(), "14:37") != nullptr);
+  assert(findLabel(lv_test_root(), "CPU") != nullptr);
+  assert(findLabel(lv_test_root(), "RAM") != nullptr);
+  assert(findLabel(lv_test_root(), "GPU") != nullptr);
+  assert(findLabel(lv_test_root(), "TMP") != nullptr);
+  assert(findLabel(lv_test_root(), "34%") != nullptr);
+  assert(findLabel(lv_test_root(), "62%") != nullptr);
+  assert(findLabel(lv_test_root(), "18%") != nullptr);
+  assert(findLabel(lv_test_root(), "54 C") != nullptr);
+  assert(streamdeck::sanitizeCydBackground(0xB8F224, 0) != 0xB8F224);
 
   lv_obj_t* plus = findButtonByText(lv_test_root(), "+");
   lv_obj_t* minus = findButtonByText(lv_test_root(), "-");

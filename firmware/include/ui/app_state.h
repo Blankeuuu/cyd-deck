@@ -25,7 +25,19 @@ inline uint32_t mediaPositionAt(const MediaState& media, uint32_t nowMs) {
 struct DisplayIdleDecision { bool off = false; bool dimmed = false; bool resetIdleTimer = false; };
 enum class PendingSetupDecision : uint8_t { Wait, Success, Failure };
 struct AudioState { uint8_t reportedVolume = 0; bool available = false; bool muted = false; };
-struct SystemState { uint32_t freeHeap = 0; uint32_t minHeap = 0; uint32_t largestBlock = 0; };
+struct SystemState {
+  uint32_t freeHeap = 0;
+  uint32_t minHeap = 0;
+  uint32_t largestBlock = 0;
+  uint8_t cpuPercent = 0;
+  uint8_t ramPercent = 0;
+  uint8_t gpuPercent = 0;
+  uint8_t tempCelsius = 0;
+  uint32_t ramUsedMb = 0;
+  uint32_t ramTotalMb = 0;
+  int16_t hostLocalMinutes = -1;
+  uint32_t hostTimeSyncedAtSec = 0;
+};
 struct StorageState { bool mounted = false; bool ready = false; uint32_t totalMb = 0; uint32_t freeMb = 0; char status[32] = "not started"; };
 struct DeviceInfoState { char firmwareVersion[16] = "1.1.0"; uint32_t uptimeSeconds = 0; };
 struct ConnectionState {
@@ -57,6 +69,9 @@ struct AppearanceState {
   uint32_t background = 0x101216;
   uint8_t theme = 0;
   uint8_t buttonStyle = 1;
+  uint8_t tileColorScheme = 0;
+  uint8_t standbyStyle = 0;
+  uint8_t shortcutsLayout = 0;
   uint8_t brightness = 70;
   uint32_t dimAfterSeconds = 300;
   uint8_t dimBrightness = 20;
@@ -105,6 +120,20 @@ inline uint32_t clampSeconds(int value, uint32_t minValue, uint32_t maxValue) {
   return unsignedValue;
 }
 
+inline uint32_t sanitizeCydBackground(uint32_t bg, uint8_t theme) {
+  if (theme == 1) return bg;
+  if (bg == 0x101216 || bg == 0x0B0D12 || bg == 0x000000) return bg;
+  const uint32_t r = (bg >> 16) & 0xFF;
+  const uint32_t g = (bg >> 8) & 0xFF;
+  const uint32_t b = bg & 0xFF;
+  const uint32_t luma = (r * 77 + g * 150 + b * 29) >> 8;
+  if (luma <= 42) return bg;
+  const uint32_t dr = std::min<uint32_t>(36, 10 + (r * 18) / 100);
+  const uint32_t dg = std::min<uint32_t>(38, 12 + (g * 18) / 100);
+  const uint32_t db = std::min<uint32_t>(46, 16 + (b * 20) / 100);
+  return (dr << 16) | (dg << 8) | db;
+}
+
 inline void normalizeAppearance(AppearanceState& appearance) {
   appearance.theme = appearance.theme > 1 ? 0 : appearance.theme;
   if (appearance.theme == 1 && appearance.background == 0x101216) appearance.background = 0xF3F5F7;
@@ -112,6 +141,9 @@ inline void normalizeAppearance(AppearanceState& appearance) {
   if (appearance.theme == 0 && appearance.background == 0xF3F5F7) appearance.background = 0x101216;
   if (appearance.theme == 0 && appearance.accent == 0x276EF1) appearance.accent = 0x7EAFE3;
   appearance.buttonStyle = appearance.buttonStyle > 2 ? 1 : appearance.buttonStyle;
+  appearance.tileColorScheme = appearance.tileColorScheme > 2 ? 0 : appearance.tileColorScheme;
+  appearance.standbyStyle = appearance.standbyStyle > 2 ? 0 : appearance.standbyStyle;
+  appearance.shortcutsLayout = appearance.shortcutsLayout > 4 ? 0 : appearance.shortcutsLayout;
   appearance.brightness = clampPercent(appearance.brightness, 10, 100);
   appearance.dimBrightness = clampPercent(appearance.dimBrightness, 1, appearance.brightness);
   appearance.dimAfterSeconds = clampSeconds(appearance.dimAfterSeconds, 0, 86400);

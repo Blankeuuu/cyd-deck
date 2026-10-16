@@ -8,24 +8,78 @@ internal static class DashboardHtml
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Stream Deck Agent</title>
+  <title>CYD-DECK Agent</title>
   <style>
-    :root { color-scheme: light dark; font-family: "Segoe UI", system-ui, sans-serif; }
-    body { margin: 0; background: #101418; color: #eef3f7; }
-    main { max-width: 860px; margin: 0 auto; padding: 28px; }
-    h1 { font-size: 24px; margin: 0 0 20px; }
-    section { border: 1px solid #2f3b46; border-radius: 8px; padding: 18px; margin-bottom: 16px; background: #171d23; }
-    dl { display: grid; grid-template-columns: 150px 1fr; gap: 8px 16px; margin: 0; }
-    dt { color: #9fb0bf; }
-    dd { margin: 0; word-break: break-word; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #2f3b46; }
-    .empty { color: #9fb0bf; }
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+    }
+    body {
+      margin: 0;
+      background: #0D0E11;
+      color: #F4F6F8;
+      -webkit-font-smoothing: antialiased;
+    }
+    main {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 40px 28px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0;
+    }
+    .badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: rgba(10, 132, 255, 0.16);
+      color: #5299E0;
+      border: 1px solid rgba(82, 153, 224, 0.28);
+    }
+    section {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      padding: 22px 24px;
+      margin-bottom: 18px;
+      background: rgba(30, 32, 40, 0.78);
+      backdrop-filter: blur(20px);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+    }
+    dl {
+      display: grid;
+      grid-template-columns: 168px 1fr;
+      gap: 12px 20px;
+      margin: 0;
+      font-size: 14px;
+    }
+    dt {
+      color: #9CA4B0;
+      font-weight: 500;
+    }
+    dd {
+      margin: 0;
+      color: #F4F6F8;
+      font-weight: 500;
+      word-break: break-word;
+    }
   </style>
 </head>
 <body>
   <main>
-    <h1>Stream Deck Agent</h1>
+    <header>
+      <h1>CYD-DECK Agent</h1>
+      <span class="badge">macOS / Windows Control Center</span>
+    </header>
     <section>
       <dl id="status"></dl>
     </section>
@@ -68,3 +122,4 @@ internal static class DashboardHtml
 </html>
 """;
 }
+

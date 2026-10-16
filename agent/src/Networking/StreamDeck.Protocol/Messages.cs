@@ -43,7 +43,10 @@ public sealed record DeviceSettingsMessage(
     int? DimAfterSec,
     int? DimBrightness,
     int? ScreenOffAfterSec,
-    bool? WakeOnTouch);
+    bool? WakeOnTouch,
+    string? TileColorScheme = null,
+    string? StandbyStyle = null,
+    string? ShortcutsLayout = null);
 
 public sealed record DeviceInfoMessage(
     string FirmwareVersion,
@@ -88,7 +91,14 @@ public sealed record MediaPlaybackMessage(bool Playing);
 
 public sealed record AudioUpdateMessage(int VolumePercent, bool Muted);
 
-public sealed record SystemStatsMessage(double CpuPercent, int MemoryPercent, long MemoryUsedBytes, long MemoryTotalBytes);
+public sealed record SystemStatsMessage(
+    double CpuPercent,
+    int MemoryPercent,
+    long MemoryUsedBytes,
+    long MemoryTotalBytes,
+    int? GpuPercent = null,
+    int? TempCelsius = null,
+    int? HostLocalMinutes = null);
 
 public sealed record ShortcutDefinition(string Id, string Label, string? Icon = null, string? DisplayMode = null, string? ActionType = null);
 

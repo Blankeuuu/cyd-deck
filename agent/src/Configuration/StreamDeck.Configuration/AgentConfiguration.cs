@@ -14,6 +14,9 @@ public sealed record AgentConfiguration
     [JsonPropertyName("covers")]
     public CoversConfiguration? Covers { get; init; } = new();
 
+    [JsonPropertyName("desktopAppearance")]
+    public DesktopAppearanceConfiguration? DesktopAppearance { get; init; } = new();
+
     [JsonPropertyName("appearance")]
     public AppearanceConfiguration? Appearance { get; init; } = new();
 
@@ -24,6 +27,18 @@ public sealed record AgentConfiguration
     {
         return new AgentConfiguration();
     }
+}
+
+public sealed record DesktopAppearanceConfiguration
+{
+    [JsonPropertyName("theme")]
+    public string Theme { get; init; } = "dark";
+
+    [JsonPropertyName("windowStyle")]
+    public string WindowStyle { get; init; } = "acrylic";
+
+    [JsonPropertyName("accent")]
+    public string Accent { get; init; } = "#0A84FF";
 }
 
 public sealed record ServerConfiguration
@@ -60,6 +75,15 @@ public sealed record AppearanceConfiguration
 
     [JsonPropertyName("buttonStyle")]
     public string ButtonStyle { get; init; } = "rounded";
+
+    [JsonPropertyName("tileColorScheme")]
+    public string TileColorScheme { get; init; } = "control-center";
+
+    [JsonPropertyName("standbyStyle")]
+    public string StandbyStyle { get; init; } = "apple-standby";
+
+    [JsonPropertyName("shortcutsLayout")]
+    public string ShortcutsLayout { get; init; } = "auto";
 
     [JsonPropertyName("pageOrder")]
     public IReadOnlyList<string> PageOrder { get; init; } = ["media", "shortcuts", "pc", "info"];

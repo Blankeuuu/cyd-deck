@@ -1,8 +1,11 @@
 using System.Diagnostics;
+using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Reflection;
+using Microsoft.Win32;
 using StreamDeck.Host;
 using StreamDeck.Configuration;
+using StreamDeck.Media;
 using StreamDeck.Protocol;
 using StreamDeck.Shortcuts;
 using StreamDeck.WindowsAgent.Runtime;
@@ -16,25 +19,29 @@ public sealed class SettingsWindow : Form
     internal const string AppDisplayName = "CYD-DECK";
     private static readonly Color DarkBackground = Color.FromArgb(13, 15, 20);
     private static readonly Color LightBackground = Color.FromArgb(246, 247, 249);
-    private static readonly Color DarkSurface = Color.FromArgb(25, 28, 35);
+    private static readonly Color DarkSurface = Color.FromArgb(22, 24, 29);
     private static readonly Color LightSurface = Color.FromArgb(255, 255, 255);
-    private static readonly Color DarkSurfaceAlt = Color.FromArgb(39, 43, 52);
+    private static readonly Color DarkSurfaceAlt = Color.FromArgb(30, 32, 40);
     private static readonly Color LightSurfaceAlt = Color.FromArgb(236, 238, 242);
-    private static readonly Color DarkBorder = Color.FromArgb(55, 61, 73);
+    private static readonly Color DarkBorder = Color.FromArgb(46, 50, 62);
     private static readonly Color LightBorder = Color.FromArgb(210, 214, 220);
     private static readonly Color DarkTextPrimary = Color.FromArgb(244, 246, 248);
     private static readonly Color LightTextPrimary = Color.FromArgb(29, 32, 37);
     private static readonly Color DarkTextMuted = Color.FromArgb(156, 164, 176);
     private static readonly Color LightTextMuted = Color.FromArgb(93, 101, 112);
     private static readonly Color Accent = Color.FromArgb(82, 153, 224);
-    private static readonly Color Danger = Color.FromArgb(196, 63, 76);
+    private static readonly Color Danger = Color.FromArgb(255, 69, 58);
+    private static readonly Color AppleGreen = Color.FromArgb(48, 209, 88);
+    private static readonly Color AppleAmber = Color.FromArgb(255, 159, 10);
+    private static readonly Color ApplePurple = Color.FromArgb(191, 90, 242);
+    private static readonly Color AppleCyan = Color.FromArgb(100, 210, 255);
     private static readonly Color DeviceDefaultAccent = Color.FromArgb(126, 175, 227);
     private static readonly Color DeviceDefaultBackground = Color.FromArgb(16, 18, 22);
     private static readonly Padding WindowContentPadding = new(34, 30, 34, 30);
-    private const int NavigationWidth = 260;
-    private const int NavigationButtonWidth = 204;
+    private const int NavigationWidth = 252;
+    private const int NavigationButtonWidth = 212;
     private const int NavigationButtonHeight = 42;
-    private const int PageTitleHeight = 72;
+    private const int PageTitleHeight = 68;
     private const int ActionButtonHeight = 36;
     private const int ActionButtonMinimumWidth = 128;
     private const int ActionButtonHorizontalMargin = 10;
@@ -132,7 +139,11 @@ public sealed class SettingsWindow : Form
     private string currentPage = "Overview";
     private bool allowClose;
     private AppearanceState? pendingAppearance;
+    private DesktopAppearanceState? pendingDesktopAppearance;
     private Label? appearanceStatusLabel;
+    private Panel? sidebarConnectionPill;
+    private Label? sidebarConnectionLabel;
+    private Action? refreshOverviewWidgets;
     private bool shortcutsConfigurationLoadFailed;
     private string shortcutImportSignature = string.Empty;
     private int liveRefreshQueued;
@@ -157,14 +168,16 @@ public sealed class SettingsWindow : Form
         configurationStore = configurationOverride ?? AgentConfigurationStoreFactory.CreateForCurrentUser();
         appearanceSaveTimer.Tick += async (_, _) => await FlushAppearanceChangesAsync().ConfigureAwait(true);
         shortcutImportRefreshTimer.Tick += (_, _) => RefreshShortcutImportsIfChanged();
-        var initialAppearance = LoadAppearanceConfiguration();
-        ApplyClientTheme(initialAppearance.Theme, initialAppearance.Accent, initialAppearance.Background);
-        contentPanel = CreateThemedContentPanel(initialAppearance.Theme);
+        var initialDesktopAppearance = LoadDesktopAppearanceConfiguration();
+        var effectiveDesktopTheme = ResolveEffectiveDesktopTheme(initialDesktopAppearance.Theme);
+        ApplyClientTheme(effectiveDesktopTheme, initialDesktopAppearance.Accent, null);
+        contentPanel = CreateThemedContentPanel(effectiveDesktopTheme);
 
         Text = AppDisplayName;
         Icon = shellIcon;
+        DoubleBuffered = true;
         MinimumSize = new Size(MinimumWindowWidth, MinimumWindowHeight);
-        Size = new Size(1040, 720);
+        Size = new Size(1080, 740);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Background;
         ForeColor = TextPrimary;
@@ -239,34 +252,58 @@ public sealed class SettingsWindow : Form
 
     private Control CreateNavigation()
     {
-        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Surface, Padding = new Padding(24, 26, 24, 22) };
+        var panel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Surface,
+            Padding = new Padding(20, 24, 20, 18)
+        };
+        panel.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Border, 1f);
+            e.Graphics.DrawLine(pen, panel.Width - 1, 0, panel.Width - 1, panel.Height);
+        };
+
+        var brand = new Panel { Dock = DockStyle.Top, Height = 64, BackColor = Surface };
         var title = new Label
         {
             Text = AppDisplayName,
             Dock = DockStyle.Top,
-            Height = 34,
-            Font = new Font(Font.FontFamily, 19F, FontStyle.Bold),
+            Height = 32,
+            Font = new Font(Font.FontFamily, 17F, FontStyle.Bold),
             ForeColor = TextPrimary
         };
         var subtitle = new Label
         {
-            Text = "Windows Agent",
+            Text = $"Control Center  •  {DateTime.Now:HH:mm}",
             Dock = DockStyle.Top,
-            Height = 28,
-            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Regular),
+            Height = 24,
+            Font = new Font(Font.FontFamily, 8.75F, FontStyle.Regular),
             ForeColor = TextMuted
         };
-        panel.Controls.Add(subtitle);
-        panel.Controls.Add(title);
+        brand.Controls.Add(subtitle);
+        brand.Controls.Add(title);
 
         var nav = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
-            Padding = new Padding(0, 48, 0, 0),
+            Padding = new Padding(0, 14, 0, 0),
             BackColor = Surface
         };
+
+        var workspaceHeader = new Label
+        {
+            Text = "WORKSPACE",
+            Font = new Font(Font.FontFamily, 7.5F, FontStyle.Bold),
+            ForeColor = TextMuted,
+            Width = NavigationButtonWidth,
+            Height = 20,
+            Margin = new Padding(8, 0, 0, 4),
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+        nav.Controls.Add(workspaceHeader);
 
         foreach (var page in new[] { "Overview", "Shortcuts", "Appearance", "Device" })
         {
@@ -282,7 +319,7 @@ public sealed class SettingsWindow : Form
             ForeColor = TextMuted,
             Width = NavigationButtonWidth,
             Height = 22,
-            Margin = new Padding(12, 14, 0, 4),
+            Margin = new Padding(8, 12, 0, 4),
             TextAlign = ContentAlignment.MiddleLeft
         };
         nav.Controls.Add(sectionLabel);
@@ -294,14 +331,75 @@ public sealed class SettingsWindow : Form
             nav.Controls.Add(button);
         }
 
-        panel.Controls.Clear();
-        var brand = new Panel { Dock = DockStyle.Top, Height = 70, BackColor = Surface };
-        brand.Controls.Add(subtitle);
-        brand.Controls.Add(title);
-        nav.Padding = new Padding(0, 24, 0, 0);
+        sidebarConnectionPill = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 40,
+            BackColor = SurfaceAlt,
+            Padding = new Padding(28, 0, 10, 0),
+            Tag = DeviceColorPreviewTag
+        };
+        sidebarConnectionLabel = new Label
+        {
+            Dock = DockStyle.Fill,
+            Text = FormatSidebarConnectionStatus(state.Snapshot()),
+            Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold),
+            ForeColor = TextPrimary,
+            BackColor = Color.Transparent,
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
+            AccessibleName = "Sidebar connection status"
+        };
+        sidebarConnectionPill.Controls.Add(sidebarConnectionLabel);
+        sidebarConnectionPill.Paint += (_, e) =>
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var snap = state.Snapshot();
+            var isConnected = string.Equals(snap.HostStatus, "connected", StringComparison.OrdinalIgnoreCase);
+            var isPending = string.Equals(snap.HostStatus, "pairing pending", StringComparison.OrdinalIgnoreCase);
+            var dotColor = isConnected ? AppleGreen : (isPending ? AppleAmber : TextMuted);
+            var pillBg = clientLightTheme ? Color.FromArgb(234, 237, 243) : Color.FromArgb(28, 31, 39);
+            var pillBorder = isConnected ? Color.FromArgb(90, AppleGreen) : Border;
+
+            using var path = CreateRoundedRectPath(new Rectangle(0, 0, sidebarConnectionPill.Width - 1, sidebarConnectionPill.Height - 1), 10);
+            using var bgBrush = new SolidBrush(pillBg);
+            using var borderPen = new Pen(pillBorder, 1f);
+            e.Graphics.FillPath(bgBrush, path);
+            e.Graphics.DrawPath(borderPen, path);
+
+            using var glowBrush = new SolidBrush(Color.FromArgb(55, dotColor));
+            using var dotBrush = new SolidBrush(dotColor);
+            e.Graphics.FillEllipse(glowBrush, 9, 13, 14, 14);
+            e.Graphics.FillEllipse(dotBrush, 12, 16, 8, 8);
+        };
+
         panel.Controls.Add(nav);
+        panel.Controls.Add(sidebarConnectionPill);
         panel.Controls.Add(brand);
         return panel;
+    }
+
+    internal static string FormatSidebarConnectionStatus(AgentStatusSnapshot snapshot)
+    {
+        var clock = DateTime.Now.ToString("HH:mm");
+        if (string.Equals(snapshot.HostStatus, "connected", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.Equals(snapshot.RemoteAddress, "USB", StringComparison.OrdinalIgnoreCase))
+            {
+                var ch340 = UsbSerialPortDiscovery.FindConnectedCh340Ports().FirstOrDefault();
+                return !string.IsNullOrWhiteSpace(ch340) ? $"Connected {ch340} • {clock}" : $"Connected USB • {clock}";
+            }
+
+            var host = FormatRemoteHost(snapshot.RemoteAddress);
+            return host != "Unavailable" ? $"Connected {host} • {clock}" : $"Connected Wi-Fi • {clock}";
+        }
+
+        if (string.Equals(snapshot.HostStatus, "pairing pending", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Pairing Pending • {clock}";
+        }
+
+        return $"Listening :{snapshot.HostPort} • {clock}";
     }
 
     private Button CreateNavButton(string page)
@@ -313,15 +411,52 @@ public sealed class SettingsWindow : Form
             Height = NavigationButtonHeight,
             FlatStyle = FlatStyle.Flat,
             TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(16, 0, 0, 0),
-            Margin = new Padding(0, 0, 0, 10),
+            Padding = new Padding(38, 0, 12, 0),
+            Margin = new Padding(0, 0, 0, 6),
             BackColor = Surface,
             ForeColor = TextMuted,
-            Font = new Font(Font.FontFamily, 10F, FontStyle.Regular),
+            Font = new Font(Font.FontFamily, 9.75F, FontStyle.Regular),
             Cursor = Cursors.Hand
         };
         button.FlatAppearance.BorderSize = 0;
         button.Click += (_, _) => ShowPage(page);
+        button.Paint += (_, e) =>
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var selected = string.Equals(currentPage, page, StringComparison.Ordinal);
+            var bg = selected
+                ? (clientLightTheme ? Color.FromArgb(226, 234, 246) : Color.FromArgb(34, 40, 52))
+                : button.BackColor;
+            using var clearBrush = new SolidBrush(Surface);
+            e.Graphics.FillRectangle(clearBrush, button.ClientRectangle);
+
+            var pillRect = new Rectangle(1, 2, button.Width - 3, button.Height - 5);
+            using var pillPath = CreateRoundedRectPath(pillRect, 9);
+            using var pillBrush = new SolidBrush(bg);
+            e.Graphics.FillPath(pillBrush, pillPath);
+
+            if (selected)
+            {
+                using var borderPen = new Pen(Color.FromArgb(110, Accent), 1f);
+                e.Graphics.DrawPath(borderPen, pillPath);
+                using var indicatorBrush = new SolidBrush(Accent);
+                using var indicatorPath = CreateRoundedRectPath(new Rectangle(5, 11, 3, button.Height - 22), 2);
+                e.Graphics.FillPath(indicatorBrush, indicatorPath);
+            }
+
+            var iconColor = selected ? Accent : TextMuted;
+            DrawNavigationVectorIcon(e.Graphics, page, new Rectangle(15, (button.Height - 16) / 2, 16, 16), iconColor);
+
+            var textColor = selected ? TextPrimary : TextMuted;
+            var textRect = new Rectangle(40, 0, button.Width - 48, button.Height);
+            TextRenderer.DrawText(
+                e.Graphics,
+                page,
+                button.Font,
+                textRect,
+                textColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+        };
         return button;
     }
 
@@ -333,10 +468,13 @@ public sealed class SettingsWindow : Form
             var selected = string.Equals(name, page, StringComparison.Ordinal);
             button.BackColor = selected ? SurfaceAlt : Surface;
             button.ForeColor = selected ? TextPrimary : TextMuted;
-            button.Font = new Font(Font.FontFamily, 10F, selected ? FontStyle.Bold : FontStyle.Regular);
+            button.Font = new Font(Font.FontFamily, 9.75F, selected ? FontStyle.Bold : FontStyle.Regular);
             button.FlatAppearance.BorderColor = selected ? Accent : Surface;
-            button.FlatAppearance.BorderSize = selected ? 1 : 0;
+            button.FlatAppearance.BorderSize = 0;
+            button.Invalidate();
         }
+
+        UpdateSidebarConnectionPill();
 
         foreach (Control control in contentPanel.Controls.Cast<Control>().ToArray())
         {
@@ -345,6 +483,7 @@ public sealed class SettingsWindow : Form
 
         contentPanel.Controls.Clear();
         infoValueLabels.Clear();
+        refreshOverviewWidgets = null;
         contentPanel.Controls.Add(page switch
         {
             "Overview" => CreateOverviewPage(),
@@ -359,6 +498,20 @@ public sealed class SettingsWindow : Form
         UpdateShortcutImportRefreshTimer(page);
     }
 
+    private void UpdateSidebarConnectionPill()
+    {
+        if (sidebarConnectionLabel is not null && !sidebarConnectionLabel.IsDisposed)
+        {
+            sidebarConnectionLabel.Text = FormatSidebarConnectionStatus(state.Snapshot());
+            sidebarConnectionLabel.ForeColor = TextPrimary;
+        }
+
+        if (sidebarConnectionPill is not null && !sidebarConnectionPill.IsDisposed)
+        {
+            sidebarConnectionPill.Invalidate();
+        }
+    }
+
     private Control CreateOverviewPage()
     {
         var snapshot = state.Snapshot();
@@ -367,6 +520,17 @@ public sealed class SettingsWindow : Form
         var deviceInfo = snapshot.HostStatus == "connected" ? snapshot.DeviceInfo : null;
 
         AddConnectionSummary(grid, snapshot);
+
+        refreshOverviewWidgets = null;
+        var mediaWidget = CreateAppleMediaControlWidget();
+        mediaWidget.Margin = new Padding(0, 0, 0, 14);
+        grid.Controls.Add(mediaWidget, 0, grid.RowCount++);
+        grid.SetColumnSpan(mediaWidget, 2);
+
+        var systemWidget = CreateAppleSystemMonitorWidget();
+        systemWidget.Margin = new Padding(0, 0, 0, 14);
+        grid.Controls.Add(systemWidget, 0, grid.RowCount++);
+        grid.SetColumnSpan(systemWidget, 2);
 
         var loadResult = LoadShortcutConfigurationState(() => configurationStore.LoadOrDefault());
         var shortcuts = loadResult.Configuration.Shortcuts?.ToList() ?? [];
@@ -956,10 +1120,16 @@ public sealed class SettingsWindow : Form
 
     private Control CreateAppearancePage()
     {
+        var desktopSettings = pendingDesktopAppearance ?? LoadDesktopAppearanceConfiguration();
+        pendingDesktopAppearance = desktopSettings;
         var settings = pendingAppearance ?? LoadAppearanceConfiguration();
         pendingAppearance = settings;
-        ApplyClientTheme(settings.Theme, settings.Accent, settings.Background);
-        contentPanel.BackColor = ResolveClientBackground(settings.Theme, settings.Background);
+
+        var effectiveDesktopTheme = ResolveEffectiveDesktopTheme(desktopSettings.Theme);
+        var effectiveDesktopBg = ResolveDesktopWindowBackground(desktopSettings, effectiveDesktopTheme);
+        ApplyClientTheme(effectiveDesktopTheme, desktopSettings.Accent, effectiveDesktopBg);
+        contentPanel.BackColor = ResolveClientBackground(effectiveDesktopTheme, effectiveDesktopBg);
+
         var panel = CreatePage("Appearance");
         var snapshot = state.Snapshot();
         var isConnected = string.Equals(snapshot.HostStatus, "connected", StringComparison.OrdinalIgnoreCase);
@@ -969,51 +1139,90 @@ public sealed class SettingsWindow : Form
             Dock = DockStyle.Top,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            RowCount = 6,
+            RowCount = 7,
             ColumnCount = 1,
             BackColor = Background
         };
         contentHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        for (var row = 0; row < 6; row++) contentHost.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (var row = 0; row < 7; row++) contentHost.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         var appearanceNote = new Label
         {
             Dock = DockStyle.Top,
             AutoSize = true,
             ForeColor = TextMuted,
-            Text = "Customize CYD hardware display (ST7789 320×240) and Windows Agent theme colors. Changes save locally and sync to CYD.",
+            Text = "Windows Agent (Desktop UI) and CYD Display (ESP32 Hardware UI) appearance settings are completely independent. Desktop changes apply locally to this window; CYD Display settings sync directly to the hardware screen.",
             Padding = new Padding(0, 0, 0, 10),
             Font = new Font(Font.FontFamily, 9F, FontStyle.Regular)
         };
 
         var (cydPreviewCard, updateCydPreview) = CreateAppearanceCydPreviewPanel(settings);
 
-        var themeForm = CreateAppearanceSectionPanel("THEME & COLOR SCHEME");
-        AddComboRow(themeForm, "Theme", ["Dark", "Light"], settings.Theme, value =>
+        var desktopForm = CreateAppearanceSectionPanel("WINDOWS AGENT APPEARANCE (DESKTOP UI)");
+        AddComboRow(desktopForm, "Application theme", ["Dark", "Light", "System"], FormatChoiceDisplay(desktopSettings.Theme, "Dark"), value =>
+        {
+            desktopSettings.Theme = value.ToLowerInvariant();
+            var resolvedTheme = ResolveEffectiveDesktopTheme(desktopSettings.Theme);
+            var resolvedBg = ResolveDesktopWindowBackground(desktopSettings, resolvedTheme);
+            ApplyClientTheme(resolvedTheme, desktopSettings.Accent, resolvedBg);
+        });
+        AddComboRow(desktopForm, "Window background style", ["Acrylic", "Minimal", "Gradient"], FormatChoiceDisplay(desktopSettings.WindowStyle, "Acrylic"), value =>
+        {
+            desktopSettings.WindowStyle = value.ToLowerInvariant();
+            var resolvedTheme = ResolveEffectiveDesktopTheme(desktopSettings.Theme);
+            var resolvedBg = ResolveDesktopWindowBackground(desktopSettings, resolvedTheme);
+            ApplyClientTheme(resolvedTheme, desktopSettings.Accent, resolvedBg);
+        });
+        AddColorRow(desktopForm, "UI accent color", desktopSettings.Accent, value =>
+        {
+            desktopSettings.Accent = value;
+            var resolvedTheme = ResolveEffectiveDesktopTheme(desktopSettings.Theme);
+            var resolvedBg = ResolveDesktopWindowBackground(desktopSettings, resolvedTheme);
+            ApplyClientTheme(resolvedTheme, desktopSettings.Accent, resolvedBg);
+        });
+
+        var cydThemeForm = CreateAppearanceSectionPanel("CYD DISPLAY APPEARANCE (HARDWARE UI — 320×240)");
+        AddComboRow(cydThemeForm, "CYD display theme", ["Dark", "Light"], FormatChoiceDisplay(settings.Theme, "Dark"), value =>
         {
             settings.Theme = value.ToLowerInvariant();
-            ApplyClientTheme(settings.Theme, settings.Accent, settings.Background);
+            if (string.Equals(settings.Theme, "dark", StringComparison.OrdinalIgnoreCase) && string.Equals(settings.Background, "#F3F5F7", StringComparison.OrdinalIgnoreCase))
+            {
+                settings.Background = "#101216";
+            }
             updateCydPreview();
         });
-        AddColorRow(themeForm, "Accent color", settings.Accent, value =>
+        AddComboRow(cydThemeForm, "Tile color scheme", ["control-center", "accent-tint", "oled-contrast"], settings.TileColorScheme, value =>
+        {
+            settings.TileColorScheme = value.ToLowerInvariant();
+            updateCydPreview();
+        });
+        AddColorRow(cydThemeForm, "Device accent color", settings.Accent, value =>
         {
             settings.Accent = value;
-            ApplyClientTheme(settings.Theme, settings.Accent, settings.Background);
             updateCydPreview();
         });
-        AddColorRow(themeForm, "Background color", settings.Background, value =>
+        AddColorRow(cydThemeForm, "Display background (OLED / Tint)", settings.Background, value =>
         {
             settings.Background = value;
-            ApplyClientTheme(settings.Theme, settings.Accent, settings.Background);
             updateCydPreview();
         });
-        AddComboRow(themeForm, "Button style", ["Rounded", "Flat", "Pill"], settings.ButtonStyle, value =>
+        AddComboRow(cydThemeForm, "Tile corner style", ["Rounded", "Flat", "Pill"], FormatChoiceDisplay(settings.ButtonStyle, "Rounded"), value =>
         {
             settings.ButtonStyle = value.ToLowerInvariant();
             updateCydPreview();
         });
+        AddComboRow(cydThemeForm, "Shortcuts layout (tile size)", ["auto", "hero-1", "split-2", "quad-4", "grid-6"], settings.ShortcutsLayout, value =>
+        {
+            settings.ShortcutsLayout = value.ToLowerInvariant();
+            updateCydPreview();
+        });
+        AddComboRow(cydThemeForm, "StandBy / Clock style", ["apple-standby", "watchos-modular", "minimal-oled"], settings.StandbyStyle, value =>
+        {
+            settings.StandbyStyle = value.ToLowerInvariant();
+            updateCydPreview();
+        });
 
-        var displayForm = CreateAppearanceSectionPanel("DISPLAY & BACKLIGHT");
+        var displayForm = CreateAppearanceSectionPanel("CYD BACKLIGHT & STANDBY POWER");
         AddSliderRow(displayForm, "Brightness", 10, 100, settings.Brightness, "%", value =>
         {
             settings.Brightness = value;
@@ -1040,7 +1249,7 @@ public sealed class SettingsWindow : Form
             updateCydPreview();
         });
 
-        var pagesForm = CreateAppearanceSectionPanel("PAGE ORDER & VISIBILITY");
+        var pagesForm = CreateAppearanceSectionPanel("CYD PAGE ORDER & VISIBILITY");
         AddPageListRow(pagesForm, "Page order / visibility", settings, updateCydPreview);
 
         appearanceStatusLabel = new Label
@@ -1056,7 +1265,7 @@ public sealed class SettingsWindow : Form
         var actionsBar = (FlowLayoutPanel)CreateActionsBar(
             ("Restore defaults", () =>
             {
-                var result = MessageBox.Show(this, "Restore all appearance settings (theme, colors, display timeouts, page order) to default values?", "Restore appearance defaults", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                var result = MessageBox.Show(this, "Restore both Windows Agent and CYD Display appearance settings to Apple HIG defaults?", "Restore appearance defaults", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (result == DialogResult.Yes)
                 {
                     RestoreDefaultAppearance();
@@ -1071,14 +1280,21 @@ public sealed class SettingsWindow : Form
 
         contentHost.Controls.Add(appearanceNote, 0, 0);
         contentHost.Controls.Add(cydPreviewCard, 0, 1);
-        contentHost.Controls.Add(themeForm, 0, 2);
-        contentHost.Controls.Add(displayForm, 0, 3);
-        contentHost.Controls.Add(pagesForm, 0, 4);
-        contentHost.Controls.Add(appearanceStatusLabel, 0, 5);
+        contentHost.Controls.Add(desktopForm, 0, 2);
+        contentHost.Controls.Add(cydThemeForm, 0, 3);
+        contentHost.Controls.Add(displayForm, 0, 4);
+        contentHost.Controls.Add(pagesForm, 0, 5);
+        contentHost.Controls.Add(appearanceStatusLabel, 0, 6);
 
         AddPageBodyControl(panel, contentHost);
         AddPageFooter(panel, actionsBar);
         return panel;
+    }
+
+    private static string FormatChoiceDisplay(string? raw, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return fallback;
+        return char.ToUpperInvariant(raw[0]) + raw[1..].ToLowerInvariant();
     }
 
     private TableLayoutPanel CreateAppearanceSectionPanel(string sectionTitle)
@@ -1397,19 +1613,19 @@ public sealed class SettingsWindow : Form
         var card = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 172,
+            Height = 186,
             BackColor = Background,
             Padding = new Padding(0, 0, 0, 10),
             ColumnCount = 1,
             RowCount = 3
         };
         card.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-        card.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
+        card.RowStyles.Add(new RowStyle(SizeType.Absolute, 126));
         card.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
 
         var headerLabel = new Label
         {
-            Text = "CYD DISPLAY PREVIEW (320×240 ST7789 SCREEN SIMULATION)",
+            Text = "CYD DISPLAY PREVIEW (320×240 ST7789 HARDWARE WYSIWYG)",
             ForeColor = Accent,
             Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold),
             Dock = DockStyle.Fill,
@@ -1420,8 +1636,8 @@ public sealed class SettingsWindow : Form
         var bezel = new Panel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(20, 22, 28),
-            Padding = new Padding(3),
+            BackColor = Color.FromArgb(18, 20, 26),
+            Padding = new Padding(6, 4, 6, 4),
             BorderStyle = BorderStyle.FixedSingle
         };
 
@@ -1440,7 +1656,7 @@ public sealed class SettingsWindow : Form
         {
             Dock = DockStyle.Fill,
             Font = new Font(Font.FontFamily, 7.5F, FontStyle.Regular),
-            Text = "CYD-DECK  •  Shortcuts (Page 1)  •  Wi-Fi OK",
+            Text = "CYD-DECK  •  Control Center Grid  •  ST7789 320×240",
             TextAlign = ContentAlignment.MiddleLeft
         };
         displayHost.Controls.Add(topBar, 0, 0);
@@ -1466,9 +1682,9 @@ public sealed class SettingsWindow : Form
             var btn = new Button
             {
                 Dock = DockStyle.Fill,
-                Margin = new Padding(2),
+                Margin = new Padding(3),
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font(Font.FontFamily, 8F, FontStyle.Regular),
+                Font = new Font(Font.FontFamily, 8F, FontStyle.Bold),
                 Text = sampleLabels[i],
                 TextAlign = ContentAlignment.MiddleCenter,
                 Enabled = true,
@@ -1485,7 +1701,7 @@ public sealed class SettingsWindow : Form
         {
             Dock = DockStyle.Fill,
             Font = new Font(Font.FontFamily, 7.5F, FontStyle.Regular),
-            TextAlign = ContentAlignment.MiddleLeft
+            TextAlign = ContentAlignment.MiddleCenter
         };
         displayHost.Controls.Add(bottomBar, 0, 2);
 
@@ -1504,11 +1720,11 @@ public sealed class SettingsWindow : Form
         void UpdatePreview()
         {
             var isLight = string.Equals(settings.Theme, "light", StringComparison.OrdinalIgnoreCase);
-            var screenBg = ResolveClientBackground(settings.Theme, settings.Background);
+            var screenBg = ResolveCydPreviewBackground(settings.Theme, settings.Background);
             var accentColor = ParseHexColor(settings.Accent, Accent);
-            var textColor = isLight ? Color.FromArgb(29, 32, 37) : Color.FromArgb(226, 232, 240);
-            var textMutedColor = isLight ? Color.FromArgb(100, 100, 110) : Color.FromArgb(140, 145, 155);
-            var btnBg = isLight ? Color.FromArgb(235, 237, 242) : Color.FromArgb(28, 32, 42);
+            var textColor = isLight ? Color.FromArgb(28, 30, 36) : Color.FromArgb(245, 247, 250);
+            var textMutedColor = isLight ? Color.FromArgb(100, 104, 114) : Color.FromArgb(148, 154, 166);
+            var btnBg = ResolveCydTileBackground(settings.Theme, settings.TileColorScheme, accentColor);
 
             displayHost.BackColor = screenBg;
             grid.BackColor = screenBg;
@@ -1516,24 +1732,57 @@ public sealed class SettingsWindow : Form
             topBar.ForeColor = textMutedColor;
             bottomBar.BackColor = screenBg;
             bottomBar.ForeColor = textMutedColor;
-            bottomBar.Text = $"Theme: {settings.Theme.ToUpperInvariant()}  •  Style: {settings.ButtonStyle.ToUpperInvariant()}  •  Brightness: {settings.Brightness}%";
+            bottomBar.Text = $"● ○ ○ ○   •   {settings.TileColorScheme.ToUpperInvariant()}   •   {settings.StandbyStyle.ToUpperInvariant()}   •   {settings.Brightness}%";
 
             for (var i = 0; i < sampleButtons.Count; i++)
             {
                 var btn = sampleButtons[i];
                 btn.BackColor = btnBg;
                 btn.ForeColor = textColor;
-                btn.FlatAppearance.BorderColor = (i == 0) ? accentColor : (isLight ? Color.FromArgb(200, 205, 215) : Color.FromArgb(50, 55, 68));
+                btn.FlatAppearance.BorderColor = (i == 0) ? accentColor : (isLight ? Color.FromArgb(205, 210, 220) : Color.FromArgb(46, 50, 60));
                 btn.FlatAppearance.BorderSize = string.Equals(settings.ButtonStyle, "flat", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
             }
 
-            infoLabel.Text = $"CYD Display: ST7789 320×240 • Accent: {settings.Accent.ToUpperInvariant()} • Background: {settings.Background.ToUpperInvariant()} • Dim: {FormatAppearanceTimeout(settings.DimAfterSec)}";
+            infoLabel.Text = $"CYD Hardware UI: 320×240 • Scheme: {settings.TileColorScheme} • Clock: {settings.StandbyStyle} • Dim: {FormatAppearanceTimeout(settings.DimAfterSec)}";
         }
 
         MarkDeviceColorPreview(displayHost);
         foreach (var child in FindControls<Control>(displayHost)) MarkDeviceColorPreview(child);
         UpdatePreview();
         return (card, UpdatePreview);
+    }
+
+    private static Color ResolveCydPreviewBackground(string? theme, string? hexBg)
+    {
+        var isLight = string.Equals(theme, "light", StringComparison.OrdinalIgnoreCase);
+        var raw = ParseHexColor(hexBg ?? string.Empty, isLight ? Color.FromArgb(243, 245, 247) : Color.FromArgb(16, 18, 22));
+        if (!isLight && raw.GetBrightness() > 0.35f)
+        {
+            return Color.FromArgb(
+                Math.Clamp((int)(raw.R * 0.22), 11, 42),
+                Math.Clamp((int)(raw.G * 0.22), 13, 44),
+                Math.Clamp((int)(raw.B * 0.25), 18, 52));
+        }
+
+        return raw;
+    }
+
+    private static Color ResolveCydTileBackground(string? theme, string? scheme, Color accent)
+    {
+        if (string.Equals(theme, "light", StringComparison.OrdinalIgnoreCase))
+        {
+            return Color.FromArgb(255, 255, 255);
+        }
+
+        return (scheme?.ToLowerInvariant()) switch
+        {
+            "accent-tint" => Color.FromArgb(
+                Math.Clamp(22 + accent.R / 7, 22, 58),
+                Math.Clamp(24 + accent.G / 7, 24, 60),
+                Math.Clamp(30 + accent.B / 7, 30, 68)),
+            "oled-contrast" => Color.FromArgb(20, 20, 24),
+            _ => Color.FromArgb(28, 28, 30)
+        };
     }
 
     internal static string FormatAppearanceTimeout(int seconds)
@@ -1571,9 +1820,13 @@ public sealed class SettingsWindow : Form
 
     private void RestoreDefaultAppearance()
     {
+        pendingDesktopAppearance = DesktopAppearanceState.Default;
         pendingAppearance = AppearanceState.Default;
+        SaveDesktopAppearanceConfiguration(pendingDesktopAppearance);
         SaveAppearanceConfiguration(pendingAppearance);
-        ApplyClientTheme(pendingAppearance.Theme, pendingAppearance.Accent, pendingAppearance.Background);
+        var resolvedTheme = ResolveEffectiveDesktopTheme(pendingDesktopAppearance.Theme);
+        var resolvedBg = ResolveDesktopWindowBackground(pendingDesktopAppearance, resolvedTheme);
+        ApplyClientTheme(resolvedTheme, pendingDesktopAppearance.Accent, resolvedBg);
         QueueAppearanceSave();
         ShowPage("Appearance");
     }
@@ -3147,15 +3400,24 @@ public sealed class SettingsWindow : Form
     private async Task FlushAppearanceChangesAsync()
     {
         appearanceSaveTimer.Stop();
+        var desktopSettings = pendingDesktopAppearance;
         var settings = pendingAppearance;
-        if (settings is null)
+        if (settings is null && desktopSettings is null)
         {
             return;
         }
 
         try
         {
-            SaveAppearanceConfiguration(settings.EnsureForcedPagesVisible());
+            if (desktopSettings is not null)
+            {
+                SaveDesktopAppearanceConfiguration(desktopSettings);
+            }
+
+            if (settings is not null)
+            {
+                SaveAppearanceConfiguration(settings.EnsureForcedPagesVisible());
+            }
         }
         catch (Exception exception)
         {
@@ -3169,14 +3431,80 @@ public sealed class SettingsWindow : Form
             return;
         }
 
+        if (settings is null)
+        {
+            return;
+        }
+
         var applied = await TryApplyAppearanceAsync(settings.EnsureForcedPagesVisible()).ConfigureAwait(true);
         if (appearanceStatusLabel is not null)
         {
             appearanceStatusLabel.ForeColor = applied ? TextMuted : Color.Khaki;
             appearanceStatusLabel.Text = applied
-                ? "✓ Settings saved and synced with connected device."
-                : "ℹ Settings saved locally; will sync when CYD reconnects.";
+                ? "✓ Desktop UI saved locally; CYD Display settings synced with connected device."
+                : "ℹ Desktop UI saved locally; CYD Display settings will sync when CYD reconnects.";
         }
+    }
+
+    private DesktopAppearanceState LoadDesktopAppearanceConfiguration()
+    {
+        var defaults = DesktopAppearanceState.Default;
+        try
+        {
+            return DesktopAppearanceState.FromConfiguration(LoadConfiguration().DesktopAppearance ?? new DesktopAppearanceConfiguration());
+        }
+        catch (Exception exception)
+        {
+            AgentDiagnosticLog.Write($"Desktop appearance configuration load failed: {exception.GetType().Name}");
+            return defaults;
+        }
+    }
+
+    private void SaveDesktopAppearanceConfiguration(DesktopAppearanceState settings)
+    {
+        configurationStore.Save(LoadConfiguration() with { DesktopAppearance = settings.ToConfiguration() });
+        AgentDiagnosticLog.Write("Windows Agent desktop appearance settings updated");
+    }
+
+    internal static string ResolveEffectiveDesktopTheme(string? configuredTheme)
+    {
+        if (string.Equals(configuredTheme, "light", StringComparison.OrdinalIgnoreCase))
+        {
+            return "light";
+        }
+
+        if (string.Equals(configuredTheme, "system", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+                if (key?.GetValue("AppsUseLightTheme") is int useLight && useLight == 1)
+                {
+                    return "light";
+                }
+            }
+            catch
+            {
+                // Fallback to dark mode if registry read is unavailable.
+            }
+        }
+
+        return "dark";
+    }
+
+    private static string? ResolveDesktopWindowBackground(DesktopAppearanceState settings, string effectiveTheme)
+    {
+        if (string.Equals(effectiveTheme, "light", StringComparison.OrdinalIgnoreCase))
+        {
+            return "#F6F7F9";
+        }
+
+        return (settings.WindowStyle?.ToLowerInvariant()) switch
+        {
+            "minimal" => "#0B0C10",
+            "gradient" => "#12151E",
+            _ => "#0D0F14"
+        };
     }
 
     private AppearanceState LoadAppearanceConfiguration()
@@ -3196,7 +3524,7 @@ public sealed class SettingsWindow : Form
     private void SaveAppearanceConfiguration(AppearanceState settings)
     {
         configurationStore.Save(LoadConfiguration() with { Appearance = settings.ToConfiguration() });
-        AgentDiagnosticLog.Write("Appearance settings updated");
+        AgentDiagnosticLog.Write("CYD display appearance settings updated");
     }
 
     private async Task<bool> TryApplyAppearanceAsync(AppearanceState settings)
@@ -3240,22 +3568,36 @@ public sealed class SettingsWindow : Form
 
     private Control CreateCydHardwarePreviewPanel(List<ShortcutDefinition> shortcuts, ListView? list = null)
     {
+        var isDeckBuilder = list != null;
+        var currentAppearance = pendingAppearance ?? LoadAppearanceConfiguration();
         var card = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 142,
+            Height = isDeckBuilder ? 218 : 162,
             BackColor = Background,
             Padding = new Padding(0, 0, 0, 10),
-            ColumnCount = 1,
+            ColumnCount = isDeckBuilder ? 2 : 1,
             RowCount = 3
         };
+        if (isDeckBuilder)
+        {
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58F));
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42F));
+        }
+        else
+        {
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        }
+
         card.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-        card.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
+        card.RowStyles.Add(new RowStyle(SizeType.Absolute, isDeckBuilder ? 158 : 102));
         card.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
 
         var headerLabel = new Label
         {
-            Text = "CYD SCREEN PREVIEW (3×2 KEY GRID — FIRST 6 SHORTCUTS)",
+            Text = isDeckBuilder
+                ? "CYD HARDWARE DECK PREVIEW (320×240 WYSIWYG)"
+                : "CYD HARDWARE SHORTCUT GRID (CONTROL CENTER)",
             ForeColor = Accent,
             Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold),
             Dock = DockStyle.Fill,
@@ -3263,13 +3605,54 @@ public sealed class SettingsWindow : Form
         };
         card.Controls.Add(headerLabel, 0, 0);
 
+        if (isDeckBuilder)
+        {
+            var inspectorHeader = new Label
+            {
+                Text = "TILE INSPECTOR & SHORTCUTS LAYOUT",
+                ForeColor = Accent,
+                Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold),
+                Dock = DockStyle.Fill,
+                Padding = new Padding(10, 0, 0, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            card.Controls.Add(inspectorHeader, 1, 0);
+        }
+
+        var bezelOuter = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(18, 20, 26),
+            Padding = new Padding(6, 22, 6, 5),
+            Margin = new Padding(0, 0, isDeckBuilder ? 8 : 0, 0)
+        };
+        bezelOuter.Paint += (_, e) =>
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var rect = new Rectangle(0, 0, bezelOuter.Width - 1, bezelOuter.Height - 1);
+            using var path = CreateRoundedRectPath(rect, 12);
+            using var fill = new SolidBrush(Color.FromArgb(14, 16, 21));
+            using var borderPen = new Pen(Color.FromArgb(52, 58, 72), 1.2f);
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(borderPen, path);
+
+            // Simulated CYD top bar with Status Bar Clock on the right
+            using var barFont = new Font(Font.FontFamily, 7F, FontStyle.Bold);
+            using var mutedBrush = new SolidBrush(Color.FromArgb(148, 156, 170));
+            using var accentBrush = new SolidBrush(Accent);
+            e.Graphics.DrawString("Media   Skróty   PC   Info", barFont, mutedBrush, new PointF(10, 5));
+            var clockStr = DateTime.Now.ToString("HH:mm");
+            var clockSize = e.Graphics.MeasureString(clockStr, barFont);
+            e.Graphics.DrawString(clockStr, barFont, accentBrush, new PointF(bezelOuter.Width - clockSize.Width - 10, 5));
+        };
+
         var grid = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
             RowCount = 2,
-            BackColor = Surface,
-            Padding = new Padding(4)
+            BackColor = Color.FromArgb(14, 16, 21),
+            Padding = new Padding(3)
         };
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
@@ -3277,26 +3660,43 @@ public sealed class SettingsWindow : Form
         grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
         grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
 
+        var slotButtons = new List<Button>();
+        Action<int>? updateInspector = null;
+
         for (var i = 0; i < 6; i++)
         {
             var slotIndex = i;
             var isAssigned = slotIndex < shortcuts.Count;
             var shortcut = isAssigned ? shortcuts[slotIndex] : null;
+            var cleanTitle = isAssigned ? shortcut!.Name : "Empty";
+            var iconName = isAssigned ? shortcut!.Icon : "empty";
+            var actionType = isAssigned ? shortcut!.Action.Type : string.Empty;
+
             var slotBtn = new Button
             {
                 Dock = DockStyle.Fill,
-                Margin = new Padding(3),
+                Margin = new Padding(4),
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font(Font.FontFamily, 8.5F, FontStyle.Regular),
-                BackColor = isAssigned ? Color.FromArgb(28, 32, 40) : Color.FromArgb(22, 24, 29),
+                Font = new Font(Font.FontFamily, 8.5F, isAssigned ? FontStyle.Bold : FontStyle.Regular),
+                BackColor = isAssigned ? Color.FromArgb(28, 30, 36) : Color.FromArgb(20, 22, 27),
                 ForeColor = isAssigned ? TextPrimary : TextMuted,
-                Text = isAssigned ? $"#{slotIndex + 1}: {shortcut!.Name}\n[{shortcut.Icon}]" : $"#{slotIndex + 1}: [Empty Slot]",
-                TextAlign = ContentAlignment.MiddleCenter,
+                Text = cleanTitle,
+                TextAlign = ContentAlignment.BottomCenter,
+                Padding = new Padding(2, 0, 2, 5),
                 Cursor = Cursors.Hand,
                 AccessibleName = list != null ? $"CYD hardware slot {slotIndex + 1}" : $"CYD overview slot {slotIndex + 1}"
             };
             slotBtn.FlatAppearance.BorderSize = 1;
-            slotBtn.FlatAppearance.BorderColor = isAssigned ? Accent : Border;
+            slotBtn.FlatAppearance.BorderColor = isAssigned ? Color.FromArgb(52, 58, 70) : Color.FromArgb(34, 38, 46);
+            slotBtn.Paint += (_, e) =>
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                var iconSize = Math.Clamp(Math.Min(slotBtn.Width, slotBtn.Height) / 3, 14, 24);
+                var iconY = Math.Max(5, (slotBtn.Height - 20 - iconSize) / 2);
+                var iconRect = new Rectangle((slotBtn.Width - iconSize) / 2, iconY, iconSize, iconSize);
+                var iconColor = isAssigned ? Accent : TextMuted;
+                DrawShortcutVectorIcon(e.Graphics, iconName, actionType, iconRect, iconColor);
+            };
             slotBtn.Click += (_, _) =>
             {
                 if (list != null)
@@ -3307,6 +3707,7 @@ public sealed class SettingsWindow : Form
                         list.Items[slotIndex].Selected = true;
                         list.Items[slotIndex].EnsureVisible();
                     }
+                    updateInspector?.Invoke(slotIndex);
                 }
                 else
                 {
@@ -3317,21 +3718,681 @@ public sealed class SettingsWindow : Form
                     }
                 }
             };
-            grid.Controls.Add(slotBtn, slotIndex % 3, slotIndex / 3);
+            slotButtons.Add(slotBtn);
         }
-        card.Controls.Add(grid, 0, 1);
+
+        void RebuildPreviewGridLayout(string layoutMode)
+        {
+            var effective = (layoutMode ?? "auto").Trim().ToLowerInvariant();
+            if (effective == "auto")
+            {
+                effective = shortcuts.Count switch
+                {
+                    1 => "hero-1",
+                    2 => "split-2",
+                    3 or 4 => "quad-4",
+                    _ => "grid-6"
+                };
+            }
+
+            grid.SuspendLayout();
+            grid.Controls.Clear();
+            grid.ColumnStyles.Clear();
+            grid.RowStyles.Clear();
+
+            if (effective == "hero-1")
+            {
+                grid.ColumnCount = 1;
+                grid.RowCount = 1;
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                slotButtons[0].Visible = true;
+                grid.Controls.Add(slotButtons[0], 0, 0);
+                for (var k = 1; k < 6; k++) slotButtons[k].Visible = false;
+            }
+            else if (effective == "split-2")
+            {
+                grid.ColumnCount = 2;
+                grid.RowCount = 1;
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                for (var k = 0; k < 2; k++)
+                {
+                    slotButtons[k].Visible = true;
+                    grid.Controls.Add(slotButtons[k], k, 0);
+                }
+                for (var k = 2; k < 6; k++) slotButtons[k].Visible = false;
+            }
+            else if (effective == "quad-4")
+            {
+                grid.ColumnCount = 2;
+                grid.RowCount = 2;
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+                for (var k = 0; k < 4; k++)
+                {
+                    slotButtons[k].Visible = true;
+                    grid.Controls.Add(slotButtons[k], k % 2, k / 2);
+                }
+                for (var k = 4; k < 6; k++) slotButtons[k].Visible = false;
+            }
+            else
+            {
+                grid.ColumnCount = 3;
+                grid.RowCount = 2;
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.34F));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+                for (var k = 0; k < 6; k++)
+                {
+                    slotButtons[k].Visible = true;
+                    grid.Controls.Add(slotButtons[k], k % 3, k / 3);
+                }
+            }
+
+            grid.ResumeLayout(true);
+        }
+
+        RebuildPreviewGridLayout(currentAppearance.ShortcutsLayout);
+        bezelOuter.Controls.Add(grid);
+        card.Controls.Add(bezelOuter, 0, 1);
 
         var infoLabel = new Label
         {
-            Text = $"Active on CYD: {Math.Min(shortcuts.Count, 6)}/6 slots assigned • {shortcuts.Count} total shortcuts saved on PC",
+            Text = $"Active on CYD: {Math.Min(shortcuts.Count, 6)}/6 tiles assigned • Layout: {currentAppearance.ShortcutsLayout} • {shortcuts.Count} saved on PC",
             ForeColor = TextMuted,
             Font = new Font(Font.FontFamily, 8.5F, FontStyle.Regular),
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft
         };
+
+        if (isDeckBuilder && list != null)
+        {
+            var inspectorCard = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Surface,
+                Padding = new Padding(12, 8, 12, 8),
+                Margin = new Padding(4, 0, 0, 0)
+            };
+            inspectorCard.Paint += (_, e) =>
+            {
+                using var pen = new Pen(Border, 1);
+                e.Graphics.DrawRectangle(pen, 0, 0, inspectorCard.Width - 1, inspectorCard.Height - 1);
+            };
+
+            var inspectorTitle = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 20,
+                ForeColor = TextPrimary,
+                Font = new Font(Font.FontFamily, 9.5F, FontStyle.Bold),
+                Text = "Select a tile to inspect"
+            };
+            var inspectorSlotMeta = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 18,
+                ForeColor = Accent,
+                Font = new Font(Font.FontFamily, 8F, FontStyle.Bold),
+                Text = "Slot —"
+            };
+            var inspectorActionLine = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 18,
+                ForeColor = TextMuted,
+                Font = new Font(Font.FontFamily, 8.25F, FontStyle.Regular),
+                Text = "Action: —"
+            };
+            var inspectorTargetLine = new Label
+            {
+                Dock = DockStyle.Fill,
+                ForeColor = TextMuted,
+                Font = new Font(Font.FontFamily, 8F, FontStyle.Regular),
+                Text = "Click any tile on the CYD preview or row below to view its hotkey, executable path, or script parameters."
+            };
+
+            var inspectorActions = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 30,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                BackColor = Surface
+            };
+            var quickEditBtn = new Button
+            {
+                Text = "Edit Tile…",
+                Width = 82,
+                Height = 26,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = SurfaceAlt,
+                ForeColor = TextPrimary,
+                Font = new Font(Font.FontFamily, 8F, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 2, 6, 0)
+            };
+            quickEditBtn.FlatAppearance.BorderSize = 1;
+            quickEditBtn.FlatAppearance.BorderColor = Accent;
+            quickEditBtn.Click += async (_, _) => await EditShortcutAsync(list, shortcuts).ConfigureAwait(true);
+
+            var quickTestBtn = new Button
+            {
+                Text = "Test",
+                Width = 54,
+                Height = 26,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = SurfaceAlt,
+                ForeColor = TextPrimary,
+                Font = new Font(Font.FontFamily, 8F, FontStyle.Regular),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 2, 8, 0)
+            };
+            quickTestBtn.FlatAppearance.BorderSize = 1;
+            quickTestBtn.FlatAppearance.BorderColor = Border;
+            quickTestBtn.Click += async (_, _) => await TestSelectedShortcutAsync(list, shortcuts).ConfigureAwait(true);
+
+            var layoutCombo = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 88,
+                BackColor = SurfaceAlt,
+                ForeColor = TextPrimary,
+                Font = new Font(Font.FontFamily, 8F, FontStyle.Regular),
+                Margin = new Padding(0, 3, 0, 0),
+                AccessibleName = "Shortcuts layout preset"
+            };
+            string[] layoutPresets = ["auto", "hero-1", "split-2", "quad-4", "grid-6"];
+            layoutCombo.Items.AddRange(layoutPresets.Cast<object>().ToArray());
+            layoutCombo.SelectedItem = layoutPresets.FirstOrDefault(p => string.Equals(p, currentAppearance.ShortcutsLayout, StringComparison.OrdinalIgnoreCase)) ?? "auto";
+            layoutCombo.SelectedIndexChanged += (_, _) =>
+            {
+                if (layoutCombo.SelectedItem is string mode)
+                {
+                    pendingAppearance ??= LoadAppearanceConfiguration();
+                    pendingAppearance.ShortcutsLayout = mode;
+                    RebuildPreviewGridLayout(mode);
+                    infoLabel.Text = $"Active on CYD: {Math.Min(shortcuts.Count, 6)}/6 tiles assigned • Layout: {mode} • {shortcuts.Count} saved on PC";
+                    QueueAppearanceSave();
+                }
+            };
+
+            inspectorActions.Controls.Add(quickEditBtn);
+            inspectorActions.Controls.Add(quickTestBtn);
+            inspectorActions.Controls.Add(layoutCombo);
+
+            inspectorCard.Controls.Add(inspectorTargetLine);
+            inspectorCard.Controls.Add(inspectorActionLine);
+            inspectorCard.Controls.Add(inspectorSlotMeta);
+            inspectorCard.Controls.Add(inspectorTitle);
+            inspectorCard.Controls.Add(inspectorActions);
+
+            updateInspector = selectedIndex =>
+            {
+                for (var b = 0; b < slotButtons.Count; b++)
+                {
+                    var isSel = b == selectedIndex;
+                    var hasItem = b < shortcuts.Count;
+                    slotButtons[b].FlatAppearance.BorderColor = isSel
+                        ? Accent
+                        : (hasItem ? Color.FromArgb(52, 58, 70) : Color.FromArgb(34, 38, 46));
+                }
+
+                if (selectedIndex >= 0 && selectedIndex < shortcuts.Count)
+                {
+                    var item = shortcuts[selectedIndex];
+                    var target = item.Action.Url
+                        ?? item.Action.ExecutablePath
+                        ?? item.Action.ScriptPath
+                        ?? item.Action.AdapterKey
+                        ?? (item.Action.Keys.Count > 0 ? string.Join(" + ", item.Action.Keys) : "—");
+                    var slotBadge = selectedIndex < 6 ? $"CYD Tile #{selectedIndex + 1}" : $"Catalog #{selectedIndex + 1} (PC)";
+                    inspectorTitle.Text = item.Name;
+                    inspectorSlotMeta.Text = $"{slotBadge}  •  ID: {item.Id}  •  Icon: {item.Icon}";
+                    inspectorActionLine.Text = $"Type: {FormatActionTypeName(item.Action.Type)}";
+                    inspectorTargetLine.Text = $"Binding: {target}";
+                    quickEditBtn.Enabled = true;
+                    quickTestBtn.Enabled = true;
+                }
+                else
+                {
+                    inspectorTitle.Text = selectedIndex >= 0 ? $"Empty CYD Tile #{selectedIndex + 1}" : "No Tile Selected";
+                    inspectorSlotMeta.Text = "Unassigned slot";
+                    inspectorActionLine.Text = "Type: None";
+                    inspectorTargetLine.Text = "Click 'Add' below to bind an application, URL, script, or keyboard shortcut to this CYD tile.";
+                    quickEditBtn.Enabled = false;
+                    quickTestBtn.Enabled = false;
+                }
+            };
+
+            list.SelectedIndexChanged += (_, _) =>
+            {
+                var idx = GetSelectedShortcutIndex(list);
+                updateInspector(idx);
+            };
+            updateInspector(shortcuts.Count > 0 ? 0 : -1);
+            card.Controls.Add(inspectorCard, 1, 1);
+        }
+
         card.Controls.Add(infoLabel, 0, 2);
+        if (isDeckBuilder)
+        {
+            card.SetColumnSpan(infoLabel, 2);
+        }
 
         return card;
+    }
+
+    private Control CreateAppleMediaControlWidget()
+    {
+        var card = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 128,
+            BackColor = Surface,
+            Padding = new Padding(16, 12, 16, 12),
+            Margin = new Padding(0, 0, 0, 12)
+        };
+        card.Paint += (_, e) =>
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var pen = new Pen(Border, 1);
+            e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+        };
+
+        var headerLabel = new Label
+        {
+            Text = "NOW PLAYING & CONTROL CENTER AUDIO",
+            ForeColor = Accent,
+            Font = new Font(Font.FontFamily, 8F, FontStyle.Bold),
+            AutoSize = true,
+            Location = new Point(16, 10)
+        };
+
+        var artBox = new Panel
+        {
+            Size = new Size(64, 64),
+            Location = new Point(16, 36),
+            BackColor = SurfaceAlt
+        };
+        artBox.Paint += (_, e) =>
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var path = CreateRoundedRectPath(new Rectangle(0, 0, 63, 63), 12);
+            using var brush = new LinearGradientBrush(new Rectangle(0, 0, 64, 64), Color.FromArgb(40, 52, 78), Color.FromArgb(22, 26, 36), 45f);
+            e.Graphics.FillPath(brush, path);
+            using var borderPen = new Pen(Color.FromArgb(65, 75, 95), 1f);
+            e.Graphics.DrawPath(borderPen, path);
+            DrawNavigationVectorIcon(e.Graphics, "Overview", new Rectangle(20, 20, 24, 24), Accent);
+        };
+
+        var trackTitleLabel = new Label
+        {
+            Location = new Point(94, 36),
+            Size = new Size(280, 22),
+            ForeColor = TextPrimary,
+            Font = new Font(Font.FontFamily, 10.5F, FontStyle.Bold),
+            AutoEllipsis = true,
+            Text = "Ready for Playback"
+        };
+
+        var trackArtistLabel = new Label
+        {
+            Location = new Point(94, 58),
+            Size = new Size(280, 18),
+            ForeColor = TextMuted,
+            Font = new Font(Font.FontFamily, 8.5F, FontStyle.Regular),
+            AutoEllipsis = true,
+            Text = "System Audio • Apple Music / Spotify / Browser"
+        };
+
+        var audioStatusPill = new Label
+        {
+            Location = new Point(94, 80),
+            Size = new Size(260, 18),
+            ForeColor = Accent,
+            Font = new Font(Font.FontFamily, 8F, FontStyle.Bold),
+            Text = "Volume 50%"
+        };
+
+        var transportFlow = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoSize = true,
+            BackColor = Surface,
+            Location = new Point(390, 42),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right
+        };
+
+        Button CreateVectorTransportBtn(string iconKind, string accessibleName, bool primary, Func<Task> onClick)
+        {
+            var btn = new Button
+            {
+                Size = primary ? new Size(44, 40) : new Size(38, 36),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = primary ? Accent : SurfaceAlt,
+                ForeColor = primary ? Color.White : TextPrimary,
+                Margin = new Padding(4, primary ? 0 : 2, 4, 0),
+                Cursor = Cursors.Hand,
+                AccessibleName = accessibleName,
+                Text = string.Empty
+            };
+            btn.FlatAppearance.BorderSize = 1;
+            btn.FlatAppearance.BorderColor = primary ? Accent : Border;
+            btn.Paint += (_, e) =>
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                var fg = primary ? Color.White : TextPrimary;
+                var cx = btn.Width / 2;
+                var cy = btn.Height / 2;
+                using var pen = new Pen(fg, 1.8f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                using var brush = new SolidBrush(fg);
+                switch (iconKind)
+                {
+                    case "prev":
+                        e.Graphics.DrawLine(pen, cx - 5, cy - 6, cx - 5, cy + 6);
+                        e.Graphics.FillPolygon(brush, [new Point(cx - 4, cy), new Point(cx + 5, cy - 6), new Point(cx + 5, cy + 6)]);
+                        break;
+                    case "play":
+                        e.Graphics.FillPolygon(brush, [new Point(cx - 4, cy - 7), new Point(cx - 4, cy + 7), new Point(cx + 7, cy)]);
+                        break;
+                    case "next":
+                        e.Graphics.FillPolygon(brush, [new Point(cx - 5, cy - 6), new Point(cx - 5, cy + 6), new Point(cx + 4, cy)]);
+                        e.Graphics.DrawLine(pen, cx + 5, cy - 6, cx + 5, cy + 6);
+                        break;
+                    case "mute":
+                        e.Graphics.FillPolygon(brush, [new Point(cx - 6, cy - 3), new Point(cx - 3, cy - 3), new Point(cx + 1, cy - 6), new Point(cx + 1, cy + 6), new Point(cx - 3, cy + 3), new Point(cx - 6, cy + 3)]);
+                        e.Graphics.DrawLine(pen, cx + 4, cy - 3, cx + 8, cy + 3);
+                        e.Graphics.DrawLine(pen, cx + 8, cy - 3, cx + 4, cy + 3);
+                        break;
+                    case "voldown":
+                        e.Graphics.DrawLine(pen, cx - 5, cy, cx + 5, cy);
+                        break;
+                    case "volup":
+                        e.Graphics.DrawLine(pen, cx - 5, cy, cx + 5, cy);
+                        e.Graphics.DrawLine(pen, cx, cy - 5, cx, cy + 5);
+                        break;
+                }
+            };
+            btn.Click += async (_, _) => await onClick().ConfigureAwait(true);
+            return btn;
+        }
+
+        transportFlow.Controls.Add(CreateVectorTransportBtn("prev", "Media Previous", false, () => runtime.ExecuteHostMediaCommandAsync(MediaCommand.Previous)));
+        transportFlow.Controls.Add(CreateVectorTransportBtn("play", "Media Play Pause", true, () => runtime.ExecuteHostMediaCommandAsync(MediaCommand.PlayPause)));
+        transportFlow.Controls.Add(CreateVectorTransportBtn("next", "Media Next", false, () => runtime.ExecuteHostMediaCommandAsync(MediaCommand.Next)));
+        transportFlow.Controls.Add(CreateVectorTransportBtn("mute", "Audio Mute", false, () => runtime.ToggleHostMuteAsync()));
+        transportFlow.Controls.Add(CreateVectorTransportBtn("voldown", "Volume Down", false, async () =>
+        {
+            var currentVol = state.Snapshot().CurrentAudio?.VolumePercent ?? 50;
+            await runtime.SetHostVolumeAsync(Math.Max(0, currentVol - 5)).ConfigureAwait(true);
+        }));
+        transportFlow.Controls.Add(CreateVectorTransportBtn("volup", "Volume Up", false, async () =>
+        {
+            var currentVol = state.Snapshot().CurrentAudio?.VolumePercent ?? 50;
+            await runtime.SetHostVolumeAsync(Math.Min(100, currentVol + 5)).ConfigureAwait(true);
+        }));
+
+        card.SizeChanged += (_, _) =>
+        {
+            transportFlow.Location = new Point(Math.Max(360, card.ClientSize.Width - transportFlow.Width - 16), 44);
+            var textWidth = Math.Max(140, transportFlow.Left - 106);
+            trackTitleLabel.Width = textWidth;
+            trackArtistLabel.Width = textWidth;
+            audioStatusPill.Width = textWidth;
+        };
+
+        void RefreshMediaCard()
+        {
+            if (card.IsDisposed) return;
+            var snap = state.Snapshot();
+            var media = snap.CurrentMedia;
+            var audio = snap.CurrentAudio;
+            trackTitleLabel.Text = media is not null && !string.IsNullOrWhiteSpace(media.Title) ? media.Title : "Ready for Playback";
+            trackArtistLabel.Text = media is not null && !string.IsNullOrWhiteSpace(media.Artist)
+                ? $"{media.Artist}{(!string.IsNullOrWhiteSpace(media.AlbumTitle) ? $" — {media.AlbumTitle}" : string.Empty)}"
+                : $"{(media is not null ? media.PlaybackState.ToString() : "Idle")} • Windows Media Session";
+            audioStatusPill.Text = audio is not null
+                ? $"Output Volume: {audio.VolumePercent}%{(audio.IsMuted ? " (Muted)" : string.Empty)}"
+                : "Output Volume: Ready";
+        }
+
+        RefreshMediaCard();
+        var prevRefresh = refreshOverviewWidgets;
+        refreshOverviewWidgets = () =>
+        {
+            prevRefresh?.Invoke();
+            RefreshMediaCard();
+        };
+
+        card.Controls.Add(headerLabel);
+        card.Controls.Add(artBox);
+        card.Controls.Add(trackTitleLabel);
+        card.Controls.Add(trackArtistLabel);
+        card.Controls.Add(audioStatusPill);
+        card.Controls.Add(transportFlow);
+        return card;
+    }
+
+    private Control CreateAppleSystemMonitorWidget()
+    {
+        var host = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 136,
+            ColumnCount = 4,
+            RowCount = 1,
+            BackColor = Background,
+            Margin = new Padding(0, 0, 0, 12)
+        };
+        host.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+        host.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+        host.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+        host.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+        host.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+        var gaugePanels = new List<Panel>();
+
+        Panel CreateMetricCard(string title, string unit, Color ringColor, Func<HostSystemTelemetrySnapshot?, (int Value, string Subtext, IReadOnlyList<double> History)> selector)
+        {
+            var card = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Surface,
+                Margin = new Padding(4)
+            };
+            card.Paint += (_, e) =>
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using var borderPen = new Pen(Border, 1);
+                e.Graphics.DrawRectangle(borderPen, 0, 0, card.Width - 1, card.Height - 1);
+
+                var telemetry = state.Snapshot().SystemTelemetry;
+                var (val, sub, history) = selector(telemetry);
+                var clamped = Math.Clamp(val, 0, 100);
+
+                // Circular Apple Watch / Activity Monitor ring on the left
+                var ringRect = new Rectangle(12, 28, 52, 52);
+                using var trackPen = new Pen(SurfaceAlt, 5.5f);
+                using var valuePen = new Pen(ringColor, 5.5f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                e.Graphics.DrawArc(trackPen, ringRect, 0, 360);
+                var sweep = (int)Math.Round(clamped * 3.6);
+                if (sweep > 0)
+                {
+                    e.Graphics.DrawArc(valuePen, ringRect, -90, sweep);
+                }
+
+                // Title & Value
+                using var titleBrush = new SolidBrush(TextMuted);
+                using var valueBrush = new SolidBrush(TextPrimary);
+                using var titleFont = new Font(Font.FontFamily, 7.5F, FontStyle.Bold);
+                using var valueFont = new Font(Font.FontFamily, 13F, FontStyle.Bold);
+                using var subFont = new Font(Font.FontFamily, 7.5F, FontStyle.Regular);
+
+                e.Graphics.DrawString(title, titleFont, titleBrush, new PointF(12, 8));
+                e.Graphics.DrawString($"{val}{unit}", valueFont, valueBrush, new PointF(74, 28));
+                e.Graphics.DrawString(sub, subFont, titleBrush, new PointF(74, 52));
+
+                // Subtle sparkline along the bottom
+                var sparkRect = new Rectangle(12, card.Height - 28, Math.Max(40, card.Width - 24), 18);
+                if (history.Count > 1 && sparkRect.Width > 12)
+                {
+                    var pts = new PointF[history.Count];
+                    for (var i = 0; i < history.Count; i++)
+                    {
+                        var x = sparkRect.Left + (i / (float)(history.Count - 1)) * sparkRect.Width;
+                        var y = sparkRect.Bottom - ((float)Math.Clamp(history[i], 0.0, 100.0) / 100f) * sparkRect.Height;
+                        pts[i] = new PointF(x, y);
+                    }
+                    using var sparkPen = new Pen(Color.FromArgb(180, ringColor), 1.5f);
+                    e.Graphics.DrawLines(sparkPen, pts);
+                }
+            };
+            gaugePanels.Add(card);
+            return card;
+        }
+
+        host.Controls.Add(CreateMetricCard("CPU LOAD", "%", Accent, t => ((int)Math.Round(t?.CpuPercent ?? 0), "Processor", t?.CpuHistory ?? [])), 0, 0);
+        host.Controls.Add(CreateMetricCard("MEMORY", "%", AppleGreen, t =>
+        {
+            var gbUsed = (t?.RamUsedBytes ?? 0UL) / (1024.0 * 1024.0 * 1024.0);
+            var gbTotal = (t?.RamTotalBytes ?? 0UL) / (1024.0 * 1024.0 * 1024.0);
+            return ((int)Math.Round(t?.RamPercent ?? 0), gbTotal > 0 ? $"{gbUsed:0.0}/{gbTotal:0} GB" : "System RAM", t?.RamHistory ?? []);
+        }), 1, 0);
+        host.Controls.Add(CreateMetricCard("GPU ENGINE", "%", ApplePurple, t => ((int)Math.Round(t?.GpuPercent ?? 0), "Graphics", t?.GpuHistory ?? [])), 2, 0);
+        host.Controls.Add(CreateMetricCard("THERMAL", "°C", AppleAmber, t => ((int)Math.Round(t?.TempCelsius ?? 42), "Core Temp", t?.TempHistory ?? [])), 3, 0);
+
+        var prevRefresh = refreshOverviewWidgets;
+        refreshOverviewWidgets = () =>
+        {
+            prevRefresh?.Invoke();
+            foreach (var p in gaugePanels)
+            {
+                if (!p.IsDisposed) p.Invalidate();
+            }
+        };
+
+        return host;
+    }
+
+    private static GraphicsPath CreateRoundedRectPath(Rectangle bounds, int radius)
+    {
+        var path = new GraphicsPath();
+        var diameter = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
+        if (diameter <= 0)
+        {
+            path.AddRectangle(bounds);
+            return path;
+        }
+
+        var arc = new Rectangle(bounds.Location, new Size(diameter, diameter));
+        path.AddArc(arc, 180, 90);
+        arc.X = bounds.Right - diameter;
+        path.AddArc(arc, 270, 90);
+        arc.Y = bounds.Bottom - diameter;
+        path.AddArc(arc, 0, 90);
+        arc.X = bounds.Left;
+        path.AddArc(arc, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    private static void DrawNavigationVectorIcon(Graphics g, string page, Rectangle bounds, Color color)
+    {
+        using var pen = new Pen(color, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        var x = bounds.X;
+        var y = bounds.Y;
+        var w = bounds.Width;
+        var h = bounds.Height;
+        switch (page)
+        {
+            case "Overview":
+                g.DrawRectangle(pen, x + 1, y + 1, w / 2 - 2, h / 2 - 2);
+                g.DrawRectangle(pen, x + w / 2 + 1, y + 1, w / 2 - 2, h / 2 - 2);
+                g.DrawRectangle(pen, x + 1, y + h / 2 + 1, w / 2 - 2, h / 2 - 2);
+                g.DrawRectangle(pen, x + w / 2 + 1, y + h / 2 + 1, w / 2 - 2, h / 2 - 2);
+                break;
+            case "Shortcuts":
+                g.DrawRectangle(pen, x + 1, y + 2, w - 2, h - 4);
+                g.DrawLine(pen, x + 4, y + h / 2, x + w - 4, y + h / 2);
+                g.DrawLine(pen, x + w / 2, y + 4, x + w / 2, y + h - 4);
+                break;
+            case "Appearance":
+                g.DrawEllipse(pen, x + 1, y + 1, w - 2, h - 2);
+                g.DrawEllipse(pen, x + w / 2 - 2, y + h / 2 - 2, 4, 4);
+                break;
+            case "Device":
+                g.DrawRectangle(pen, x + 1, y + 2, w - 2, h - 6);
+                g.DrawLine(pen, x + 4, y + h - 1, x + w - 4, y + h - 1);
+                break;
+            case "Pairing":
+                g.DrawEllipse(pen, x + 1, y + 3, w / 2, h - 6);
+                g.DrawEllipse(pen, x + w / 2 - 1, y + 3, w / 2, h - 6);
+                break;
+            case "Updates":
+                g.DrawEllipse(pen, x + 1, y + 1, w - 2, h - 2);
+                g.DrawLine(pen, x + w / 2, y + 4, x + w / 2, y + h - 4);
+                g.DrawLine(pen, x + w / 2 - 3, y + 7, x + w / 2, y + 4);
+                g.DrawLine(pen, x + w / 2 + 3, y + 7, x + w / 2, y + 4);
+                break;
+            case "Logs":
+                g.DrawLine(pen, x + 2, y + 4, x + w - 2, y + 4);
+                g.DrawLine(pen, x + 2, y + h / 2, x + w - 4, y + h / 2);
+                g.DrawLine(pen, x + 2, y + h - 4, x + w - 6, y + h - 4);
+                break;
+        }
+    }
+
+    private static void DrawShortcutVectorIcon(Graphics g, string? iconName, string? actionType, Rectangle bounds, Color color)
+    {
+        using var pen = new Pen(color, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var brush = new SolidBrush(color);
+        var x = bounds.X;
+        var y = bounds.Y;
+        var w = bounds.Width;
+        var h = bounds.Height;
+        var key = (iconName ?? string.Empty).Trim().ToLowerInvariant();
+        if (key == "empty")
+        {
+            g.DrawLine(pen, x + w / 2 - 3, y + h / 2, x + w / 2 + 3, y + h / 2);
+            g.DrawLine(pen, x + w / 2, y + h / 2 - 3, x + w / 2, y + h / 2 + 3);
+            return;
+        }
+
+        if (key.Contains("play") || key.Contains("media"))
+        {
+            g.FillPolygon(brush, [new Point(x + 3, y + 2), new Point(x + 3, y + h - 2), new Point(x + w - 2, y + h / 2)]);
+        }
+        else if (key.Contains("mute") || key.Contains("vol") || key.Contains("audio"))
+        {
+            g.DrawRectangle(pen, x + 2, y + 5, 4, h - 10);
+            g.DrawLine(pen, x + 6, y + 5, x + 11, y + 2);
+            g.DrawLine(pen, x + 6, y + h - 5, x + 11, y + h - 2);
+            g.DrawLine(pen, x + 11, y + 2, x + 11, y + h - 2);
+        }
+        else if (string.Equals(actionType, ShortcutActionTypes.OpenUrl, StringComparison.OrdinalIgnoreCase) || key.Contains("web") || key.Contains("url"))
+        {
+            g.DrawEllipse(pen, x + 1, y + 1, w - 2, h - 2);
+            g.DrawLine(pen, x + 2, y + h / 2, x + w - 2, y + h / 2);
+        }
+        else if (string.Equals(actionType, ShortcutActionTypes.Hotkey, StringComparison.OrdinalIgnoreCase) || key.Contains("key"))
+        {
+            g.DrawRectangle(pen, x + 1, y + 3, w - 2, h - 6);
+            g.DrawLine(pen, x + 4, y + h / 2, x + w - 4, y + h / 2);
+        }
+        else
+        {
+            g.DrawRectangle(pen, x + 2, y + 2, w - 4, h - 4);
+            g.DrawLine(pen, x + 5, y + 6, x + 9, y + h / 2);
+            g.DrawLine(pen, x + 9, y + h / 2, x + 5, y + h - 6);
+        }
     }
 
     private async Task TestSelectedShortcutAsync(ListView list, List<ShortcutDefinition> shortcuts)
@@ -3453,6 +4514,8 @@ public sealed class SettingsWindow : Form
             return;
         }
 
+        UpdateSidebarConnectionPill();
+
         var currentSnapshot = state.Snapshot();
         var telemetryAvailable = currentSnapshot.HostStatus == "connected" && currentSnapshot.DeviceInfo is not null;
         var currentUpdateIp = currentSnapshot.HostStatus == "connected" ? currentSnapshot.DeviceInfo?.Wifi.Ip : null;
@@ -3467,6 +4530,11 @@ public sealed class SettingsWindow : Form
         {
             ShowPage(currentPage);
             return;
+        }
+
+        if (string.Equals(currentPage, "Overview", StringComparison.Ordinal))
+        {
+            refreshOverviewWidgets?.Invoke();
         }
 
         foreach (var (label, value) in CreateLiveInfoValues(currentPage, state.Snapshot()))
@@ -3700,14 +4768,51 @@ public sealed class SettingsWindow : Form
             ?? "Unavailable";
     }
 
+    private sealed class DesktopAppearanceState
+    {
+        public static DesktopAppearanceState Default => new()
+        {
+            Theme = "dark",
+            WindowStyle = "acrylic",
+            Accent = "#5299E0"
+        };
+
+        public string Theme { get; set; } = "dark";
+        public string WindowStyle { get; set; } = "acrylic";
+        public string Accent { get; set; } = "#5299E0";
+
+        public static DesktopAppearanceState FromConfiguration(DesktopAppearanceConfiguration configuration)
+        {
+            return new DesktopAppearanceState
+            {
+                Theme = string.IsNullOrWhiteSpace(configuration.Theme) ? "dark" : configuration.Theme,
+                WindowStyle = string.IsNullOrWhiteSpace(configuration.WindowStyle) ? "acrylic" : configuration.WindowStyle,
+                Accent = string.IsNullOrWhiteSpace(configuration.Accent) ? "#5299E0" : configuration.Accent
+            };
+        }
+
+        public DesktopAppearanceConfiguration ToConfiguration()
+        {
+            return new DesktopAppearanceConfiguration
+            {
+                Theme = Theme,
+                WindowStyle = WindowStyle,
+                Accent = Accent
+            };
+        }
+    }
+
     private sealed class AppearanceState
     {
         public static AppearanceState Default => new()
         {
             Theme = "dark",
-            Accent = "#D43B48",
+            Accent = "#0A84FF",
             Background = "#101216",
             ButtonStyle = "rounded",
+            TileColorScheme = "control-center",
+            StandbyStyle = "apple-standby",
+            ShortcutsLayout = "auto",
             PageOrder = DefaultAppearancePageOrder.ToArray(),
             PageVisibility = DefaultAppearancePageOrder.ToArray(),
             Brightness = 70,
@@ -3718,9 +4823,12 @@ public sealed class SettingsWindow : Form
         };
 
         public string Theme { get; set; } = "dark";
-        public string Accent { get; set; } = "#D43B48";
+        public string Accent { get; set; } = "#0A84FF";
         public string Background { get; set; } = "#101216";
         public string ButtonStyle { get; set; } = "rounded";
+        public string TileColorScheme { get; set; } = "control-center";
+        public string StandbyStyle { get; set; } = "apple-standby";
+        public string ShortcutsLayout { get; set; } = "auto";
         public string[] PageOrder { get; set; } = [];
         public string[] PageVisibility { get; set; } = [];
         public int Brightness { get; set; }
@@ -3737,6 +4845,9 @@ public sealed class SettingsWindow : Form
                 Accent = configuration.Accent,
                 Background = configuration.Background,
                 ButtonStyle = configuration.ButtonStyle,
+                TileColorScheme = string.IsNullOrWhiteSpace(configuration.TileColorScheme) ? "control-center" : configuration.TileColorScheme,
+                StandbyStyle = string.IsNullOrWhiteSpace(configuration.StandbyStyle) ? "apple-standby" : configuration.StandbyStyle,
+                ShortcutsLayout = string.IsNullOrWhiteSpace(configuration.ShortcutsLayout) ? "auto" : configuration.ShortcutsLayout,
                 PageOrder = NormalizeAppearancePageOrder(configuration.PageOrder),
                 PageVisibility = NormalizeAppearancePageVisibility(NormalizeAppearancePageOrder(configuration.PageOrder), configuration.PageVisibility),
                 Brightness = configuration.Brightness,
@@ -3763,6 +4874,9 @@ public sealed class SettingsWindow : Form
                 Accent = Accent,
                 Background = Background,
                 ButtonStyle = ButtonStyle,
+                TileColorScheme = TileColorScheme,
+                StandbyStyle = StandbyStyle,
+                ShortcutsLayout = ShortcutsLayout,
                 PageOrder = NormalizeAppearancePageOrder(PageOrder),
                 PageVisibility = NormalizeAppearancePageVisibility(NormalizeAppearancePageOrder(PageOrder), PageVisibility),
                 Brightness = Brightness,

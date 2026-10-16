@@ -544,6 +544,22 @@ class AgentClient::Impl {
       return;
     }
     if (type == protocol::kSystemStats) {
+      if (state_) {
+        state_->system.cpuPercent = clampPercent(integerField(payload, length, "cpuPercent", state_->system.cpuPercent), 0, 100);
+        state_->system.ramPercent = clampPercent(integerField(payload, length, "memoryPercent", state_->system.ramPercent), 0, 100);
+        state_->system.gpuPercent = clampPercent(integerField(payload, length, "gpuPercent", state_->system.gpuPercent), 0, 100);
+        state_->system.tempCelsius = static_cast<uint8_t>(constrain(integerField(payload, length, "tempCelsius", state_->system.tempCelsius), 0, 120));
+        const long hostMinutes = integerField(payload, length, "hostLocalMinutes", -1);
+        if (hostMinutes >= 0 && hostMinutes < 1440) {
+          state_->system.hostLocalMinutes = static_cast<int16_t>(hostMinutes);
+          state_->system.hostTimeSyncedAtSec = millis() / 1000;
+        }
+        const long usedBytes = integerField(payload, length, "memoryUsedBytes", -1);
+        const long totalBytes = integerField(payload, length, "memoryTotalBytes", -1);
+        if (usedBytes >= 0) state_->system.ramUsedMb = static_cast<uint32_t>(usedBytes / (1024L * 1024L));
+        if (totalBytes >= 0) state_->system.ramTotalMb = static_cast<uint32_t>(totalBytes / (1024L * 1024L));
+        if (intents_) intents_->push({IntentType::RefreshUi, 0});
+      }
       return;
     }
     if (type == protocol::kShortcutsUpdate) {
@@ -595,6 +611,14 @@ class AgentClient::Impl {
     AppearanceState next = state_->appearance;
     next.theme = enumField(payload, length, "theme", "dark", "light", nullptr, next.theme);
     next.buttonStyle = enumField(payload, length, "buttonStyle", "flat", "rounded", "pill", next.buttonStyle);
+    next.tileColorScheme = enumField(payload, length, "tileColorScheme", "control-center", "accent-tint", "oled-contrast", next.tileColorScheme);
+    next.standbyStyle = enumField(payload, length, "standbyStyle", "apple-standby", "watchos-modular", "minimal-oled", next.standbyStyle);
+    const String layoutValue = quotedField(payload, length, "shortcutsLayout");
+    if (layoutValue == "auto") next.shortcutsLayout = 0;
+    else if (layoutValue == "hero-1") next.shortcutsLayout = 1;
+    else if (layoutValue == "split-2") next.shortcutsLayout = 2;
+    else if (layoutValue == "quad-4") next.shortcutsLayout = 3;
+    else if (layoutValue == "grid-6") next.shortcutsLayout = 4;
     if (hasField(payload, length, "accent")) next.accent = colorField(payload, length, "accent", next.accent);
     if (hasField(payload, length, "background")) next.background = colorField(payload, length, "background", next.background);
     if (hasField(payload, length, "brightness")) next.brightness = clampPercent(integerField(payload, length, "brightness", next.brightness), 10, 100);

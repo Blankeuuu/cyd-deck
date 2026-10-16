@@ -134,12 +134,14 @@ public sealed class WindowsAgentRuntime(
         volumeService = new WindowsMasterVolumeService(audioEndpoint);
         volumeService.AudioChanged += HandleAudioChanged;
         volumeService.Refresh();
+        state.UpdateHostAudio(volumeService.CurrentSnapshot);
 
         mediaSource = new WindowsGlobalMediaSessionSource();
         mediaMonitor = new MediaSessionMonitor(mediaSource);
         mediaMonitor.SnapshotChanged += HandleMediaSnapshotChanged;
         mediaMonitor.RefreshFailed += HandleMediaRefreshFailed;
         await mediaMonitor.StartAsync(cancellationToken).ConfigureAwait(false);
+        state.UpdateHostMedia(mediaMonitor.CurrentSnapshot);
 
         systemMetricsProvider = new WindowsSystemMetricsProvider();
         systemMetricsTask = Task.Run(() => SampleSystemMetricsAsync(systemMetricsProvider, monitoringInterval, cancellationToken), CancellationToken.None);
@@ -174,6 +176,42 @@ public sealed class WindowsAgentRuntime(
             new MockAudioController(),
             new MockShortcutExecutor(),
             new RejectingSystemCommandExecutor());
+    }
+
+    public async Task<bool> ExecuteHostMediaCommandAsync(MediaCommand command, CancellationToken cancellationToken = default)
+    {
+        if (mediaMonitor is not null)
+        {
+            var controller = new MediaSessionMonitorController(mediaMonitor);
+            return await controller.ExecuteAsync(command, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    public Task<bool> SetHostVolumeAsync(int volumePercent, CancellationToken cancellationToken = default)
+    {
+        if (volumeService is not null)
+        {
+            var controller = new MasterVolumeController(volumeService);
+            return controller.SetVolumeAsync(Math.Clamp(volumePercent, 0, 100), cancellationToken);
+        }
+
+        state.UpdateHostAudio(new AudioSnapshot(Math.Clamp(volumePercent, 0, 100), state.Snapshot().CurrentAudio?.IsMuted ?? false));
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> ToggleHostMuteAsync(CancellationToken cancellationToken = default)
+    {
+        if (volumeService is not null)
+        {
+            var controller = new MasterVolumeController(volumeService);
+            return controller.ToggleMuteAsync(cancellationToken);
+        }
+
+        var current = state.Snapshot().CurrentAudio ?? new AudioSnapshot(65, false);
+        state.UpdateHostAudio(new AudioSnapshot(current.VolumePercent, !current.IsMuted));
+        return Task.FromResult(true);
     }
 
     public async Task<bool> UpdateShortcutsAsync(IReadOnlyList<StreamDeck.Shortcuts.ShortcutDefinition> shortcuts, CancellationToken cancellationToken = default)
@@ -371,6 +409,7 @@ public sealed class WindowsAgentRuntime(
 
     private void HandleAudioChanged(object? sender, AudioSnapshot snapshot)
     {
+        state.UpdateHostAudio(snapshot);
         _ = PublishAudioUpdateAsync(snapshot);
     }
 
@@ -382,6 +421,7 @@ public sealed class WindowsAgentRuntime(
 
     private void HandleMediaSnapshotChanged(object? sender, MediaSnapshot? snapshot)
     {
+        state.UpdateHostMedia(snapshot);
         _ = PublishMediaUpdateAsync(snapshot, CancellationToken.None);
     }
 
@@ -486,17 +526,30 @@ public sealed class WindowsAgentRuntime(
         }
     }
 
-    private static async Task SampleSystemMetricsAsync(
+    private async Task SampleSystemMetricsAsync(
         ISystemMetricsProvider provider,
         TimeSpan interval,
         CancellationToken cancellationToken)
     {
         using var timer = new PeriodicTimer(interval);
-        provider.GetSnapshot();
+        var initial = provider.GetSnapshot();
+        state.UpdateSystemMetrics(initial);
 
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
-            provider.GetSnapshot();
+            var metrics = provider.GetSnapshot();
+            state.UpdateSystemMetrics(metrics);
+            if (state.Snapshot().HostStatus == "connected")
+            {
+                try
+                {
+                    await SendDeviceCommandAsync(ProtocolStateMapper.CreateSystemStats(metrics), cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    AgentDiagnosticLog.Write($"System stats publish failed: {exception.GetType().Name}");
+                }
+            }
         }
     }
 }

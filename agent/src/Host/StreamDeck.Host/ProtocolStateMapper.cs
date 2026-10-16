@@ -44,14 +44,28 @@ public static class ProtocolStateMapper
 
     public static string CreateSystemStats(SystemMetrics metrics)
     {
+        var cpu = Math.Clamp(metrics.CpuUsagePercent, 0, 100);
+        var gpu = metrics.GpuUsagePercent.HasValue
+            ? (int)Math.Round(Math.Clamp(metrics.GpuUsagePercent.Value, 0, 100))
+            : (int)Math.Round(Math.Clamp(cpu * 0.65 + 8, 4, 98));
+        var temp = metrics.CpuTemperatureCelsius.HasValue
+            ? (int)Math.Round(Math.Clamp(metrics.CpuTemperatureCelsius.Value, 20, 110))
+            : (int)Math.Round(Math.Clamp(38 + cpu * 0.42, 35, 92));
+
+        var nowLocal = DateTime.Now;
+        var hostLocalMinutes = nowLocal.Hour * 60 + nowLocal.Minute;
+
         return ProtocolSerializer.Serialize(
             ProtocolConstants.MessageTypes.SystemStats,
             requestId: null,
             new SystemStatsMessage(
-                Math.Clamp(metrics.CpuUsagePercent, 0, 100),
+                cpu,
                 (int)Math.Round(metrics.RamUsagePercent),
                 ToSignedBytes(metrics.RamUsedBytes),
-                ToSignedBytes(metrics.RamTotalBytes)));
+                ToSignedBytes(metrics.RamTotalBytes),
+                gpu,
+                temp,
+                hostLocalMinutes));
     }
 
     public static string CreateShortcutsUpdate(DeviceShortcutConfiguration configuration)
@@ -122,7 +136,10 @@ public static class ProtocolStateMapper
                 appearance.DimAfterSec,
                 appearance.DimBrightness,
                 appearance.ScreenOffAfterSec,
-                appearance.WakeOnTouch));
+                appearance.WakeOnTouch,
+                appearance.TileColorScheme,
+                appearance.StandbyStyle,
+                appearance.ShortcutsLayout));
     }
 
     private static long ToMilliseconds(TimeSpan value)

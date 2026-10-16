@@ -17,10 +17,10 @@ IntentQueue* queuePtr = nullptr;
 lv_obj_t* root = nullptr;
 lv_obj_t* pages[kPageCount]{};
 lv_obj_t* dots[kPageCount]{};
-lv_obj_t* buttons[16]{};
-lv_obj_t* labels[64]{};
-bool mutedLabels[64]{};
-bool whiteLabels[64]{};
+lv_obj_t* buttons[24]{};
+lv_obj_t* labels[96]{};
+bool mutedLabels[96]{};
+bool whiteLabels[96]{};
 uint8_t buttonCount = 0;
 uint8_t labelCount = 0;
 uint8_t sharedButtonCount = 0;
@@ -31,10 +31,13 @@ uint32_t appliedBackground = 0xFFFFFFFF;
 uint32_t appliedAccent = 0xFFFFFFFF;
 uint8_t appliedTheme = 0xFF;
 uint8_t appliedButtonStyle = 0xFF;
+uint8_t appliedTileColorScheme = 0xFF;
+uint8_t appliedShortcutsLayout = 0xFF;
 uint32_t appliedDotColors[kPageCount] = {0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
 lv_obj_t* navBar = nullptr;
 lv_obj_t* navButtons[kPageCount]{};
 lv_obj_t* navLabels[kPageCount]{};
+lv_obj_t* navClockLabel = nullptr;
 lv_obj_t* coverPanel = nullptr;
 lv_obj_t* overlay = nullptr;
 lv_obj_t* resetDialog = nullptr;
@@ -59,7 +62,12 @@ lv_obj_t* mediaVolumeSlider = nullptr;
 lv_obj_t* volumeSliderLabel = nullptr;
 lv_obj_t* overlayStatus = nullptr;
 lv_obj_t* overlayVolumePercent = nullptr;
+lv_obj_t* shortcutButtons[6]{};
 lv_obj_t* shortcutLabels[6]{};
+lv_obj_t* pcMetricCards[4]{};
+lv_obj_t* pcMetricTitles[4]{};
+lv_obj_t* pcMetricValues[4]{};
+lv_obj_t* pcMetricBars[4]{};
 lv_obj_t* pcConnection = nullptr;
 lv_obj_t* pcChip = nullptr;
 lv_obj_t* pcAudio = nullptr;
@@ -114,7 +122,7 @@ void setStaticBounds(lv_obj_t* object, int x, int y, int w, int h) {
 lv_obj_t* makeLabel(lv_obj_t* parent, const char* text, int x, int y, int w,
                     int h, uint32_t color, uint32_t size) {
   lv_obj_t* label = lv_label_create(parent);
-  if (labelCount < 64) { mutedLabels[labelCount] = color == kMuted; whiteLabels[labelCount] = false; labels[labelCount++] = label; }
+  if (labelCount < 96) { mutedLabels[labelCount] = color == kMuted; whiteLabels[labelCount] = false; labels[labelCount++] = label; }
   lv_label_set_text(label, text);
   lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
   setStaticBounds(label, x, y, w, h);
@@ -157,14 +165,28 @@ void applyDynamicTextColors() {
   }
 }
 
+uint32_t resolveTileFillColor(uint32_t accent, uint8_t theme, uint8_t style, uint8_t scheme) {
+  if (style == 2) return accent;
+  if (theme == 1) return kLightButton;
+  if (scheme == 2) return 0x121316;
+  if (scheme == 1) {
+    const uint32_t r = std::min<uint32_t>(255, 22 + (((accent >> 16) & 0xFF) * 20) / 100);
+    const uint32_t g = std::min<uint32_t>(255, 24 + (((accent >> 8) & 0xFF) * 20) / 100);
+    const uint32_t b = std::min<uint32_t>(255, 30 + ((accent & 0xFF) * 20) / 100);
+    return (r << 16) | (g << 8) | b;
+  }
+  return kButton;
+}
+
 void styleButton(lv_obj_t* button) {
   const uint32_t color = statePtr ? statePtr->appearance.accent : kButton;
   const uint8_t style = statePtr ? statePtr->appearance.buttonStyle : 1;
-  const uint32_t flatColor = statePtr && statePtr->appearance.theme == 1
-      ? kLightButton : kButton;
-  lv_obj_set_style_bg_color(button, lv_color_hex(style == 2 ? color : flatColor), 0);
+  const uint8_t theme = statePtr ? statePtr->appearance.theme : 0;
+  const uint8_t scheme = statePtr ? statePtr->appearance.tileColorScheme : 0;
+  const uint32_t fillColor = resolveTileFillColor(color, theme, style, scheme);
+  lv_obj_set_style_bg_color(button, lv_color_hex(fillColor), 0);
   lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(button, style == 0 ? 4 : (style == 2 ? 18 : 12), 0);
+  lv_obj_set_style_radius(button, style == 0 ? 6 : (style == 2 ? 18 : 14), 0);
   lv_obj_set_style_border_width(button, style == 2 ? 0 : 1, 0);
   lv_obj_set_style_border_color(button, lv_color_hex(color), 0);
 }
@@ -193,10 +215,12 @@ lv_obj_t* makeChip(lv_obj_t* parent, const char* text, int x, int y, int w,
 void applyAppearanceStyles(const AppState& state) {
   const bool themeChanged = appliedTheme != state.appearance.theme;
   const bool buttonsChanged = themeChanged || appliedAccent != state.appearance.accent
-      || appliedButtonStyle != state.appearance.buttonStyle;
-  if (appliedBackground != state.appearance.background) {
-    lv_obj_set_style_bg_color(root, lv_color_hex(state.appearance.background), 0);
-    appliedBackground = state.appearance.background;
+      || appliedButtonStyle != state.appearance.buttonStyle
+      || appliedTileColorScheme != state.appearance.tileColorScheme;
+  const uint32_t safeBg = sanitizeCydBackground(state.appearance.background, state.appearance.theme);
+  if (appliedBackground != safeBg) {
+    lv_obj_set_style_bg_color(root, lv_color_hex(safeBg), 0);
+    appliedBackground = safeBg;
   }
   if (themeChanged) {
     const uint32_t panel = state.appearance.theme == 1 ? kLightPanel : kPanel;
@@ -206,6 +230,9 @@ void applyAppearanceStyles(const AppState& state) {
     if (mediaChip) lv_obj_set_style_bg_color(mediaChip, lv_color_hex(kButton), 0);
     if (pcChip) lv_obj_set_style_bg_color(pcChip, lv_color_hex(kButton), 0);
     if (infoChip) lv_obj_set_style_bg_color(infoChip, lv_color_hex(kButton), 0);
+    for (lv_obj_t* card : pcMetricCards) {
+      if (card) lv_obj_set_style_bg_color(card, lv_color_hex(panel), 0);
+    }
   }
   if (buttonsChanged && mediaVolumeSlider) {
     lv_obj_set_style_bg_color(mediaVolumeSlider, lv_color_hex(state.appearance.theme == 1 ? kLightMutedButton : kButton), LV_PART_MAIN);
@@ -223,6 +250,7 @@ void applyAppearanceStyles(const AppState& state) {
     appliedAccent = state.appearance.accent;
     appliedTheme = state.appearance.theme;
     appliedButtonStyle = state.appearance.buttonStyle;
+    appliedTileColorScheme = state.appearance.tileColorScheme;
   }
 }
 
@@ -231,7 +259,7 @@ lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
   lv_obj_t* b = lv_btn_create(parent);
   setStaticBounds(b, x, y, w, h);
   styleButton(b);
-  if (buttonCount < 16) buttons[buttonCount++] = b;
+  if (buttonCount < 24) buttons[buttonCount++] = b;
   if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, data);
   lv_obj_t* label = lv_label_create(b);
   lv_label_set_text(label, text);
@@ -345,14 +373,14 @@ void buildNavBar() {
   lv_obj_set_style_border_width(navBar, 0, 0);
   for (int i = 0; i < kPageCount; ++i) {
     navButtons[i] = lv_btn_create(navBar);
-    setStaticBounds(navButtons[i], 6 + i * 78, 3, 74, 26);
+    setStaticBounds(navButtons[i], 6 + i * 62, 3, 58, 26);
     lv_obj_set_style_radius(navButtons[i], 8, 0);
     lv_obj_set_style_border_width(navButtons[i], 0, 0);
     lv_obj_add_event_cb(navButtons[i], navTabClicked, LV_EVENT_CLICKED,
         reinterpret_cast<void*>(static_cast<intptr_t>(i)));
 
     navLabels[i] = lv_label_create(navButtons[i]);
-    setStaticBounds(navLabels[i], 2, 5, 70, 18);
+    setStaticBounds(navLabels[i], 2, 5, 54, 18);
     lv_label_set_text(navLabels[i], "");
     lv_label_set_long_mode(navLabels[i], LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(navLabels[i], LV_TEXT_ALIGN_CENTER, 0);
@@ -360,6 +388,8 @@ void buildNavBar() {
     disableScrolling(navLabels[i]);
     lv_obj_center(navLabels[i]);
   }
+  navClockLabel = makeLabel(navBar, "00:00", 256, 7, 58, 18, kMuted, 14);
+  lv_obj_set_style_text_align(navClockLabel, LV_TEXT_ALIGN_RIGHT, 0);
 }
 
 void buildMediaPage() {
@@ -432,17 +462,70 @@ void buildMediaPage() {
   lv_obj_add_flag(mediaHint, LV_OBJ_FLAG_HIDDEN);
 }
 
+uint8_t resolveEffectiveShortcutsLayout(const AppState& s) {
+  if (s.appearance.shortcutsLayout >= 1 && s.appearance.shortcutsLayout <= 4) {
+    return s.appearance.shortcutsLayout;
+  }
+  int activeCount = 0;
+  for (int i = 0; i < 6; ++i) {
+    if (s.shortcuts.ids[i][0] != '\0' ||
+        (s.shortcuts.names[i][0] != '\0' && std::strcmp(s.shortcuts.names[i], "No shortcut") != 0)) {
+      ++activeCount;
+    }
+  }
+  if (activeCount == 1) return 1; // hero-1 (full-screen 6x button size)
+  if (activeCount == 2) return 2; // split-2 (two 3x half-screen buttons)
+  if (activeCount == 3 || activeCount == 4) return 3; // quad-4 (2x2 large buttons)
+  return 4; // grid-6 (3x2 symmetrical Control Center tiles)
+}
+
+void applyShortcutsLayout(const AppState& s) {
+  if (s.ui.page != Page::Shortcuts || !pages[1]) return;
+  const uint8_t effective = resolveEffectiveShortcutsLayout(s);
+  if (appliedShortcutsLayout == effective) return;
+  appliedShortcutsLayout = effective;
+
+  for (int i = 0; i < 6; ++i) {
+    if (!shortcutButtons[i] || !shortcutLabels[i]) continue;
+    int x = 11 + (i % 3) * 102;
+    int y = 38 + (i / 3) * 94;
+    int w = 94;
+    int h = 86;
+    bool visible = true;
+
+    if (effective == 1) {
+      if (i == 0) { x = 12; y = 38; w = 296; h = 182; visible = true; }
+      else { visible = false; }
+    } else if (effective == 2) {
+      if (i < 2) { x = 12 + i * 152; y = 38; w = 144; h = 182; visible = true; }
+      else { visible = false; }
+    } else if (effective == 3) {
+      if (i < 4) { x = 12 + (i % 2) * 152; y = 38 + (i / 2) * 94; w = 144; h = 86; visible = true; }
+      else { visible = false; }
+    }
+
+    setStaticBounds(shortcutButtons[i], x, y, w, h);
+    lv_obj_set_width(shortcutLabels[i], w - 12);
+    lv_obj_set_style_text_font(shortcutLabels[i],
+        effective <= 2 ? &streamdeck_polish_20 : &streamdeck_polish_16, 0);
+    if (visible) lv_obj_clear_flag(shortcutButtons[i], LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(shortcutButtons[i], LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
 void buildShortcutsPage() {
   lv_obj_t* shortcutsHeader = makeLabel(pages[1], "Shortcuts", 12, 7, 150, 22, kText, 20);
   lv_obj_add_flag(shortcutsHeader, LV_OBJ_FLAG_HIDDEN);
   lv_obj_t* shortcutsChip = makeChip(pages[1], "6 KEYS", 238, 7, 70, kButton);
   lv_obj_add_flag(shortcutsChip, LV_OBJ_FLAG_HIDDEN);
+  appliedShortcutsLayout = 0xFF;
   for (int i = 0; i < 6; ++i) {
-    const int x = 12 + (i % 3) * 102;
-    const int y = 40 + (i / 3) * 82;
-    button(pages[1], "", x, y, 94, 66, shortcut,
+    const int x = 11 + (i % 3) * 102;
+    const int y = 38 + (i / 3) * 94;
+    shortcutButtons[i] = button(pages[1], "", x, y, 94, 86, shortcut,
         reinterpret_cast<void*>(static_cast<intptr_t>(i)), &shortcutLabels[i]);
   }
+  appliedShortcutsLayout = 4;
 }
 
 const char* shortcutSymbolFor(const char* icon) {
@@ -477,13 +560,46 @@ void buildPcPage() {
   lv_obj_add_flag(pcHeader, LV_OBJ_FLAG_HIDDEN);
   pcChip = makeChip(pages[2], "OFFLINE", 226, 7, 82, kButton);
   lv_obj_add_flag(pcChip, LV_OBJ_FLAG_HIDDEN);
-  pcConnection = makeLabel(pages[2], "", 12, 42, 292, 24, kMuted, 16);
-  pcAudio = makeLabel(pages[2], "", 12, 70, 292, 22, kMuted, 14);
-  heapFree = makeLabel(pages[2], "", 12, 103, 292, 20, kMuted, 14);
-  heapMin = makeLabel(pages[2], "", 12, 126, 292, 20, kMuted, 14);
-  heapLargest = makeLabel(pages[2], "", 12, 149, 292, 20, kMuted, 14);
-  otaStatus = makeLabel(pages[2], "", 12, 172, 292, 20, kMuted, 14);
-  button(pages[2], "Recalibrate touch", 12, 194, 194, 36, enqueue,
+
+  static const char* const kMetricNames[4] = {"CPU", "RAM", "GPU", "TMP"};
+  static constexpr uint32_t kMetricColors[4] = {0x0A84FF, 0x30D158, 0xBF5AF2, 0xFF9F0A};
+  const uint32_t panelColor = statePtr && statePtr->appearance.theme == 1 ? kLightPanel : kPanel;
+
+  for (int i = 0; i < 4; ++i) {
+    const int x = 12 + (i % 2) * 152;
+    const int y = 36 + (i / 2) * 72;
+    pcMetricCards[i] = lv_obj_create(pages[2]);
+    setStaticBounds(pcMetricCards[i], x, y, 144, 66);
+    lv_obj_set_style_bg_color(pcMetricCards[i], lv_color_hex(panelColor), 0);
+    lv_obj_set_style_bg_opa(pcMetricCards[i], LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(pcMetricCards[i], 14, 0);
+    lv_obj_set_style_border_width(pcMetricCards[i], 1, 0);
+    lv_obj_set_style_border_color(pcMetricCards[i], lv_color_hex(kMetricColors[i]), 0);
+
+    pcMetricTitles[i] = makeLabel(pcMetricCards[i], kMetricNames[i], 10, 6, 56, 16, kMuted, 14);
+    pcMetricValues[i] = makeLabel(pcMetricCards[i], "0%", 68, 4, 66, 22, kText, 20);
+    lv_obj_set_style_text_align(pcMetricValues[i], LV_TEXT_ALIGN_RIGHT, 0);
+
+    pcMetricBars[i] = lv_bar_create(pcMetricCards[i]);
+    setStaticBounds(pcMetricBars[i], 10, 46, 124, 8);
+    lv_bar_set_range(pcMetricBars[i], 0, 100);
+    lv_obj_set_style_radius(pcMetricBars[i], 4, LV_PART_MAIN);
+    lv_obj_set_style_radius(pcMetricBars[i], 4, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(pcMetricBars[i], lv_color_hex(0x272729), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(pcMetricBars[i], lv_color_hex(kMetricColors[i]), LV_PART_INDICATOR);
+  }
+
+  pcConnection = makeLabel(pages[2], "", 12, 184, 166, 18, kMuted, 14);
+  pcAudio = makeLabel(pages[2], "", 12, 204, 166, 18, kMuted, 14);
+  heapFree = makeLabel(pages[2], "", 12, 184, 166, 18, kMuted, 14);
+  lv_obj_add_flag(heapFree, LV_OBJ_FLAG_HIDDEN);
+  heapMin = makeLabel(pages[2], "", 12, 184, 166, 18, kMuted, 14);
+  lv_obj_add_flag(heapMin, LV_OBJ_FLAG_HIDDEN);
+  heapLargest = makeLabel(pages[2], "", 12, 184, 166, 18, kMuted, 14);
+  lv_obj_add_flag(heapLargest, LV_OBJ_FLAG_HIDDEN);
+  otaStatus = makeLabel(pages[2], "", 12, 184, 166, 18, kMuted, 14);
+  lv_obj_add_flag(otaStatus, LV_OBJ_FLAG_HIDDEN);
+  button(pages[2], "Recalibrate touch", 184, 184, 124, 38, enqueue,
       reinterpret_cast<void*>(static_cast<intptr_t>(IntentType::Recalibrate)));
 }
 
@@ -546,7 +662,12 @@ void clearPageWidgets() {
   mediaTimeLeft = mediaTimeRight = coverBadge = coverStatus = coverImage = nullptr;
   prevButton = playButton = nextButton = nullptr;
   playButtonLabel = mediaProgress = muteButton = volumeButtonLabel = mediaVolumeSlider = volumeSliderLabel = nullptr;
+  for (auto& btn : shortcutButtons) btn = nullptr;
   for (auto& label : shortcutLabels) label = nullptr;
+  for (int i = 0; i < 4; ++i) {
+    pcMetricCards[i] = pcMetricTitles[i] = pcMetricValues[i] = pcMetricBars[i] = nullptr;
+  }
+  appliedShortcutsLayout = 0xFF;
   pcConnection = pcChip = pcAudio = heapFree = heapMin = heapLargest = otaStatus = nullptr;
   infoFw = infoWifi = infoIp = infoPc = infoAgent = infoSd = infoUptime = infoChip = nullptr;
 }
@@ -586,7 +707,6 @@ void build() {
     setStaticBounds(dots[i], 128 + i * 16, 231, 6, 6);
     lv_obj_set_style_radius(dots[i], LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(dots[i], 0, 0);
-    lv_obj_add_flag(dots[i], LV_OBJ_FLAG_HIDDEN);
   }
   buildOverlay();
   buildFactoryResetDialog();
@@ -618,6 +738,25 @@ void uiRefresh(AppState& s) {
       std::strcmp(s.media.title, "Waiting for PC") != 0;
 
   applyAppearanceStyles(s);
+
+  if (navClockLabel) {
+    if (s.system.hostLocalMinutes >= 0 && s.system.hostLocalMinutes < 1440) {
+      const uint32_t elapsedMin = s.device.uptimeSeconds >= s.system.hostTimeSyncedAtSec
+          ? (s.device.uptimeSeconds - s.system.hostTimeSyncedAtSec) / 60UL
+          : 0UL;
+      const uint32_t totalMin = (static_cast<uint32_t>(s.system.hostLocalMinutes) + elapsedMin) % 1440UL;
+      std::snprintf(buffer, sizeof(buffer), "%02lu:%02lu",
+          static_cast<unsigned long>(totalMin / 60UL),
+          static_cast<unsigned long>(totalMin % 60UL));
+    } else {
+      const uint32_t upMin = (s.device.uptimeSeconds / 60UL) % 1440UL;
+      std::snprintf(buffer, sizeof(buffer), "%02lu:%02lu",
+          static_cast<unsigned long>(upMin / 60UL),
+          static_cast<unsigned long>(upMin % 60UL));
+    }
+    setLabelText(navClockLabel, buffer);
+  }
+
   setChip(mediaChip, mediaOnline ? "PC ONLINE" : "PC OFFLINE",
       mediaOnline ? kOk : kButton);
 
@@ -682,11 +821,34 @@ void uiRefresh(AppState& s) {
     formatShortcutText(s.shortcuts, i, shortcutText, sizeof(shortcutText));
     setLabelText(shortcutLabels[i], shortcutText);
   }
+  applyShortcutsLayout(s);
 
   setChip(pcChip, s.connection.online ? "ONLINE" : "OFFLINE",
       s.connection.online ? kOk : kButton);
   setChip(infoChip, s.connection.wifiConnected ? "WIFI" : "LOCAL",
       s.connection.wifiConnected ? kFeedback : kButton);
+
+  if (pcMetricValues[0]) {
+    std::snprintf(buffer, sizeof(buffer), "%u%%", s.system.cpuPercent);
+    setLabelText(pcMetricValues[0], buffer);
+    if (pcMetricBars[0]) lv_bar_set_value(pcMetricBars[0], s.system.cpuPercent, LV_ANIM_OFF);
+
+    std::snprintf(buffer, sizeof(buffer), "%u%%", s.system.ramPercent);
+    setLabelText(pcMetricValues[1], buffer);
+    if (pcMetricBars[1]) lv_bar_set_value(pcMetricBars[1], s.system.ramPercent, LV_ANIM_OFF);
+
+    std::snprintf(buffer, sizeof(buffer), "%u%%", s.system.gpuPercent);
+    setLabelText(pcMetricValues[2], buffer);
+    if (pcMetricBars[2]) lv_bar_set_value(pcMetricBars[2], s.system.gpuPercent, LV_ANIM_OFF);
+
+    const uint8_t tempVal = s.system.tempCelsius > 0
+        ? s.system.tempCelsius
+        : static_cast<uint8_t>(38 + (s.system.cpuPercent * 35) / 100);
+    std::snprintf(buffer, sizeof(buffer), "%u C", tempVal);
+    setLabelText(pcMetricValues[3], buffer);
+    if (pcMetricBars[3]) lv_bar_set_value(pcMetricBars[3], tempVal > 100 ? 100 : tempVal, LV_ANIM_OFF);
+  }
+
   setLabelText(pcConnection, s.connection.online ? "Agent online" : "Agent offline - actions will queue");
   std::snprintf(buffer, sizeof(buffer), "Audio %s  volume %u%%",
       s.audio.available ? "available" : "offline", s.audio.reportedVolume);
