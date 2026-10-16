@@ -64,6 +64,20 @@ int main() {
   assert(defaults.pageOrder[0] == Page::Media);
   assert(defaults.pageOrder[1] == Page::Shortcuts);
 
+  UiState brightnessUi;
+  brightnessUi.localBrightness = 42;
+  applyBrightnessRevision(brightnessUi, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false);
+  assert(brightnessUi.localBrightness == 0); // New saved settings, including a save made offline.
+  brightnessUi.localBrightness = 55;
+  applyBrightnessRevision(brightnessUi, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false);
+  assert(brightnessUi.localBrightness == 55); // Reconnect preserves local correction.
+  applyBrightnessRevision(brightnessUi, nullptr, false);
+  assert(brightnessUi.localBrightness == 55); // Legacy hydration also preserves it.
+  applyBrightnessRevision(brightnessUi, "malformed", false);
+  assert(brightnessUi.localBrightness == 55);
+  applyBrightnessRevision(brightnessUi, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true);
+  assert(brightnessUi.localBrightness == 0); // Explicit Sync reapplies even the same value.
+
   MediaState timeline;
   timeline.positionMs = 27000;
   timeline.durationMs = 30000;

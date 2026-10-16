@@ -194,6 +194,26 @@ inline bool makeShortcutExecuteJson(const char* requestId, const char* shortcutI
   return written > 0 && static_cast<std::size_t>(written) < outSize;
 }
 
+// Fixed-size icon payload; strict length avoids accepting truncated images.
+inline bool decodeShortcutIcon(const char* data, uint8_t* pixels) {
+  if (std::strlen(data) != 2304) return false;
+  auto value = [](char c) -> int {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+' || c == '-') return 62;
+    if (c == '/' || c == '_') return 63;
+    return -1;
+  };
+  for (size_t i = 0, out = 0; i < 2304; i += 4, out += 3) {
+    int a = value(data[i]), b = value(data[i + 1]), c = value(data[i + 2]), d = value(data[i + 3]);
+    if (a < 0 || b < 0 || c < 0 || d < 0) return false;
+    const uint32_t triple = (a << 18) | (b << 12) | (c << 6) | d;
+    pixels[out] = triple >> 16; pixels[out + 1] = triple >> 8; pixels[out + 2] = triple;
+  }
+  return true;
+}
+
 inline void applyShortcutsUpdateJson(ShortcutState& shortcuts, const char* payload, std::size_t length) {
   resetShortcuts(shortcuts);
   if (!payload || length == 0) return;
@@ -212,16 +232,23 @@ inline void applyShortcutsUpdateJson(ShortcutState& shortcuts, const char* paylo
     char label[20]{};
     char icon[16]{};
     char displayMode[6]{};
+    char color[8]{};
+    char iconData[2306]{};
     readQuotedField(objStart, objLen, "id", id, sizeof(id));
     readQuotedField(objStart, objLen, "label", label, sizeof(label));
     readQuotedField(objStart, objLen, "icon", icon, sizeof(icon));
     readQuotedField(objStart, objLen, "displayMode", displayMode, sizeof(displayMode));
+    readQuotedField(objStart, objLen, "color", color, sizeof(color));
+    readQuotedField(objStart, objLen, "iconData", iconData, sizeof(iconData));
     if (id[0] != '\0') {
       copyShortcutText(shortcuts.names[index], sizeof(shortcuts.names[index]), label, "Shortcut");
       copyShortcutText(shortcuts.ids[index], sizeof(shortcuts.ids[index]), id, "");
       copyShortcutText(shortcuts.icons[index], sizeof(shortcuts.icons[index]), icon, "");
       copyShortcutText(shortcuts.displayModes[index], sizeof(shortcuts.displayModes[index]),
           validShortcutDisplayMode(displayMode) ? displayMode : "label", "label");
+      if (std::strlen(color) == 7 && color[0] == '#' && std::all_of(color + 1, color + 7, [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; }))
+        copyShortcutText(shortcuts.colors[index], sizeof(shortcuts.colors[index]), color, "");
+      shortcuts.hasIconPixels[index] = decodeShortcutIcon(iconData, shortcuts.iconPixels[index]);
       ++index;
     }
     cursor = (objEnd == end) ? end : objEnd + 1;

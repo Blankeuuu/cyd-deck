@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 
+#define LV_SYMBOL_SETTINGS "[settings]"
 #define LV_SYMBOL_AUDIO "[audio]"
 #define LV_SYMBOL_PREV "[prev]"
 #define LV_SYMBOL_PLAY "[play]"
@@ -17,6 +18,11 @@
 struct lv_font_t {};
 #define LV_FONT_DECLARE(font_name) extern lv_font_t font_name;
 inline lv_font_t lv_font_montserrat_16;
+inline lv_font_t lv_font_montserrat_20;
+inline lv_font_t cyd_icons_20;
+inline lv_font_t lv_font_montserrat_48;
+inline lv_font_t lv_font_montserrat_40;
+constexpr int LV_IMAGE_ALIGN_COVER = 1;
 inline lv_font_t streamdeck_polish_14;
 inline lv_font_t streamdeck_polish_16;
 inline lv_font_t streamdeck_polish_20;
@@ -25,6 +31,7 @@ using lv_color_t = uint32_t;
 
 enum lv_color_format_t {
   LV_COLOR_FORMAT_RGB565 = 0,
+  LV_COLOR_FORMAT_RGB565A8 = 1,
 };
 
 constexpr uint32_t LV_IMAGE_HEADER_MAGIC = 0x19;
@@ -46,6 +53,8 @@ struct lv_image_dsc_t {
 
 enum {
   LV_LABEL_LONG_DOT = 0,
+  LV_LABEL_LONG_MODE_CLIP = 4,
+  LV_LABEL_LONG_MODE_WRAP = 5,
   LV_TEXT_ALIGN_CENTER = 2,
   LV_TEXT_ALIGN_RIGHT = 3,
   LV_OPA_COVER = 255,
@@ -107,10 +116,12 @@ struct lv_obj_t {
   int event_code = 0;
   int text_set_count = 0;
   int text_align = 0;
+  int long_mode = LV_LABEL_LONG_MODE_CLIP;
   void* event_user_data = nullptr;
   lv_event_cb_t event_cb = nullptr;
   std::string text;
   const void* image_src = nullptr;
+  int image_align = 0;
 };
 
 inline int lv_test_bg_writes = 0;
@@ -150,6 +161,7 @@ inline lv_obj_t* lv_btn_create(lv_obj_t* parent) { return lv_test_create(parent,
 inline lv_obj_t* lv_bar_create(lv_obj_t* parent) { return lv_test_create(parent, lv_obj_t::Type::Bar); }
 inline lv_obj_t* lv_slider_create(lv_obj_t* parent) { return lv_test_create(parent, lv_obj_t::Type::Slider); }
 inline lv_obj_t* lv_image_create(lv_obj_t* parent) { return lv_test_create(parent, lv_obj_t::Type::Image); }
+inline void lv_image_set_inner_align(lv_obj_t* object, int align) { object->image_align = align; }
 inline void lv_image_set_src(lv_obj_t* object, const void* src) { object->image_src = src; }
 inline void lv_obj_delete(lv_obj_t* object) {
   while (!object->children.empty()) lv_obj_delete(object->children.back());
@@ -198,7 +210,7 @@ inline lv_obj_t* lv_obj_get_child(const lv_obj_t* object, int index) {
 
 inline void lv_label_set_text(lv_obj_t* object, const char* text) { object->text = text ? text : ""; ++object->text_set_count; }
 inline const char* lv_label_get_text(const lv_obj_t* object) { return object->text.c_str(); }
-inline void lv_label_set_long_mode(lv_obj_t*, int) {}
+inline void lv_label_set_long_mode(lv_obj_t* obj, int mode) { obj->long_mode = mode; }
 inline void lv_obj_add_event_cb(lv_obj_t* object, lv_event_cb_t cb, int code, void* user_data) {
   object->event_cb = cb;
   object->event_code = code;
@@ -224,3 +236,26 @@ inline void lv_bar_set_value(lv_obj_t* object, int value, int) { object->value =
 inline void lv_slider_set_range(lv_obj_t*, int, int) {}
 inline int lv_slider_get_value(lv_obj_t* object) { return object->value; }
 inline void lv_slider_set_value(lv_obj_t* object, int value, int) { object->value = value; }
+
+inline bool lv_obj_has_flag(const lv_obj_t* object, uint32_t flag) { return (object->flags & flag) != 0; }
+
+inline int32_t lv_text_get_width(const char*, uint32_t length, const lv_font_t*, int32_t) { return static_cast<int32_t>(length) * 8; }
+#define LV_SYMBOL_KEYBOARD "[keyboard]"
+#define LV_SYMBOL_DIRECTORY "[directory]"
+#define LV_SYMBOL_HOME "[home]"
+#define LV_SYMBOL_RIGHT "[right]"
+#define LV_SYMBOL_FILE "[file]"
+#define LV_SYMBOL_EYE_CLOSE "[eye_close]"
+#define LV_SYMBOL_OK "[ok]"
+
+inline int lv_obj_get_x(const lv_obj_t* object) { return object->x; }
+inline int lv_obj_get_y(const lv_obj_t* object) { return object->y; }
+inline int lv_obj_get_width(const lv_obj_t* object) { return object->w; }
+inline int lv_obj_get_height(const lv_obj_t* object) { return object->h; }
+constexpr int LV_ALIGN_TOP_LEFT = 0;
+inline void lv_obj_set_align(lv_obj_t*, int) {}
+
+inline const void* lv_image_get_src(lv_obj_t* image) { return image->image_src; }
+inline void lv_image_cache_drop(const void*) {}
+
+inline void lv_obj_invalidate(lv_obj_t*) {}

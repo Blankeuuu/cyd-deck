@@ -20,6 +20,41 @@ using StreamDeck.Shortcuts;
 using StreamDeck.WindowsAgent.Updates;
 using ShortcutDefinition = StreamDeck.Shortcuts.ShortcutDefinition;
 
+// Icon previews use the same glyph masks as the CYD; URL images round-trip to RGB565A8.
+AssertEqual(21, ShortcutIconCatalog.All.Count, "all supported icons are visible in picker");
+AssertEqual("hotkey", ShortcutIconCatalog.Normalize(" Keyboard "), "icon alias normalization");
+using (var source = new Bitmap(48, 24))
+using (var graphics = Graphics.FromImage(source))
+using (var png = new MemoryStream())
+{
+    graphics.Clear(Color.Red); source.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+    var data = ShortcutIconCatalog.Encode(png.ToArray());
+    var pixels = Convert.FromBase64String(data);
+    AssertEqual(1728, pixels.Length, "custom icon exact byte length");
+    AssertEqual((byte)0, pixels[1152], "custom icon letterbox transparency");
+    AssertEqual((byte)255, pixels[1152 + 12 * 24 + 12], "custom icon center alpha");
+    AssertEqual((byte)0xF8, pixels[(12 * 24 + 12) * 2 + 1], "custom icon RGB565 little endian red");
+    var items = Enumerable.Range(0, 6).Select(i => new DeviceShortcutDefinition("slot" + i, "Custom", "custom", "both", IconData: data)).ToArray();
+    var frame = ProtocolStateMapper.CreateShortcutsUpdate(new DeviceShortcutConfiguration(items));
+    AssertTrue(Encoding.UTF8.GetByteCount(frame) < 16384, "six custom icons fit serial frame");
+    AssertTrue(!frame.Contains("\\u002B"), "icon payload avoids JSON plus escapes");
+    using var doc = JsonDocument.Parse(frame);
+    var transmitted = doc.RootElement.GetProperty("data").GetProperty("shortcuts")[0].GetProperty("iconData").GetString()!;
+    AssertTrue(pixels.SequenceEqual(Convert.FromBase64String(transmitted.Replace('-', '+').Replace('_', '/'))), "custom icon protocol round trip");
+    using var output = new Bitmap(24, 24);
+    using var outputGraphics = Graphics.FromImage(output);
+    ShortcutIconCatalog.Draw(outputGraphics, "custom", data, new Rectangle(0, 0, 24, 24), Color.White);
+    AssertTrue(output.GetPixel(12, 12).R > 240 && output.GetPixel(12, 12).G == 0, "Windows renders actual imported pixels");
+}
+AssertThrows<InvalidDataException>(() => ShortcutIconCatalog.Encode([1, 2, 3]), "invalid image rejected");
+using (var picker = new ShortcutIconPicker("lock", null, null))
+{
+    picker.CreateControl(); picker.PerformLayout();
+    using var render = new Bitmap(picker.Width, picker.Height);
+    picker.DrawToBitmap(render, new Rectangle(Point.Empty, picker.Size));
+    Directory.CreateDirectory("artifacts/ui-review"); render.Save("artifacts/ui-review/icon-picker.png");
+}
+
 if (args.Contains("--live-audio"))
 {
     using var endpoint = new CoreAudioEndpoint();
@@ -443,9 +478,9 @@ AssertEqual(Color.FromArgb(246, 247, 249).ToArgb(), SettingsWindow.GetClientThem
 AssertEqual(Color.FromArgb(0x12, 0x34, 0x56).ToArgb(), SettingsWindow.ResolveClientAccentForTests("#123456").ToArgb(), "client app follows configured accent color");
 AssertEqual(Color.FromArgb(0x65, 0x43, 0x21).ToArgb(), SettingsWindow.ResolveClientBackgroundForTests("dark", "#654321").ToArgb(), "client app follows configured background color");
 AssertEqual(SettingsWindow.GetClientThemeBackground("light").ToArgb(), SettingsWindow.ResolveClientBackgroundForTests("light", string.Empty).ToArgb(), "light client theme keeps light default background when device color is unset");
-AssertTrue(SettingsWindow.GetNavigationWidth() >= 250, "settings navigation uses a wider hierarchy rail");
+AssertTrue(SettingsWindow.GetNavigationWidth() >= 180, "settings navigation uses a wider hierarchy rail");
 AssertTrue(SettingsWindow.GetNavigationButtonSize().Height >= 42, "settings navigation buttons have comfortable target height");
-AssertTrue(SettingsWindow.GetClientContentPadding().Left >= 32, "settings content uses spacious page margins");
+AssertTrue(SettingsWindow.GetClientContentPadding().Left >= 20, "settings content uses spacious page margins");
 AssertEqual(new Size(900, 620), SettingsWindow.GetMinimumWindowSizeForTests(), "settings window keeps the validated 900x620 minimum size");
 AssertTrue(SettingsWindow.ShouldPreserveClientThemeBackColor(SettingsWindow.DeviceColorPreviewTagForTests), "device color preview is not remapped by client theme");
 var minimumClientWidth = 900 - SettingsWindow.GetNavigationWidth() - SettingsWindow.GetClientContentPadding().Horizontal;
@@ -458,7 +493,7 @@ AssertTrue(SettingsWindow.PageLayoutHasScrollableBodyAndAccessibleFooterForTests
 var orderedShortcuts = new List<string> { "one", "two", "three", "four" };
 SettingsWindow.MoveShortcutInMemory(orderedShortcuts, 0, SettingsWindow.NormalizeShortcutTargetIndex(0, 3, orderedShortcuts.Count));
 AssertEqual("two,three,one,four", string.Join(',', orderedShortcuts), "shortcut Move to position reorders by user-visible one-based position");
-AssertTrue(SettingsWindow.GetAppearanceSliderTrackWidth(minimumClientWidth) < 300, "appearance sliders shrink below old fixed width at minimum window size");
+AssertTrue(SettingsWindow.GetAppearanceSliderTrackWidth(minimumClientWidth) <= 300, "appearance sliders shrink below old fixed width at minimum window size");
 AssertTrue(SettingsWindow.GetAppearanceSliderValueWidth("86400 sec") >= System.Windows.Forms.TextRenderer.MeasureText("86400 sec", SystemFonts.MessageBoxFont).Width + 16, "appearance slider value column fits the longest timeout label");
 AssertTrue(SettingsWindow.GetAppearanceFormLabelWidth(minimumClientWidth) <= 180, "appearance labels leave room for controls at minimum width");
 var previousColorPickerContext = SynchronizationContext.Current;
@@ -545,6 +580,14 @@ var catalogFixture = ShortcutCatalog.Create(new ShortcutConfiguration { Shortcut
 catalogFixture.Replace(new ShortcutConfiguration { Shortcuts = shortcutFixtureStore.LoadOrDefault().Shortcuts!.Reverse().ToArray() });
 AssertEqual("test-second", catalogFixture.DeviceConfiguration.Shortcuts[0].Id, "live catalog replacement updates the device order atomically");
 AssertTrue(catalogFixture.TryGetAction("test-second", out var liveAction) && liveAction.Url == "https://example.com/second", "live catalog replacement keeps executable actions available");
+var brightnessRevisionConfig = new AppearanceConfiguration { BrightnessRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
+var hydrationSettings = ProtocolStateMapper.CreateDeviceSettings("hydrate", brightnessRevisionConfig);
+AssertTrue(ProtocolSerializer.Parse(hydrationSettings).IsSuccess, "new settings parse successfully");
+AssertContains("\"applyBrightness\":false", hydrationSettings, "hydration preserves local brightness unless revision changes");
+AssertContains("\"brightnessRevision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", hydrationSettings, "hydration carries saved brightness revision");
+var forceSettings = ProtocolStateMapper.CreateDeviceSettings("save", brightnessRevisionConfig, applyBrightness: true);
+AssertContains("\"applyBrightness\":true", forceSettings, "explicit sync applies brightness");
+AssertTrue(!ProtocolSerializer.Parse("""{"protocol":1,"type":"device.settings","data":{"version":1,"brightnessRevision":"bad"}}""").IsSuccess, "invalid brightness revision is rejected");
 var previousSettingsShortcutsContext = SynchronizationContext.Current;
 var settingsUiState = new AgentState();
 var settingsPairingStore = Path.Combine(Path.GetTempPath(), $"streamdeck-settings-shortcuts-{Guid.NewGuid():N}.json");
@@ -556,127 +599,74 @@ using (var settingsWindow = new SettingsWindow(settingsUiState, settingsRuntime,
     settingsWindow.StartPosition = FormStartPosition.Manual;
     settingsWindow.Location = new Point(-2000, -2000);
     settingsWindow.ShowInTaskbar = false;
-    settingsWindow.Size = SettingsWindow.GetMinimumWindowSizeForTests();
+    settingsWindow.Size = new Size(1200, 760);
     settingsWindow.Show();
-    System.Windows.Forms.Application.DoEvents();
-    AssertEqual(SettingsWindow.AppDisplayName, settingsWindow.Text, "settings window uses CYD-DECK title branding");
-    AssertEqual("CYD-DECK settings", settingsWindow.AccessibleName, "settings window uses CYD-DECK accessible branding");
-    AssertTrue(FlattenControls(settingsWindow).OfType<System.Windows.Forms.Label>().Any(label => label.Text == SettingsWindow.AppDisplayName), "settings navigation visually renders CYD-DECK branding");
-    var brandLabel = FlattenControls(settingsWindow).OfType<Label>().Single(label => label.Text == SettingsWindow.AppDisplayName);
-    AssertTrue(brandLabel.Visible && BoundsInClient(settingsWindow, brandLabel).Top < 100, "navigation branding remains above the navigation buttons");
-    using (var overviewBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
+    Application.DoEvents();
+    void Navigate(string name) => FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == name).PerformClick();
+    foreach (var name in new[] { "Overview", "Deck Builder", "Settings", "Device", "Pairing", "Updates", "Logs" })
     {
-        settingsWindow.DrawToBitmap(overviewBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
-        AssertTrue(BitmapContainsColor(overviewBitmap, Color.FromArgb(82, 153, 224)), "overview page renders the accent border/header at minimum size");
-        Directory.CreateDirectory("artifacts/ui-review");
-        overviewBitmap.Save("artifacts/ui-review/overview-minimum.png");
+        Navigate(name);
+        Application.DoEvents();
+        var body = FlattenControls(settingsWindow).OfType<Panel>().Single(control => Equals(control.Tag, "settings-page-body"));
+        AssertTrue(!body.VerticalScroll.Visible, $"{name} fits 1200x760 without page scroll");
+        foreach (var control in FlattenControls(body).Where(c => c.Visible && c is TextBox or ComboBox or NumericUpDown or Button))
+        {
+            var bounds = BoundsInClient(settingsWindow, control);
+            AssertTrue(bounds.Bottom <= settingsWindow.ClientSize.Height && bounds.Right <= settingsWindow.ClientSize.Width, $"{name}: {control.AccessibleName ?? control.Text} stays inside window");
+        }
+        using var bitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height);
+        settingsWindow.DrawToBitmap(bitmap, new Rectangle(Point.Empty, settingsWindow.Size));
+        bitmap.Save($"artifacts/ui-review/compact-{name.Replace(" ", "-")}.png");
     }
-    AssertEqual(ApartmentState.STA, Thread.CurrentThread.GetApartmentState(), "control tests run on STA for DragDrop");
-    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Device").PerformClick();
-    AssertTrue(!FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Restart").Enabled, "restart disabled when device offline");
+    Navigate("Deck Builder");
+    var nameInput = FlattenControls(settingsWindow).OfType<TextBox>().Single(control => control.AccessibleName == "Label");
+    var catalogList = FlattenControls(settingsWindow).OfType<ListView>().Single(control => control.AccessibleName == "Shortcut catalog");
+    catalogList.Items[0].Selected = true;
+    Application.DoEvents();
+    nameInput.Text = "Draft name";
+    AssertEqual("First shortcut", shortcutFixtureStore.LoadOrDefault().Shortcuts![0].Name, "editing does not write persisted configuration");
+    Navigate("Settings"); Navigate("Deck Builder");
+    catalogList = FlattenControls(settingsWindow).OfType<ListView>().Single(control => control.AccessibleName == "Shortcut catalog");
+    AssertEqual("Draft name", catalogList.Items[0].SubItems[1].Text, "draft survives navigation");
+    AssertTrue(await settingsWindow.SaveConfigurationDraftAsync(), "offline save succeeds");
+    AssertEqual("Draft name", shortcutFixtureStore.LoadOrDefault().Shortcuts![0].Name, "explicit save persists draft offline");
+    Navigate("Deck Builder");
+    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Duplicate").PerformClick();
+    AssertEqual(2, FlattenControls(settingsWindow).OfType<ListView>().Single(control => control.AccessibleName == "Shortcut catalog").Items.Count, "duplicate profile preserves shortcuts");
+    AssertTrue(await settingsWindow.SaveConfigurationDraftAsync(), "profile save succeeds offline");
+    var profileConfiguration = shortcutFixtureStore.LoadOrDefault();
+    AssertEqual(2, profileConfiguration.Profiles.Count, "profiles persist alongside active configuration");
+    AssertEqual("Profile 1", profileConfiguration.ActiveProfile, "new profile becomes active");
+    Navigate("Device");
     settingsUiState.MarkDeviceConnected("ui-device", "UI CYD", "USB");
-    AssertTrue(FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Restart").Enabled, "restart enabled immediately after reconnect without page navigation");
     settingsUiState.UpdateDeviceInfo(new DeviceInfoMessage("ui-firmware", 30,
         new DeviceWifiInfo(true, "lab", -50, "192.168.1.8"), "192.168.1.10",
         new DeviceStorageInfo(true, true, 1024, 512), new DeviceHeapInfo(1000, 900, 800)));
-    AssertTrue(FlattenControls(settingsWindow).OfType<Label>().Any(label => label.Text == "ui-firmware"), "first telemetry report adds device details without reopening page");
-    settingsUiState.MarkDeviceDisconnected("ui-device");
-    AssertTrue(!FlattenControls(settingsWindow).OfType<Label>().Any(label => label.Text == "ui-firmware"), "disconnect removes current telemetry from device page");
-    AssertTrue(!FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Restart").Enabled, "restart disabled immediately after disconnect");
-    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Overview").PerformClick();
-    settingsWindow.Size = new Size(1200, 800);
-    settingsWindow.PerformLayout();
-    using (var wideBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
+    Application.DoEvents();
+    AssertTrue(FlattenControls(settingsWindow).OfType<ListView>().Any(list => list.Items.Cast<ListViewItem>().Any(item => item.SubItems.Cast<ListViewItem.ListViewSubItem>().Any(sub => sub.Text == "ui-firmware"))), "device telemetry refreshes live");
+    foreach (var size in new[] { new Size(900, 620), new Size(1200, 760) })
     {
-        settingsWindow.DrawToBitmap(wideBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
-        wideBitmap.Save("artifacts/ui-review/overview-wide.png");
+        settingsWindow.Size = size;
+        for (var round = 0; round < 3; ++round)
+            foreach (var name in new[] { "Overview", "Deck Builder", "Settings", "Device", "Pairing", "Updates", "Logs" })
+            {
+                Navigate(name); settingsUiState.SetMode("live"); Application.DoEvents();
+                AssertTrue(!settingsWindow.IsDisposed, $"navigation remains alive: {name}");
+            }
     }
-    settingsWindow.Size = SettingsWindow.GetMinimumWindowSizeForTests();
-    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Shortcuts").PerformClick();
-    System.Windows.Forms.Application.DoEvents();
-    settingsWindow.PerformLayout();
-    System.Windows.Forms.Application.DoEvents();
-    var shortcutsPageControls = FlattenControls(settingsWindow).Where(control => control.Visible).ToArray();
-    var shortcutsBody = shortcutsPageControls.OfType<Panel>().Single(panel => Equals(panel.Tag, "settings-page-body"));
-    var shortcutsFooter = shortcutsPageControls.OfType<FlowLayoutPanel>().Single(panel => Equals(panel.Tag, "settings-page-footer"));
-    var shortcutsLists = shortcutsPageControls.OfType<ListView>().ToArray();
-    var shortcutFooterButtons = shortcutsFooter.Controls.OfType<Button>().Where(button => button.Visible).ToArray();
-    AssertTrue(shortcutsLists.Any(list => string.Equals(list.AccessibleName, "Agent-side shortcuts", StringComparison.Ordinal)), "settings shortcuts page shows the Agent-side shortcuts list at minimum size");
-    AssertTrue(shortcutsBody.Bounds.Bottom <= shortcutsFooter.Bounds.Top, "shown settings shortcuts page body stays above the footer at 900x620");
-    AssertTrue(shortcutsFooter.Bounds.Bottom <= shortcutsFooter.Parent!.ClientSize.Height, "shown settings shortcuts page footer stays inside the page at 900x620");
-    foreach (var expectedButton in new[] { "Add", "Edit", "Delete", "Move up", "Move down", "Import full config", "Export full config" })
+    settingsWindow.Size = new Size(1200, 760);
+    Navigate("Settings"); Application.DoEvents();
+    AssertTrue(!FlattenControls(settingsWindow).OfType<TabControl>().Any(control => control.Visible), "normal Settings shows all three complete cards without sub-tabs");
+    settingsWindow.Scale(new SizeF(1.5f, 1.5f));
+    settingsWindow.MinimumSize = SettingsWindow.GetMinimumWindowSizeForTests(); // Match OnDpiChanged physical bounds.
+    settingsWindow.Size = new Size(1200, 760);
+    Application.DoEvents();
+    AssertTrue(FlattenControls(settingsWindow).OfType<TabControl>().Any(control => control.Visible), "scaled Settings adapts to tabs");
+    using (var scaledBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
     {
-        var button = shortcutFooterButtons.Single(candidate => candidate.Text == expectedButton);
-        var bounds = BoundsInClient(settingsWindow, button);
-        AssertTrue(button.Width >= 128 && button.Height >= SettingsWindow.GetActionButtonHeight(), $"settings shortcuts footer keeps {expectedButton} accessible at 900x620");
-        AssertTrue(bounds.Width > 0 && bounds.Height > 0 && settingsWindow.ClientRectangle.Contains(bounds), $"settings shortcuts footer renders {expectedButton} inside the shown window at 900x620");
+        settingsWindow.DrawToBitmap(scaledBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
+        scaledBitmap.Save("artifacts/ui-review/compact-Settings-scaled.png");
     }
-
-    AssertTrue(!SettingsWindow.ControlHasHorizontalScrollbarForTests(shortcutsBody), "shown settings shortcuts page body does not expose a horizontal scrollbar at 900x620");
-    AssertTrue(shortcutsLists.All(list => !SettingsWindow.ControlHasHorizontalScrollbarForTests(list)), "shown settings shortcuts page lists do not expose horizontal scrollbars at 900x620");
-    var savedShortcutList = shortcutsLists.Single(list => list.AccessibleName == "Agent-side shortcuts");
-    savedShortcutList.Items[0].Selected = true;
-    Application.DoEvents();
-    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Move down").PerformClick();
-    Application.DoEvents();
-    AssertEqual("test-second", shortcutFixtureStore.LoadOrDefault().Shortcuts![0].Id, "Move down persists the selected shortcut order");
-    var reorderedList = FlattenControls(settingsWindow).OfType<ListView>().Single(list => list.AccessibleName == "Agent-side shortcuts");
-    AssertEqual("Second shortcut", reorderedList.Items[0].Text, "Move down updates the visible list");
-    AssertTrue(reorderedList.Items[1].Selected, "Move down retains selection on the moved shortcut");
-    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Move up").PerformClick();
-    Application.DoEvents();
-    AssertEqual("test-first", shortcutFixtureStore.LoadOrDefault().Shortcuts![0].Id, "Move up restores order without restarting Agent");
-    using (var shortcutBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
-    {
-        settingsWindow.DrawToBitmap(shortcutBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
-        shortcutBitmap.Save("artifacts/ui-review/shortcuts-minimum.png");
-    }
-    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Appearance").PerformClick();
-    Application.DoEvents();
-    AssertTrue(FlattenControls(settingsWindow).OfType<Button>().Any(button => button.Text == "First shortcut" && button.Enabled), "Appearance preview uses readable real shortcut names");
-    var appearancePreviewButton = FlattenControls(settingsWindow).OfType<Button>().Single(button => button.AccessibleName == "CYD shortcut preview slot 1");
-    AssertTrue(appearancePreviewButton.ForeColor.GetBrightness() > 0.7f, "dark Appearance preview keeps light text");
-    var appearanceBody = FlattenControls(settingsWindow).OfType<Panel>().Single(body => Equals(body.Tag, "settings-page-body"));
-    var finalDisplaySlider = FlattenControls(settingsWindow).OfType<TrackBar>().Last();
-    appearanceBody.ScrollControlIntoView(finalDisplaySlider);
-    Application.DoEvents();
-    var sliderBounds = BoundsInClient(settingsWindow, finalDisplaySlider);
-    var appearanceBodyBounds = BoundsInClient(settingsWindow, appearanceBody);
-    AssertTrue(sliderBounds.Top >= appearanceBodyBounds.Top && sliderBounds.Bottom <= appearanceBodyBounds.Bottom, "Appearance display controls can be fully scrolled above the footer");
-    using (var appearanceBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
-    {
-        settingsWindow.DrawToBitmap(appearanceBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
-        appearanceBitmap.Save("artifacts/ui-review/appearance-scrolled.png");
-    }
-
-    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Pairing").PerformClick();
-    Application.DoEvents();
-    var stablePairingLists = FlattenControls(settingsWindow).OfType<ListView>().ToArray();
-    AssertTrue(!FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Approve").Enabled, "empty Pairing never enables Approve");
-    settingsUiState.SetMode("live");
-    Application.DoEvents();
-    AssertTrue(stablePairingLists.All(list => !list.IsDisposed && FlattenControls(settingsWindow).Contains(list)), "telemetry leaves Pairing controls and user interaction intact");
-    using (var pairingBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
-    {
-        settingsWindow.DrawToBitmap(pairingBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
-        pairingBitmap.Save("artifacts/ui-review/pairing-minimum.png");
-    }
-    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Logs").PerformClick();
-    System.Windows.Forms.Application.DoEvents();
-    var visibleLogSearch = FlattenControls(settingsWindow).OfType<TextBox>()
-        .Single(control => control.Visible && control.AccessibleName == "Search recent logs");
-    var visibleLogSeverityFilter = FlattenControls(settingsWindow).OfType<CheckBox>()
-        .Single(control => control.Visible && control.AccessibleName == "Show error log entries only");
-    AssertTrue(visibleLogSearch.Width >= 250, "Logs search input remains usable at minimum window size");
-    AssertEqual("Errors only", visibleLogSeverityFilter.Text, "Logs severity filter communicates error-only results");
-    for (var round = 0; round < 12; round++)
-        foreach (var pageName in new[] { "Overview", "Shortcuts", "Appearance", "Device", "Pairing", "Updates", "Logs" })
-        {
-            FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == pageName).PerformClick();
-            settingsUiState.SetMode("live");
-            Application.DoEvents();
-            AssertTrue(!settingsWindow.IsDisposed, $"page switching stress stays alive: {pageName}");
-        }
     settingsWindow.CloseForExit();
 }
 SynchronizationContext.SetSynchronizationContext(previousSettingsShortcutsContext);

@@ -79,10 +79,10 @@ public sealed class WindowsAgentRuntime(
                 appearanceProvider: () => AgentConfigurationStoreFactory.CreateForCurrentUser().LoadOrDefault().Appearance ?? new AppearanceConfiguration(),
                 initialMediaSender: (sink, token) => new ValueTask(PublishMediaUpdateAsync(mediaMonitor?.CurrentSnapshot, token, sink)));
 
-            if (!options.MockMode)
+            if (!options.MockMode && (configuration.Server?.UsbAutoConnect != false || options.UsbPort is not null))
             {
                 usbRuntime = new UsbDeviceRuntime(
-                    () => ResolveUsbPortCandidates(options),
+                    () => ResolveUsbPortCandidates(options with { UsbPort = options.UsbPort ?? configuration.Server?.UsbPort }),
                     usbPort =>
                     {
                         AgentDiagnosticLog.Write($"Opening USB serial transport on {usbPort}");
@@ -249,7 +249,7 @@ public sealed class WindowsAgentRuntime(
     public Task<bool> ApplyDeviceSettingsAsync(AppearanceConfiguration appearance, CancellationToken cancellationToken = default)
     {
         AgentDiagnosticLog.Write("Sending device settings command");
-        return SendDeviceCommandAsync(ProtocolStateMapper.CreateDeviceSettings(CreateRequestId("settings"), appearance), cancellationToken);
+        return SendDeviceCommandAsync(ProtocolStateMapper.CreateDeviceSettings(CreateRequestId("settings"), appearance, applyBrightness: true), cancellationToken);
     }
 
     public async Task<bool> ForgetDeviceAsync(string? specificDeviceId = null, CancellationToken cancellationToken = default)

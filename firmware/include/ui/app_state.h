@@ -12,8 +12,8 @@
 namespace streamdeck {
 constexpr std::size_t kMaxShortcutIdLength = 64;
 constexpr uint8_t kPageCount = 4;
-enum class Page : uint8_t { Media = 0, Shortcuts = 1, Pc = 2, Info = 3 };
-enum class IntentType : uint8_t { Previous, TogglePlayback, Next, SetVolume, RunShortcut, Recalibrate, RestartDevice, FactoryReset, SettingsUpdated, RefreshUi, ShortcutsUpdated, ToggleMute };
+enum class Page : uint8_t { Media = 0, Shortcuts = 1, Pc = 2, Info = 3, Home = 4 };
+enum class IntentType : uint8_t { Previous, TogglePlayback, Next, SetVolume, RunShortcut, Recalibrate, RestartDevice, FactoryReset, SettingsUpdated, RefreshUi, ShortcutsUpdated, ToggleMute, TestTouch, SetBrightness };
 struct Intent { IntentType type; int16_t value; constexpr Intent(IntentType t = IntentType::Previous, int16_t v = 0) : type(t), value(v) {} };
 struct MediaState { char title[48] = "No track"; char artist[48] = "Waiting for PC"; char album[48] = ""; char coverId[kCoverIdLength + 1] = ""; CoverFetchState cover; uint32_t positionMs = 0; uint32_t durationMs = 0; bool playing = false; uint32_t timelineAtMs = 0; bool timelineAnchored = false; };
 inline uint32_t mediaPositionAt(const MediaState& media, uint32_t nowMs) {
@@ -35,6 +35,7 @@ struct SystemState {
   uint8_t tempCelsius = 0;
   uint32_t ramUsedMb = 0;
   uint32_t ramTotalMb = 0;
+  char hostDate[40] = "";
   int16_t hostLocalMinutes = -1;
   uint32_t hostTimeSyncedAtSec = 0;
 };
@@ -55,12 +56,20 @@ struct ShortcutState {
   char ids[6][kMaxShortcutIdLength + 1] = {"","","","","",""};
   char icons[6][16] = {"","","","","",""};
   char displayModes[6][6] = {"label","label","label","label","label","label"};
+  char colors[6][8] = {};
+  uint8_t iconPixels[6][1728] = {}; // 24x24 RGB565 plane, then 8-bit alpha plane.
+  bool hasIconPixels[6] = {};
+  uint32_t iconRevision = 0;
 };
 inline void resetShortcuts(ShortcutState& shortcuts) {
+  ++shortcuts.iconRevision;
   for (std::size_t i = 0; i < 6; ++i) {
     std::memcpy(shortcuts.names[i], "No shortcut", sizeof("No shortcut"));
     shortcuts.ids[i][0] = '\0';
     shortcuts.icons[i][0] = '\0';
+    shortcuts.colors[i][0] = '\0';
+    shortcuts.hasIconPixels[i] = false;
+    std::memset(shortcuts.iconPixels[i], 0, sizeof(shortcuts.iconPixels[i]));
     std::memcpy(shortcuts.displayModes[i], "label", sizeof("label"));
   }
 }
@@ -80,7 +89,13 @@ struct AppearanceState {
   Page pageOrder[kPageCount] = {Page::Media, Page::Shortcuts, Page::Pc, Page::Info};
   bool pageVisible[kPageCount] = {true, true, true, true};
 };
-struct UiState { Page page = Page::Media; bool volumeOpen = false; };
+struct UiState { Page page = Page::Home; bool volumeOpen = false; uint8_t localBrightness = 0; char brightnessRevision[33] = ""; bool calibrationValid = false; bool standby = false; };
+inline void applyBrightnessRevision(UiState& ui, const char* revision, bool force) {
+  const bool valid = revision && std::strlen(revision) == 32 &&
+      std::all_of(revision, revision + 32, [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
+  if (force || (valid && std::strcmp(ui.brightnessRevision, revision) != 0)) ui.localBrightness = 0;
+  if (valid) std::memcpy(ui.brightnessRevision, revision, 33);
+}
 struct LoopPerformance {
   uint32_t loopMaxUs = 0;
   uint32_t renderMaxUs = 0;
@@ -164,7 +179,7 @@ inline void normalizeAppearance(AppearanceState& appearance) {
     if (!seen[index]) normalized[count++] = page;
   }
   for (uint8_t i = 0; i < kPageCount; ++i) appearance.pageOrder[i] = normalized[i];
-  appearance.pageVisible[pageIndex(Page::Info)] = true;
+  for (uint8_t i = 0; i < kPageCount; ++i) appearance.pageVisible[i] = true;
 }
 
 inline DisplayIdleDecision computeDisplayIdleDecision(const AppState& state, uint32_t idleSeconds,

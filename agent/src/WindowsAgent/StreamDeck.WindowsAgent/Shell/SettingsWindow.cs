@@ -14,7 +14,7 @@ using ShortcutDefinition = StreamDeck.Shortcuts.ShortcutDefinition;
 
 namespace StreamDeck.WindowsAgent.Shell;
 
-public sealed class SettingsWindow : Form
+public sealed partial class SettingsWindow : Form
 {
     internal const string AppDisplayName = "CYD-DECK";
     private static readonly Color DarkBackground = Color.FromArgb(13, 15, 20);
@@ -23,13 +23,13 @@ public sealed class SettingsWindow : Form
     private static readonly Color LightSurface = Color.FromArgb(255, 255, 255);
     private static readonly Color DarkSurfaceAlt = Color.FromArgb(30, 32, 40);
     private static readonly Color LightSurfaceAlt = Color.FromArgb(236, 238, 242);
-    private static readonly Color DarkBorder = Color.FromArgb(46, 50, 62);
+    private static readonly Color DarkBorder = Color.FromArgb(41, 43, 47);
     private static readonly Color LightBorder = Color.FromArgb(210, 214, 220);
     private static readonly Color DarkTextPrimary = Color.FromArgb(244, 246, 248);
     private static readonly Color LightTextPrimary = Color.FromArgb(29, 32, 37);
     private static readonly Color DarkTextMuted = Color.FromArgb(156, 164, 176);
     private static readonly Color LightTextMuted = Color.FromArgb(93, 101, 112);
-    private static readonly Color Accent = Color.FromArgb(82, 153, 224);
+    private static Color Accent { get; set; } = Color.FromArgb(82, 153, 224);
     private static readonly Color Danger = Color.FromArgb(255, 69, 58);
     private static readonly Color AppleGreen = Color.FromArgb(48, 209, 88);
     private static readonly Color AppleAmber = Color.FromArgb(255, 159, 10);
@@ -37,11 +37,11 @@ public sealed class SettingsWindow : Form
     private static readonly Color AppleCyan = Color.FromArgb(100, 210, 255);
     private static readonly Color DeviceDefaultAccent = Color.FromArgb(126, 175, 227);
     private static readonly Color DeviceDefaultBackground = Color.FromArgb(16, 18, 22);
-    private static readonly Padding WindowContentPadding = new(34, 30, 34, 30);
-    private const int NavigationWidth = 252;
-    private const int NavigationButtonWidth = 212;
+    private static readonly Padding WindowContentPadding = new(20, 12, 20, 16);
+    private const int NavigationWidth = 188;
+    private const int NavigationButtonWidth = 148;
     private const int NavigationButtonHeight = 42;
-    private const int PageTitleHeight = 68;
+    private const int PageTitleHeight = 60;
     private const int ActionButtonHeight = 36;
     private const int ActionButtonMinimumWidth = 128;
     private const int ActionButtonHorizontalMargin = 10;
@@ -134,15 +134,11 @@ public sealed class SettingsWindow : Form
     private readonly Dictionary<string, Button> navButtons = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Label> infoValueLabels = new(StringComparer.Ordinal);
     private readonly Panel contentPanel;
-    private readonly System.Windows.Forms.Timer appearanceSaveTimer = new() { Interval = 300 };
     private readonly System.Windows.Forms.Timer shortcutImportRefreshTimer = new() { Interval = 1000 };
     private string currentPage = "Overview";
     private bool allowClose;
     private AppearanceState? pendingAppearance;
     private DesktopAppearanceState? pendingDesktopAppearance;
-    private Label? appearanceStatusLabel;
-    private Panel? sidebarConnectionPill;
-    private Label? sidebarConnectionLabel;
     private Action? refreshOverviewWidgets;
     private bool shortcutsConfigurationLoadFailed;
     private string shortcutImportSignature = string.Empty;
@@ -166,7 +162,7 @@ public sealed class SettingsWindow : Form
         this.startup = startup;
         this.pairing = pairing;
         configurationStore = configurationOverride ?? AgentConfigurationStoreFactory.CreateForCurrentUser();
-        appearanceSaveTimer.Tick += async (_, _) => await FlushAppearanceChangesAsync().ConfigureAwait(true);
+
         shortcutImportRefreshTimer.Tick += (_, _) => RefreshShortcutImportsIfChanged();
         var initialDesktopAppearance = LoadDesktopAppearanceConfiguration();
         var effectiveDesktopTheme = ResolveEffectiveDesktopTheme(initialDesktopAppearance.Theme);
@@ -176,12 +172,13 @@ public sealed class SettingsWindow : Form
         Text = AppDisplayName;
         Icon = shellIcon;
         DoubleBuffered = true;
+        AutoScaleMode = AutoScaleMode.Dpi;
         MinimumSize = new Size(MinimumWindowWidth, MinimumWindowHeight);
-        Size = new Size(1080, 740);
+        Size = new Size(1200, 760);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Background;
         ForeColor = TextPrimary;
-        Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
+        Font = new Font(FontFamily.Families.Any(family => family.Name == "Inter") ? "Inter" : "Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
         AccessibleName = "CYD-DECK settings";
         AccessibleDescription = "Configure the local Windows Agent, connected CYD device, appearance and Agent-side shortcuts.";
 
@@ -221,14 +218,13 @@ public sealed class SettingsWindow : Form
         if (!allowClose && e.CloseReason == CloseReason.UserClosing)
         {
             e.Cancel = true;
+            if (!ResolveUnsavedChanges()) return;
             Hide();
             return;
         }
 
         state.Changed -= HandleStateChanged;
         pairing.PairingChanged -= HandlePairingChanged;
-        appearanceSaveTimer.Stop();
-        appearanceSaveTimer.Dispose();
         shortcutImportRefreshTimer.Stop();
         shortcutImportRefreshTimer.Dispose();
         base.OnFormClosing(e);
@@ -331,50 +327,7 @@ public sealed class SettingsWindow : Form
             nav.Controls.Add(button);
         }
 
-        sidebarConnectionPill = new Panel
-        {
-            Dock = DockStyle.Bottom,
-            Height = 40,
-            BackColor = SurfaceAlt,
-            Padding = new Padding(28, 0, 10, 0),
-            Tag = DeviceColorPreviewTag
-        };
-        sidebarConnectionLabel = new Label
-        {
-            Dock = DockStyle.Fill,
-            Text = FormatSidebarConnectionStatus(state.Snapshot()),
-            Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold),
-            ForeColor = TextPrimary,
-            BackColor = Color.Transparent,
-            TextAlign = ContentAlignment.MiddleLeft,
-            AutoEllipsis = true,
-            AccessibleName = "Sidebar connection status"
-        };
-        sidebarConnectionPill.Controls.Add(sidebarConnectionLabel);
-        sidebarConnectionPill.Paint += (_, e) =>
-        {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            var snap = state.Snapshot();
-            var isConnected = string.Equals(snap.HostStatus, "connected", StringComparison.OrdinalIgnoreCase);
-            var isPending = string.Equals(snap.HostStatus, "pairing pending", StringComparison.OrdinalIgnoreCase);
-            var dotColor = isConnected ? AppleGreen : (isPending ? AppleAmber : TextMuted);
-            var pillBg = clientLightTheme ? Color.FromArgb(234, 237, 243) : Color.FromArgb(28, 31, 39);
-            var pillBorder = isConnected ? Color.FromArgb(90, AppleGreen) : Border;
-
-            using var path = CreateRoundedRectPath(new Rectangle(0, 0, sidebarConnectionPill.Width - 1, sidebarConnectionPill.Height - 1), 10);
-            using var bgBrush = new SolidBrush(pillBg);
-            using var borderPen = new Pen(pillBorder, 1f);
-            e.Graphics.FillPath(bgBrush, path);
-            e.Graphics.DrawPath(borderPen, path);
-
-            using var glowBrush = new SolidBrush(Color.FromArgb(55, dotColor));
-            using var dotBrush = new SolidBrush(dotColor);
-            e.Graphics.FillEllipse(glowBrush, 9, 13, 14, 14);
-            e.Graphics.FillEllipse(dotBrush, 12, 16, 8, 8);
-        };
-
         panel.Controls.Add(nav);
-        panel.Controls.Add(sidebarConnectionPill);
         panel.Controls.Add(brand);
         return panel;
     }
@@ -406,7 +359,7 @@ public sealed class SettingsWindow : Form
     {
         var button = new Button
         {
-            Text = page,
+            Text = DisplayPageName(page),
             Width = NavigationButtonWidth,
             Height = NavigationButtonHeight,
             FlatStyle = FlatStyle.Flat,
@@ -451,7 +404,7 @@ public sealed class SettingsWindow : Form
             var textRect = new Rectangle(40, 0, button.Width - 48, button.Height);
             TextRenderer.DrawText(
                 e.Graphics,
-                page,
+                DisplayPageName(page),
                 button.Font,
                 textRect,
                 textColor,
@@ -486,150 +439,19 @@ public sealed class SettingsWindow : Form
         refreshOverviewWidgets = null;
         contentPanel.Controls.Add(page switch
         {
-            "Overview" => CreateOverviewPage(),
-            "Shortcuts" => CreateShortcutsPage(),
-            "Appearance" => CreateAppearancePage(),
-            "Device" => CreateDevicePage(),
+            "Overview" => CreateCompactOverviewPage(),
+            "Shortcuts" => CreateCompactDeckPage(),
+            "Appearance" => CreateCompactSettingsPage(),
+            "Device" => CreateCompactDevicePage(),
             "Pairing" => CreatePairingPage(),
             "Updates" => CreateUpdatesPage(),
             "Logs" => CreateLogsPage(),
-            _ => CreateOverviewPage()
+            _ => CreateCompactOverviewPage()
         });
         UpdateShortcutImportRefreshTimer(page);
     }
 
-    private void UpdateSidebarConnectionPill()
-    {
-        if (sidebarConnectionLabel is not null && !sidebarConnectionLabel.IsDisposed)
-        {
-            sidebarConnectionLabel.Text = FormatSidebarConnectionStatus(state.Snapshot());
-            sidebarConnectionLabel.ForeColor = TextPrimary;
-        }
-
-        if (sidebarConnectionPill is not null && !sidebarConnectionPill.IsDisposed)
-        {
-            sidebarConnectionPill.Invalidate();
-        }
-    }
-
-    private Control CreateOverviewPage()
-    {
-        var snapshot = state.Snapshot();
-        var panel = CreatePage("Overview");
-        var grid = CreateInfoGrid();
-        var deviceInfo = snapshot.HostStatus == "connected" ? snapshot.DeviceInfo : null;
-
-        AddConnectionSummary(grid, snapshot);
-
-        refreshOverviewWidgets = null;
-        var mediaWidget = CreateAppleMediaControlWidget();
-        mediaWidget.Margin = new Padding(0, 0, 0, 14);
-        grid.Controls.Add(mediaWidget, 0, grid.RowCount++);
-        grid.SetColumnSpan(mediaWidget, 2);
-
-        var systemWidget = CreateAppleSystemMonitorWidget();
-        systemWidget.Margin = new Padding(0, 0, 0, 14);
-        grid.Controls.Add(systemWidget, 0, grid.RowCount++);
-        grid.SetColumnSpan(systemWidget, 2);
-
-        var loadResult = LoadShortcutConfigurationState(() => configurationStore.LoadOrDefault());
-        var shortcuts = loadResult.Configuration.Shortcuts?.ToList() ?? [];
-        var preview = CreateCydHardwarePreviewPanel(shortcuts, null);
-        preview.Margin = new Padding(0, 0, 0, 14);
-        grid.Controls.Add(preview, 0, grid.RowCount++);
-        grid.SetColumnSpan(preview, 2);
-
-        AddSectionHeader(grid, "DEVICE & CONNECTION");
-        AddInfoRow(grid, "CYD", AgentStatusFormatter.ToDeviceStatus(snapshot));
-        AddInfoRow(grid, "Device name", snapshot.DeviceName ?? "Not paired");
-        AddInfoRow(grid, "Device ID", snapshot.DeviceId ?? "None");
-        AddInfoRow(grid, "Firmware", FormatUnavailable(deviceInfo?.FirmwareVersion));
-        AddInfoRow(grid, "Transport", snapshot.RemoteAddress == "USB" ? "USB" : snapshot.HostStatus == "connected" ? "Network" : "Disconnected");
-        AddInfoRow(grid, "Device IP", FormatUnavailable(deviceInfo?.Wifi?.Ip));
-        AddInfoRow(grid, "Audio", deviceInfo?.Audio is not null ? $"Volume {deviceInfo.Audio.VolumePercent}%{(deviceInfo.Audio.Muted ? " (Muted)" : "")}" : "Unavailable");
-        AddInfoRow(grid, "Artwork", deviceInfo?.Cover is not null ? (deviceInfo.Cover.Rendered ? "Active / Rendered" : $"Status {deviceInfo.Cover.Status}") : "Unavailable");
-        AddInfoRow(grid, "Agent service", AgentStatusFormatter.ToUserStatus(snapshot.HostStatus));
-        AddInfoRow(grid, "Last seen", AgentStatusFormatter.FormatLastSeen(snapshot));
-
-        AddPageBodyControl(panel, grid);
-        AddPageFooter(panel, CreateActionsBar(
-            ("Reconnect device", ReconnectAsync),
-            ("Configure shortcuts", () => { ShowPage("Shortcuts"); return Task.CompletedTask; }),
-            ("Appearance", () => { ShowPage("Appearance"); return Task.CompletedTask; }),
-            ("Device details", () => { ShowPage("Device"); return Task.CompletedTask; }),
-            ("Pairing", () => { ShowPage("Pairing"); return Task.CompletedTask; })));
-        return panel;
-    }
-
-    private Control CreateDevicePage()
-    {
-        var snapshot = state.Snapshot();
-        var deviceInfo = snapshot.HostStatus == "connected" ? snapshot.DeviceInfo : null;
-        var isConnected = string.Equals(snapshot.HostStatus, "connected", StringComparison.OrdinalIgnoreCase);
-        var hasActiveDevice = !string.IsNullOrWhiteSpace(snapshot.DeviceId);
-        deviceTelemetryVisible = deviceInfo is not null;
-        var panel = CreatePage("Device");
-        var grid = CreateInfoGrid();
-
-        AddConnectionSummary(grid, snapshot);
-        AddSectionHeader(grid, "DEVICE INFO");
-        AddInfoRow(grid, "Device name", snapshot.DeviceName ?? "Unavailable");
-        AddInfoRow(grid, "Device ID", snapshot.DeviceId ?? "Unavailable");
-        AddInfoRow(grid, "Status", AgentStatusFormatter.ToDeviceStatus(snapshot));
-
-        if (deviceInfo is not null)
-        {
-            AddInfoRow(grid, "Firmware", FormatUnavailable(deviceInfo.FirmwareVersion));
-            AddInfoRow(grid, "Uptime", FormatUptime(deviceInfo.UptimeSeconds));
-
-            AddSectionHeader(grid, "NETWORK");
-            AddInfoRow(grid, "Wi-Fi", FormatWifi(deviceInfo.Wifi));
-            AddInfoRow(grid, "SSID", FormatUnavailable(deviceInfo.Wifi.Ssid));
-            AddInfoRow(grid, "RSSI", FormatRssi(deviceInfo.Wifi.Rssi));
-            AddInfoRow(grid, "IP", FormatUnavailable(deviceInfo.Wifi.Ip));
-            AddInfoRow(grid, "Agent host", FormatUnavailable(deviceInfo.AgentHost));
-
-            AddSectionHeader(grid, "STORAGE");
-            AddInfoRow(grid, "SD", FormatSdState(deviceInfo.Sd));
-            AddInfoRow(grid, "SD capacity", FormatBytes(deviceInfo.Sd.CapacityBytes));
-            AddInfoRow(grid, "SD free", FormatBytes(deviceInfo.Sd.FreeBytes));
-
-            AddSectionHeader(grid, "MEMORY");
-            AddInfoRow(grid, "Heap free", FormatBytes(deviceInfo.Heap.FreeBytes));
-            AddInfoRow(grid, "Heap min free", FormatBytes(deviceInfo.Heap.MinFreeBytes));
-            AddInfoRow(grid, "Heap largest block", FormatBytes(deviceInfo.Heap.LargestBlockBytes));
-
-            AddSectionHeader(grid, "AUDIO & ARTWORK");
-            AddInfoRow(grid, "Audio", deviceInfo.Audio is not null ? $"Volume {deviceInfo.Audio.VolumePercent}%{(deviceInfo.Audio.Muted ? " (Muted)" : "")}" : "Unavailable");
-            AddInfoRow(grid, "Artwork", deviceInfo.Cover is not null ? (deviceInfo.Cover.Rendered ? "Active / Rendered" : $"Status {deviceInfo.Cover.Status}") : "Unavailable");
-        }
-        else
-        {
-            AddSectionHeader(grid, "HARDWARE TELEMETRY");
-            AddInfoRow(grid, "Telemetry", isConnected ? "Waiting for device report…" : "Unavailable while offline (connect device via USB or Wi-Fi)");
-        }
-
-        AddSectionHeader(grid, "CONNECTION");
-        AddInfoRow(grid, "Remote IP", FormatRemoteHost(snapshot.RemoteAddress));
-        AddInfoRow(grid, "Remote endpoint", snapshot.RemoteAddress ?? "Unavailable");
-        AddInfoRow(grid, "Agent service", AgentStatusFormatter.ToUserStatus(snapshot.HostStatus));
-        AddInfoRow(grid, "Last seen", AgentStatusFormatter.FormatLastSeen(snapshot));
-        AddInfoRow(grid, "Agent port", snapshot.HostPort.ToString());
-        AddInfoRow(grid, "Dashboard port", snapshot.DashboardPort == 0 ? "Unavailable" : snapshot.DashboardPort.ToString());
-
-        AddSectionHeader(grid, "DANGER ZONE");
-        AddInfoRow(grid, "Warning", "Destructive actions require physical or network re-pairing.");
-
-        var dangerActions = CreateDeviceActionsBar(hasActiveDevice, isConnected,
-            ("Factory reset", FactoryResetDeviceAsync), ("Forget device", ForgetDeviceAsync));
-        dangerActions.Dock = DockStyle.Top;
-        grid.Controls.Add(dangerActions, 0, grid.RowCount++);
-        grid.SetColumnSpan(dangerActions, 2);
-        AddPageBodyControl(panel, grid);
-        AddPageFooter(panel, CreateDeviceActionsBar(hasActiveDevice, isConnected,
-            ("Reconnect", ReconnectAsync), ("Restart", RestartDeviceAsync)));
-        return panel;
-    }
+    private void UpdateSidebarConnectionPill() => RefreshUnifiedToolbar();
 
     private Control CreatePairingPage()
     {
@@ -649,9 +471,14 @@ public sealed class SettingsWindow : Form
             ColumnCount = 1,
             RowCount = 5,
             BackColor = Background,
-            AutoScroll = true
+            AutoScroll = false
         };
         mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
 
         var instructionsLabel = new Label
         {
@@ -673,7 +500,7 @@ public sealed class SettingsWindow : Form
 
         var pendingList = CreateThemedListView();
         pendingList.Height = 160;
-        pendingList.Dock = DockStyle.Top;
+        pendingList.Dock = DockStyle.Fill;
         pendingList.MultiSelect = false;
         ConfigurePairingColumns(pendingList, MinimumSettingsClientWidth);
         AttachPairingColumnResizeHandler(pendingList);
@@ -689,7 +516,7 @@ public sealed class SettingsWindow : Form
 
         var pairedList = CreateThemedListView();
         pairedList.Height = 160;
-        pairedList.Dock = DockStyle.Top;
+        pairedList.Dock = DockStyle.Fill;
         pairedList.MultiSelect = false;
         ConfigurePairingColumns(pairedList, MinimumSettingsClientWidth);
         AttachPairingColumnResizeHandler(pairedList);
@@ -754,136 +581,6 @@ public sealed class SettingsWindow : Form
                 _ = RefreshPairingListAsync(pendingList, pairedList, status, approveButton, rejectButton, forgetPairedButton);
         };
         refreshPairingLists();
-        return panel;
-    }
-
-    private Control CreateShortcutsPage()
-    {
-        var panel = CreatePage("Shortcuts");
-        var loadResult = LoadShortcutConfigurationState(() => configurationStore.LoadOrDefault());
-        shortcutsConfigurationLoadFailed = !loadResult.CanWriteShortcuts;
-        var shortcuts = loadResult.Configuration.Shortcuts?.ToList() ?? [];
-        var savedIds = shortcuts.Select(shortcut => shortcut.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var listHost = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Surface
-        };
-        var list = CreateThemedListView();
-        list.Dock = DockStyle.Fill;
-        list.AccessibleName = "Agent-side shortcuts";
-        list.AccessibleDescription = "Saved shortcuts available on this PC. The device displays up to the first six labels and IDs.";
-        ConfigureShortcutsColumns(list, MinimumSettingsClientWidth);
-        SuppressHorizontalListScrollbar(list);
-        list.SizeChanged += (_, _) =>
-        {
-            ConfigureShortcutsColumns(list, list.ClientSize.Width);
-            SuppressHorizontalListScrollbar(list);
-        };
-        list.MultiSelect = false;
-        list.DoubleClick += async (_, _) => await EditShortcutAsync(list, shortcuts).ConfigureAwait(true);
-        list.AllowDrop = true;
-        list.ItemDrag += (_, e) =>
-        {
-            if (e.Item is ListViewItem) list.DoDragDrop(e.Item, DragDropEffects.Move);
-        };
-        list.DragEnter += (_, e) =>
-        {
-            if (e.Data?.GetDataPresent(typeof(ListViewItem)) == true) e.Effect = DragDropEffects.Move;
-        };
-        list.DragDrop += async (_, e) =>
-        {
-            var pt = list.PointToClient(new Point(e.X, e.Y));
-            var targetItem = list.GetItemAt(pt.X, pt.Y);
-            if (targetItem != null && e.Data?.GetData(typeof(ListViewItem)) is ListViewItem sourceItem && sourceItem != targetItem)
-            {
-                var fromIdx = sourceItem.Index;
-                var toIdx = targetItem.Index;
-                MoveShortcutInMemory(shortcuts, fromIdx, toIdx);
-                if (await SaveShortcutsAsync(shortcuts).ConfigureAwait(true))
-                {
-                    ShowPage("Shortcuts");
-                    SelectShortcutAt(toIdx);
-                }
-            }
-        };
-
-        var emptyState = new Label
-        {
-            Dock = DockStyle.Fill,
-            ForeColor = TextMuted,
-            BackColor = Surface,
-            Text = CreateShortcutsEmptyStateText(loadResult),
-            TextAlign = ContentAlignment.MiddleCenter,
-            Padding = new Padding(20)
-        };
-
-        var cydPreviewCard = CreateCydHardwarePreviewPanel(shortcuts, list);
-
-        var shortcutCatalogNote = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = loadResult.CanWriteShortcuts ? 42 : 70,
-            ForeColor = TextMuted,
-            Text = loadResult.CanWriteShortcuts
-                ? ShortcutsSourceOfTruthText
-                : $"{ShortcutsSourceOfTruthText} Existing Agent config failed to load ({loadResult.ErrorType}); shortcut edits are disabled until you recover the file or explicitly import a full Agent config.",
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-
-        foreach (var shortcut in shortcuts)
-        {
-            AddShortcutItem(list, shortcut);
-        }
-
-        listHost.Controls.Add(list);
-        listHost.Controls.Add(emptyState);
-        UpdateShortcutsEmptyState(list, emptyState, loadResult);
-
-        var actionsBar = (FlowLayoutPanel)CreateActionsBar(
-            ("Add", async () => await AddShortcutAsync(list, shortcuts, emptyState, loadResult).ConfigureAwait(true)),
-            ("Edit", async () => await EditShortcutAsync(list, shortcuts).ConfigureAwait(true)),
-            ("Delete", async () => await DeleteShortcutAsync(list, shortcuts, emptyState, loadResult).ConfigureAwait(true)),
-            ("Test action", async () => await TestSelectedShortcutAsync(list, shortcuts).ConfigureAwait(true)),
-            ("Move up", async () => await MoveShortcutAsync(list, shortcuts, -1).ConfigureAwait(true)),
-            ("Move down", async () => await MoveShortcutAsync(list, shortcuts, 1).ConfigureAwait(true)),
-            ("Move to…", async () => await MoveShortcutToPositionAsync(list, shortcuts).ConfigureAwait(true)),
-            ("Import full config", ImportConfigurationAsync),
-            ("Export full config", ExportConfigurationAsync));
-
-        var editBtn = actionsBar.Controls.OfType<Button>().FirstOrDefault(b => b.Text == "Edit");
-        var deleteBtn = actionsBar.Controls.OfType<Button>().FirstOrDefault(b => b.Text == "Delete");
-        var testBtn = actionsBar.Controls.OfType<Button>().FirstOrDefault(b => b.Text == "Test action");
-        var moveUpBtn = actionsBar.Controls.OfType<Button>().FirstOrDefault(b => b.Text == "Move up");
-        var moveDownBtn = actionsBar.Controls.OfType<Button>().FirstOrDefault(b => b.Text == "Move down");
-        var moveToBtn = actionsBar.Controls.OfType<Button>().FirstOrDefault(b => b.Text == "Move to…");
-
-        void UpdateShortcutActionButtons()
-        {
-            var hasSelection = list.SelectedIndices.Count > 0;
-            var selIndex = hasSelection ? list.SelectedIndices[0] : -1;
-            if (editBtn != null) editBtn.Enabled = hasSelection;
-            if (deleteBtn != null) deleteBtn.Enabled = hasSelection;
-            if (testBtn != null) testBtn.Enabled = hasSelection;
-            if (moveToBtn != null) moveToBtn.Enabled = hasSelection;
-            if (moveUpBtn != null) moveUpBtn.Enabled = hasSelection && selIndex > 0;
-            if (moveDownBtn != null) moveDownBtn.Enabled = hasSelection && selIndex < list.Items.Count - 1;
-        }
-
-        list.SelectedIndexChanged += (_, _) => UpdateShortcutActionButtons();
-        UpdateShortcutActionButtons();
-
-        AddPageBodyControl(panel, listHost);
-        AddPageBodyControl(panel, cydPreviewCard);
-        AddPageBodyControl(panel, shortcutCatalogNote);
-        AddPageFooter(panel, actionsBar);
-
-        var pendingImports = runtime.GetPendingShortcutImports(savedIds);
-        shortcutImportSignature = CreatePendingShortcutImportSignature(pendingImports);
-        if (pendingImports.Count > 0)
-        {
-            AddPageBodyControl(panel, CreatePendingShortcutImportsPanel(pendingImports, list, shortcuts, emptyState, loadResult));
-        }
         return panel;
     }
 
@@ -1088,7 +785,7 @@ public sealed class SettingsWindow : Form
             return;
         }
 
-        var loadResult = LoadShortcutConfigurationState(configurationStore.LoadOrDefault);
+        var loadResult = LoadShortcutConfigurationState(() => configurationDraft ?? configurationStore.LoadOrDefault());
         var savedIds = (loadResult.Configuration.Shortcuts ?? [])
             .Select(shortcut => shortcut.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1116,179 +813,6 @@ public sealed class SettingsWindow : Form
         {
             emptyState.BringToFront();
         }
-    }
-
-    private Control CreateAppearancePage()
-    {
-        var desktopSettings = pendingDesktopAppearance ?? LoadDesktopAppearanceConfiguration();
-        pendingDesktopAppearance = desktopSettings;
-        var settings = pendingAppearance ?? LoadAppearanceConfiguration();
-        pendingAppearance = settings;
-
-        var effectiveDesktopTheme = ResolveEffectiveDesktopTheme(desktopSettings.Theme);
-        var effectiveDesktopBg = ResolveDesktopWindowBackground(desktopSettings, effectiveDesktopTheme);
-        ApplyClientTheme(effectiveDesktopTheme, desktopSettings.Accent, effectiveDesktopBg);
-        contentPanel.BackColor = ResolveClientBackground(effectiveDesktopTheme, effectiveDesktopBg);
-
-        var panel = CreatePage("Appearance");
-        var snapshot = state.Snapshot();
-        var isConnected = string.Equals(snapshot.HostStatus, "connected", StringComparison.OrdinalIgnoreCase);
-
-        var contentHost = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            RowCount = 7,
-            ColumnCount = 1,
-            BackColor = Background
-        };
-        contentHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        for (var row = 0; row < 7; row++) contentHost.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-        var appearanceNote = new Label
-        {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            ForeColor = TextMuted,
-            Text = "Windows Agent (Desktop UI) and CYD Display (ESP32 Hardware UI) appearance settings are completely independent. Desktop changes apply locally to this window; CYD Display settings sync directly to the hardware screen.",
-            Padding = new Padding(0, 0, 0, 10),
-            Font = new Font(Font.FontFamily, 9F, FontStyle.Regular)
-        };
-
-        var (cydPreviewCard, updateCydPreview) = CreateAppearanceCydPreviewPanel(settings);
-
-        var desktopForm = CreateAppearanceSectionPanel("WINDOWS AGENT APPEARANCE (DESKTOP UI)");
-        AddComboRow(desktopForm, "Application theme", ["Dark", "Light", "System"], FormatChoiceDisplay(desktopSettings.Theme, "Dark"), value =>
-        {
-            desktopSettings.Theme = value.ToLowerInvariant();
-            var resolvedTheme = ResolveEffectiveDesktopTheme(desktopSettings.Theme);
-            var resolvedBg = ResolveDesktopWindowBackground(desktopSettings, resolvedTheme);
-            ApplyClientTheme(resolvedTheme, desktopSettings.Accent, resolvedBg);
-        });
-        AddComboRow(desktopForm, "Window background style", ["Acrylic", "Minimal", "Gradient"], FormatChoiceDisplay(desktopSettings.WindowStyle, "Acrylic"), value =>
-        {
-            desktopSettings.WindowStyle = value.ToLowerInvariant();
-            var resolvedTheme = ResolveEffectiveDesktopTheme(desktopSettings.Theme);
-            var resolvedBg = ResolveDesktopWindowBackground(desktopSettings, resolvedTheme);
-            ApplyClientTheme(resolvedTheme, desktopSettings.Accent, resolvedBg);
-        });
-        AddColorRow(desktopForm, "UI accent color", desktopSettings.Accent, value =>
-        {
-            desktopSettings.Accent = value;
-            var resolvedTheme = ResolveEffectiveDesktopTheme(desktopSettings.Theme);
-            var resolvedBg = ResolveDesktopWindowBackground(desktopSettings, resolvedTheme);
-            ApplyClientTheme(resolvedTheme, desktopSettings.Accent, resolvedBg);
-        });
-
-        var cydThemeForm = CreateAppearanceSectionPanel("CYD DISPLAY APPEARANCE (HARDWARE UI — 320×240)");
-        AddComboRow(cydThemeForm, "CYD display theme", ["Dark", "Light"], FormatChoiceDisplay(settings.Theme, "Dark"), value =>
-        {
-            settings.Theme = value.ToLowerInvariant();
-            if (string.Equals(settings.Theme, "dark", StringComparison.OrdinalIgnoreCase) && string.Equals(settings.Background, "#F3F5F7", StringComparison.OrdinalIgnoreCase))
-            {
-                settings.Background = "#101216";
-            }
-            updateCydPreview();
-        });
-        AddComboRow(cydThemeForm, "Tile color scheme", ["control-center", "accent-tint", "oled-contrast"], settings.TileColorScheme, value =>
-        {
-            settings.TileColorScheme = value.ToLowerInvariant();
-            updateCydPreview();
-        });
-        AddColorRow(cydThemeForm, "Device accent color", settings.Accent, value =>
-        {
-            settings.Accent = value;
-            updateCydPreview();
-        });
-        AddColorRow(cydThemeForm, "Display background (OLED / Tint)", settings.Background, value =>
-        {
-            settings.Background = value;
-            updateCydPreview();
-        });
-        AddComboRow(cydThemeForm, "Tile corner style", ["Rounded", "Flat", "Pill"], FormatChoiceDisplay(settings.ButtonStyle, "Rounded"), value =>
-        {
-            settings.ButtonStyle = value.ToLowerInvariant();
-            updateCydPreview();
-        });
-        AddComboRow(cydThemeForm, "Shortcuts layout (tile size)", ["auto", "hero-1", "split-2", "quad-4", "grid-6"], settings.ShortcutsLayout, value =>
-        {
-            settings.ShortcutsLayout = value.ToLowerInvariant();
-            updateCydPreview();
-        });
-        AddComboRow(cydThemeForm, "StandBy / Clock style", ["apple-standby", "watchos-modular", "minimal-oled"], settings.StandbyStyle, value =>
-        {
-            settings.StandbyStyle = value.ToLowerInvariant();
-            updateCydPreview();
-        });
-
-        var displayForm = CreateAppearanceSectionPanel("CYD BACKLIGHT & STANDBY POWER");
-        AddSliderRow(displayForm, "Brightness", 10, 100, settings.Brightness, "%", value =>
-        {
-            settings.Brightness = value;
-            updateCydPreview();
-        });
-        AddSliderRow(displayForm, "Dim timeout", 0, 86400, settings.DimAfterSec, " sec", value =>
-        {
-            settings.DimAfterSec = value;
-            updateCydPreview();
-        }, FormatAppearanceTimeout);
-        AddSliderRow(displayForm, "Dim level", 1, 100, settings.DimBrightness, "%", value =>
-        {
-            settings.DimBrightness = value;
-            updateCydPreview();
-        });
-        AddSliderRow(displayForm, "Screen-off timeout", 0, 86400, settings.ScreenOffAfterSec, " sec", value =>
-        {
-            settings.ScreenOffAfterSec = value;
-            updateCydPreview();
-        }, FormatAppearanceTimeout);
-        AddCheckRow(displayForm, "Wake on touch", settings.WakeOnTouch, value =>
-        {
-            settings.WakeOnTouch = value;
-            updateCydPreview();
-        });
-
-        var pagesForm = CreateAppearanceSectionPanel("CYD PAGE ORDER & VISIBILITY");
-        AddPageListRow(pagesForm, "Page order / visibility", settings, updateCydPreview);
-
-        appearanceStatusLabel = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 36,
-            ForeColor = isConnected ? TextMuted : Color.Khaki,
-            Text = GetAppearanceSyncStatusText(isConnected, snapshot.DeviceName),
-            Padding = new Padding(0, 8, 0, 0),
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-
-        var actionsBar = (FlowLayoutPanel)CreateActionsBar(
-            ("Restore defaults", () =>
-            {
-                var result = MessageBox.Show(this, "Restore both Windows Agent and CYD Display appearance settings to Apple HIG defaults?", "Restore appearance defaults", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                if (result == DialogResult.Yes)
-                {
-                    RestoreDefaultAppearance();
-                }
-                return Task.CompletedTask;
-            }),
-            ("Sync now", async () =>
-            {
-                await FlushAppearanceChangesAsync().ConfigureAwait(true);
-            })
-        );
-
-        contentHost.Controls.Add(appearanceNote, 0, 0);
-        contentHost.Controls.Add(cydPreviewCard, 0, 1);
-        contentHost.Controls.Add(desktopForm, 0, 2);
-        contentHost.Controls.Add(cydThemeForm, 0, 3);
-        contentHost.Controls.Add(displayForm, 0, 4);
-        contentHost.Controls.Add(pagesForm, 0, 5);
-        contentHost.Controls.Add(appearanceStatusLabel, 0, 6);
-
-        AddPageBodyControl(panel, contentHost);
-        AddPageFooter(panel, actionsBar);
-        return panel;
     }
 
     private static string FormatChoiceDisplay(string? raw, string fallback)
@@ -1822,8 +1346,7 @@ public sealed class SettingsWindow : Form
     {
         pendingDesktopAppearance = DesktopAppearanceState.Default;
         pendingAppearance = AppearanceState.Default;
-        SaveDesktopAppearanceConfiguration(pendingDesktopAppearance);
-        SaveAppearanceConfiguration(pendingAppearance);
+
         var resolvedTheme = ResolveEffectiveDesktopTheme(pendingDesktopAppearance.Theme);
         var resolvedBg = ResolveDesktopWindowBackground(pendingDesktopAppearance, resolvedTheme);
         ApplyClientTheme(resolvedTheme, pendingDesktopAppearance.Accent, resolvedBg);
@@ -2016,6 +1539,7 @@ public sealed class SettingsWindow : Form
         try
         {
             ApplyClientThemeColors(this, theme, clientAccent, clientBackground);
+            Accent = clientAccent;
             UpdateTitleBarTheme();
         }
         finally
@@ -2059,13 +1583,8 @@ public sealed class SettingsWindow : Form
 
     private void QueueAppearanceSave()
     {
-        pendingAppearance = LoadAppearanceControls();
-        if (appearanceStatusLabel is not null)
-        {
-            appearanceStatusLabel.Text = "Saving…";
-        }
-        appearanceSaveTimer.Stop();
-        appearanceSaveTimer.Start();
+        configurationDirty = true;
+        RefreshUnifiedToolbar();
     }
 
     private AppearanceState LoadAppearanceControls()
@@ -2207,17 +1726,12 @@ public sealed class SettingsWindow : Form
     {
         var panel = new Panel { Dock = DockStyle.Fill, BackColor = Background };
         var body = CreatePageBodyPanel();
-        var titleLabel = new Label
-        {
-            Text = title,
-            Dock = DockStyle.Top,
-            Height = PageTitleHeight,
-            Font = new Font(Font.FontFamily, 24F, FontStyle.Bold),
-            ForeColor = TextPrimary,
-            Padding = new Padding(0, 4, 0, 18)
-        };
+        var toolbar = CreateUnifiedToolbar(title);
         panel.Controls.Add(body);
-        panel.Controls.Add(titleLabel);
+        panel.Controls.Add(toolbar);
+        unifiedFeedback = new Label { Dock = DockStyle.Bottom, Height = 24, ForeColor = TextMuted, TextAlign = ContentAlignment.MiddleLeft };
+        panel.Controls.Add(unifiedFeedback);
+        RefreshUnifiedToolbar();
         return panel;
     }
 
@@ -3080,7 +2594,7 @@ public sealed class SettingsWindow : Form
     {
         try
         {
-            return configurationStore.LoadOrDefault();
+            return configurationDraft ?? configurationStore.LoadOrDefault();
         }
         catch (Exception exception)
         {
@@ -3313,17 +2827,10 @@ public sealed class SettingsWindow : Form
             return false;
         }
 
-        var configuration = LoadConfiguration() with { Shortcuts = shortcuts.ToArray() };
-        if (!TrySaveConfiguration(configuration, "Shortcuts updated"))
-        {
-            return false;
-        }
-
-        try { await runtime.UpdateShortcutsAsync(shortcuts).ConfigureAwait(true); }
-        catch (Exception exception)
-        {
-            AgentDiagnosticLog.Write($"Shortcuts saved locally; sync failed: {exception.GetType().Name}");
-        }
+        configurationDraft = LoadConfiguration() with { Shortcuts = shortcuts.ToArray() };
+        configurationDirty = true;
+        RefreshUnifiedToolbar();
+        await Task.CompletedTask;
         return true;
     }
 
@@ -3343,11 +2850,11 @@ public sealed class SettingsWindow : Form
         try
         {
             var configuration = ConfigurationExportService.Import(await File.ReadAllTextAsync(dialog.FileName));
-            if (TrySaveConfiguration(configuration, $"Configuration imported from {Path.GetFileName(dialog.FileName)}"))
-            {
-                await runtime.ReconnectAsync();
-                ShowPage(currentPage);
-            }
+            configurationDraft = configuration;
+            pendingAppearance = AppearanceState.FromConfiguration(configuration.Appearance ?? new());
+            pendingDesktopAppearance = DesktopAppearanceState.FromConfiguration(configuration.DesktopAppearance ?? new());
+            configurationDirty = true;
+            ShowPage(currentPage);
         }
         catch (AgentConfigurationException exception)
         {
@@ -3397,54 +2904,6 @@ public sealed class SettingsWindow : Form
         }
     }
 
-    private async Task FlushAppearanceChangesAsync()
-    {
-        appearanceSaveTimer.Stop();
-        var desktopSettings = pendingDesktopAppearance;
-        var settings = pendingAppearance;
-        if (settings is null && desktopSettings is null)
-        {
-            return;
-        }
-
-        try
-        {
-            if (desktopSettings is not null)
-            {
-                SaveDesktopAppearanceConfiguration(desktopSettings);
-            }
-
-            if (settings is not null)
-            {
-                SaveAppearanceConfiguration(settings.EnsureForcedPagesVisible());
-            }
-        }
-        catch (Exception exception)
-        {
-            AgentDiagnosticLog.Write($"Appearance configuration save failed: {exception.GetType().Name}");
-            if (appearanceStatusLabel is not null)
-            {
-                appearanceStatusLabel.Text = "Settings could not be saved locally.";
-                appearanceStatusLabel.ForeColor = Color.LightSalmon;
-            }
-
-            return;
-        }
-
-        if (settings is null)
-        {
-            return;
-        }
-
-        var applied = await TryApplyAppearanceAsync(settings.EnsureForcedPagesVisible()).ConfigureAwait(true);
-        if (appearanceStatusLabel is not null)
-        {
-            appearanceStatusLabel.ForeColor = applied ? TextMuted : Color.Khaki;
-            appearanceStatusLabel.Text = applied
-                ? "✓ Desktop UI saved locally; CYD Display settings synced with connected device."
-                : "ℹ Desktop UI saved locally; CYD Display settings will sync when CYD reconnects.";
-        }
-    }
 
     private DesktopAppearanceState LoadDesktopAppearanceConfiguration()
     {
@@ -3460,11 +2919,6 @@ public sealed class SettingsWindow : Form
         }
     }
 
-    private void SaveDesktopAppearanceConfiguration(DesktopAppearanceState settings)
-    {
-        configurationStore.Save(LoadConfiguration() with { DesktopAppearance = settings.ToConfiguration() });
-        AgentDiagnosticLog.Write("Windows Agent desktop appearance settings updated");
-    }
 
     internal static string ResolveEffectiveDesktopTheme(string? configuredTheme)
     {
@@ -3521,11 +2975,6 @@ public sealed class SettingsWindow : Form
         }
     }
 
-    private void SaveAppearanceConfiguration(AppearanceState settings)
-    {
-        configurationStore.Save(LoadConfiguration() with { Appearance = settings.ToConfiguration() });
-        AgentDiagnosticLog.Write("CYD display appearance settings updated");
-    }
 
     private async Task<bool> TryApplyAppearanceAsync(AppearanceState settings)
     {
@@ -3564,429 +3013,6 @@ public sealed class SettingsWindow : Form
     private static int GetSelectedShortcutIndex(ListView list)
     {
         return list.SelectedIndices.Count == 0 ? -1 : list.SelectedIndices[0];
-    }
-
-    private Control CreateCydHardwarePreviewPanel(List<ShortcutDefinition> shortcuts, ListView? list = null)
-    {
-        var isDeckBuilder = list != null;
-        var currentAppearance = pendingAppearance ?? LoadAppearanceConfiguration();
-        var card = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = isDeckBuilder ? 218 : 162,
-            BackColor = Background,
-            Padding = new Padding(0, 0, 0, 10),
-            ColumnCount = isDeckBuilder ? 2 : 1,
-            RowCount = 3
-        };
-        if (isDeckBuilder)
-        {
-            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58F));
-            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42F));
-        }
-        else
-        {
-            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        }
-
-        card.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-        card.RowStyles.Add(new RowStyle(SizeType.Absolute, isDeckBuilder ? 158 : 102));
-        card.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-
-        var headerLabel = new Label
-        {
-            Text = isDeckBuilder
-                ? "CYD HARDWARE DECK PREVIEW (320×240 WYSIWYG)"
-                : "CYD HARDWARE SHORTCUT GRID (CONTROL CENTER)",
-            ForeColor = Accent,
-            Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold),
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-        card.Controls.Add(headerLabel, 0, 0);
-
-        if (isDeckBuilder)
-        {
-            var inspectorHeader = new Label
-            {
-                Text = "TILE INSPECTOR & SHORTCUTS LAYOUT",
-                ForeColor = Accent,
-                Font = new Font(Font.FontFamily, 8.5F, FontStyle.Bold),
-                Dock = DockStyle.Fill,
-                Padding = new Padding(10, 0, 0, 0),
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-            card.Controls.Add(inspectorHeader, 1, 0);
-        }
-
-        var bezelOuter = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(18, 20, 26),
-            Padding = new Padding(6, 22, 6, 5),
-            Margin = new Padding(0, 0, isDeckBuilder ? 8 : 0, 0)
-        };
-        bezelOuter.Paint += (_, e) =>
-        {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            var rect = new Rectangle(0, 0, bezelOuter.Width - 1, bezelOuter.Height - 1);
-            using var path = CreateRoundedRectPath(rect, 12);
-            using var fill = new SolidBrush(Color.FromArgb(14, 16, 21));
-            using var borderPen = new Pen(Color.FromArgb(52, 58, 72), 1.2f);
-            e.Graphics.FillPath(fill, path);
-            e.Graphics.DrawPath(borderPen, path);
-
-            // Simulated CYD top bar with Status Bar Clock on the right
-            using var barFont = new Font(Font.FontFamily, 7F, FontStyle.Bold);
-            using var mutedBrush = new SolidBrush(Color.FromArgb(148, 156, 170));
-            using var accentBrush = new SolidBrush(Accent);
-            e.Graphics.DrawString("Media   Skróty   PC   Info", barFont, mutedBrush, new PointF(10, 5));
-            var clockStr = DateTime.Now.ToString("HH:mm");
-            var clockSize = e.Graphics.MeasureString(clockStr, barFont);
-            e.Graphics.DrawString(clockStr, barFont, accentBrush, new PointF(bezelOuter.Width - clockSize.Width - 10, 5));
-        };
-
-        var grid = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 3,
-            RowCount = 2,
-            BackColor = Color.FromArgb(14, 16, 21),
-            Padding = new Padding(3)
-        };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.34F));
-        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-
-        var slotButtons = new List<Button>();
-        Action<int>? updateInspector = null;
-
-        for (var i = 0; i < 6; i++)
-        {
-            var slotIndex = i;
-            var isAssigned = slotIndex < shortcuts.Count;
-            var shortcut = isAssigned ? shortcuts[slotIndex] : null;
-            var cleanTitle = isAssigned ? shortcut!.Name : "Empty";
-            var iconName = isAssigned ? shortcut!.Icon : "empty";
-            var actionType = isAssigned ? shortcut!.Action.Type : string.Empty;
-
-            var slotBtn = new Button
-            {
-                Dock = DockStyle.Fill,
-                Margin = new Padding(4),
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font(Font.FontFamily, 8.5F, isAssigned ? FontStyle.Bold : FontStyle.Regular),
-                BackColor = isAssigned ? Color.FromArgb(28, 30, 36) : Color.FromArgb(20, 22, 27),
-                ForeColor = isAssigned ? TextPrimary : TextMuted,
-                Text = cleanTitle,
-                TextAlign = ContentAlignment.BottomCenter,
-                Padding = new Padding(2, 0, 2, 5),
-                Cursor = Cursors.Hand,
-                AccessibleName = list != null ? $"CYD hardware slot {slotIndex + 1}" : $"CYD overview slot {slotIndex + 1}"
-            };
-            slotBtn.FlatAppearance.BorderSize = 1;
-            slotBtn.FlatAppearance.BorderColor = isAssigned ? Color.FromArgb(52, 58, 70) : Color.FromArgb(34, 38, 46);
-            slotBtn.Paint += (_, e) =>
-            {
-                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                var iconSize = Math.Clamp(Math.Min(slotBtn.Width, slotBtn.Height) / 3, 14, 24);
-                var iconY = Math.Max(5, (slotBtn.Height - 20 - iconSize) / 2);
-                var iconRect = new Rectangle((slotBtn.Width - iconSize) / 2, iconY, iconSize, iconSize);
-                var iconColor = isAssigned ? Accent : TextMuted;
-                DrawShortcutVectorIcon(e.Graphics, iconName, actionType, iconRect, iconColor);
-            };
-            slotBtn.Click += (_, _) =>
-            {
-                if (list != null)
-                {
-                    if (isAssigned && slotIndex < list.Items.Count)
-                    {
-                        list.SelectedIndices.Clear();
-                        list.Items[slotIndex].Selected = true;
-                        list.Items[slotIndex].EnsureVisible();
-                    }
-                    updateInspector?.Invoke(slotIndex);
-                }
-                else
-                {
-                    ShowPage("Shortcuts");
-                    if (isAssigned)
-                    {
-                        SelectShortcutAt(slotIndex);
-                    }
-                }
-            };
-            slotButtons.Add(slotBtn);
-        }
-
-        void RebuildPreviewGridLayout(string layoutMode)
-        {
-            var effective = (layoutMode ?? "auto").Trim().ToLowerInvariant();
-            if (effective == "auto")
-            {
-                effective = shortcuts.Count switch
-                {
-                    1 => "hero-1",
-                    2 => "split-2",
-                    3 or 4 => "quad-4",
-                    _ => "grid-6"
-                };
-            }
-
-            grid.SuspendLayout();
-            grid.Controls.Clear();
-            grid.ColumnStyles.Clear();
-            grid.RowStyles.Clear();
-
-            if (effective == "hero-1")
-            {
-                grid.ColumnCount = 1;
-                grid.RowCount = 1;
-                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-                slotButtons[0].Visible = true;
-                grid.Controls.Add(slotButtons[0], 0, 0);
-                for (var k = 1; k < 6; k++) slotButtons[k].Visible = false;
-            }
-            else if (effective == "split-2")
-            {
-                grid.ColumnCount = 2;
-                grid.RowCount = 1;
-                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-                for (var k = 0; k < 2; k++)
-                {
-                    slotButtons[k].Visible = true;
-                    grid.Controls.Add(slotButtons[k], k, 0);
-                }
-                for (var k = 2; k < 6; k++) slotButtons[k].Visible = false;
-            }
-            else if (effective == "quad-4")
-            {
-                grid.ColumnCount = 2;
-                grid.RowCount = 2;
-                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-                for (var k = 0; k < 4; k++)
-                {
-                    slotButtons[k].Visible = true;
-                    grid.Controls.Add(slotButtons[k], k % 2, k / 2);
-                }
-                for (var k = 4; k < 6; k++) slotButtons[k].Visible = false;
-            }
-            else
-            {
-                grid.ColumnCount = 3;
-                grid.RowCount = 2;
-                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
-                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
-                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.34F));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-                grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-                for (var k = 0; k < 6; k++)
-                {
-                    slotButtons[k].Visible = true;
-                    grid.Controls.Add(slotButtons[k], k % 3, k / 3);
-                }
-            }
-
-            grid.ResumeLayout(true);
-        }
-
-        RebuildPreviewGridLayout(currentAppearance.ShortcutsLayout);
-        bezelOuter.Controls.Add(grid);
-        card.Controls.Add(bezelOuter, 0, 1);
-
-        var infoLabel = new Label
-        {
-            Text = $"Active on CYD: {Math.Min(shortcuts.Count, 6)}/6 tiles assigned • Layout: {currentAppearance.ShortcutsLayout} • {shortcuts.Count} saved on PC",
-            ForeColor = TextMuted,
-            Font = new Font(Font.FontFamily, 8.5F, FontStyle.Regular),
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-
-        if (isDeckBuilder && list != null)
-        {
-            var inspectorCard = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = Surface,
-                Padding = new Padding(12, 8, 12, 8),
-                Margin = new Padding(4, 0, 0, 0)
-            };
-            inspectorCard.Paint += (_, e) =>
-            {
-                using var pen = new Pen(Border, 1);
-                e.Graphics.DrawRectangle(pen, 0, 0, inspectorCard.Width - 1, inspectorCard.Height - 1);
-            };
-
-            var inspectorTitle = new Label
-            {
-                Dock = DockStyle.Top,
-                Height = 20,
-                ForeColor = TextPrimary,
-                Font = new Font(Font.FontFamily, 9.5F, FontStyle.Bold),
-                Text = "Select a tile to inspect"
-            };
-            var inspectorSlotMeta = new Label
-            {
-                Dock = DockStyle.Top,
-                Height = 18,
-                ForeColor = Accent,
-                Font = new Font(Font.FontFamily, 8F, FontStyle.Bold),
-                Text = "Slot —"
-            };
-            var inspectorActionLine = new Label
-            {
-                Dock = DockStyle.Top,
-                Height = 18,
-                ForeColor = TextMuted,
-                Font = new Font(Font.FontFamily, 8.25F, FontStyle.Regular),
-                Text = "Action: —"
-            };
-            var inspectorTargetLine = new Label
-            {
-                Dock = DockStyle.Fill,
-                ForeColor = TextMuted,
-                Font = new Font(Font.FontFamily, 8F, FontStyle.Regular),
-                Text = "Click any tile on the CYD preview or row below to view its hotkey, executable path, or script parameters."
-            };
-
-            var inspectorActions = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 30,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                BackColor = Surface
-            };
-            var quickEditBtn = new Button
-            {
-                Text = "Edit Tile…",
-                Width = 82,
-                Height = 26,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = SurfaceAlt,
-                ForeColor = TextPrimary,
-                Font = new Font(Font.FontFamily, 8F, FontStyle.Bold),
-                Cursor = Cursors.Hand,
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            quickEditBtn.FlatAppearance.BorderSize = 1;
-            quickEditBtn.FlatAppearance.BorderColor = Accent;
-            quickEditBtn.Click += async (_, _) => await EditShortcutAsync(list, shortcuts).ConfigureAwait(true);
-
-            var quickTestBtn = new Button
-            {
-                Text = "Test",
-                Width = 54,
-                Height = 26,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = SurfaceAlt,
-                ForeColor = TextPrimary,
-                Font = new Font(Font.FontFamily, 8F, FontStyle.Regular),
-                Cursor = Cursors.Hand,
-                Margin = new Padding(0, 2, 8, 0)
-            };
-            quickTestBtn.FlatAppearance.BorderSize = 1;
-            quickTestBtn.FlatAppearance.BorderColor = Border;
-            quickTestBtn.Click += async (_, _) => await TestSelectedShortcutAsync(list, shortcuts).ConfigureAwait(true);
-
-            var layoutCombo = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Width = 88,
-                BackColor = SurfaceAlt,
-                ForeColor = TextPrimary,
-                Font = new Font(Font.FontFamily, 8F, FontStyle.Regular),
-                Margin = new Padding(0, 3, 0, 0),
-                AccessibleName = "Shortcuts layout preset"
-            };
-            string[] layoutPresets = ["auto", "hero-1", "split-2", "quad-4", "grid-6"];
-            layoutCombo.Items.AddRange(layoutPresets.Cast<object>().ToArray());
-            layoutCombo.SelectedItem = layoutPresets.FirstOrDefault(p => string.Equals(p, currentAppearance.ShortcutsLayout, StringComparison.OrdinalIgnoreCase)) ?? "auto";
-            layoutCombo.SelectedIndexChanged += (_, _) =>
-            {
-                if (layoutCombo.SelectedItem is string mode)
-                {
-                    pendingAppearance ??= LoadAppearanceConfiguration();
-                    pendingAppearance.ShortcutsLayout = mode;
-                    RebuildPreviewGridLayout(mode);
-                    infoLabel.Text = $"Active on CYD: {Math.Min(shortcuts.Count, 6)}/6 tiles assigned • Layout: {mode} • {shortcuts.Count} saved on PC";
-                    QueueAppearanceSave();
-                }
-            };
-
-            inspectorActions.Controls.Add(quickEditBtn);
-            inspectorActions.Controls.Add(quickTestBtn);
-            inspectorActions.Controls.Add(layoutCombo);
-
-            inspectorCard.Controls.Add(inspectorTargetLine);
-            inspectorCard.Controls.Add(inspectorActionLine);
-            inspectorCard.Controls.Add(inspectorSlotMeta);
-            inspectorCard.Controls.Add(inspectorTitle);
-            inspectorCard.Controls.Add(inspectorActions);
-
-            updateInspector = selectedIndex =>
-            {
-                for (var b = 0; b < slotButtons.Count; b++)
-                {
-                    var isSel = b == selectedIndex;
-                    var hasItem = b < shortcuts.Count;
-                    slotButtons[b].FlatAppearance.BorderColor = isSel
-                        ? Accent
-                        : (hasItem ? Color.FromArgb(52, 58, 70) : Color.FromArgb(34, 38, 46));
-                }
-
-                if (selectedIndex >= 0 && selectedIndex < shortcuts.Count)
-                {
-                    var item = shortcuts[selectedIndex];
-                    var target = item.Action.Url
-                        ?? item.Action.ExecutablePath
-                        ?? item.Action.ScriptPath
-                        ?? item.Action.AdapterKey
-                        ?? (item.Action.Keys.Count > 0 ? string.Join(" + ", item.Action.Keys) : "—");
-                    var slotBadge = selectedIndex < 6 ? $"CYD Tile #{selectedIndex + 1}" : $"Catalog #{selectedIndex + 1} (PC)";
-                    inspectorTitle.Text = item.Name;
-                    inspectorSlotMeta.Text = $"{slotBadge}  •  ID: {item.Id}  •  Icon: {item.Icon}";
-                    inspectorActionLine.Text = $"Type: {FormatActionTypeName(item.Action.Type)}";
-                    inspectorTargetLine.Text = $"Binding: {target}";
-                    quickEditBtn.Enabled = true;
-                    quickTestBtn.Enabled = true;
-                }
-                else
-                {
-                    inspectorTitle.Text = selectedIndex >= 0 ? $"Empty CYD Tile #{selectedIndex + 1}" : "No Tile Selected";
-                    inspectorSlotMeta.Text = "Unassigned slot";
-                    inspectorActionLine.Text = "Type: None";
-                    inspectorTargetLine.Text = "Click 'Add' below to bind an application, URL, script, or keyboard shortcut to this CYD tile.";
-                    quickEditBtn.Enabled = false;
-                    quickTestBtn.Enabled = false;
-                }
-            };
-
-            list.SelectedIndexChanged += (_, _) =>
-            {
-                var idx = GetSelectedShortcutIndex(list);
-                updateInspector(idx);
-            };
-            updateInspector(shortcuts.Count > 0 ? 0 : -1);
-            card.Controls.Add(inspectorCard, 1, 1);
-        }
-
-        card.Controls.Add(infoLabel, 0, 2);
-        if (isDeckBuilder)
-        {
-            card.SetColumnSpan(infoLabel, 2);
-        }
-
-        return card;
     }
 
     private Control CreateAppleMediaControlWidget()
@@ -4352,47 +3378,7 @@ public sealed class SettingsWindow : Form
 
     private static void DrawShortcutVectorIcon(Graphics g, string? iconName, string? actionType, Rectangle bounds, Color color)
     {
-        using var pen = new Pen(color, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-        using var brush = new SolidBrush(color);
-        var x = bounds.X;
-        var y = bounds.Y;
-        var w = bounds.Width;
-        var h = bounds.Height;
-        var key = (iconName ?? string.Empty).Trim().ToLowerInvariant();
-        if (key == "empty")
-        {
-            g.DrawLine(pen, x + w / 2 - 3, y + h / 2, x + w / 2 + 3, y + h / 2);
-            g.DrawLine(pen, x + w / 2, y + h / 2 - 3, x + w / 2, y + h / 2 + 3);
-            return;
-        }
-
-        if (key.Contains("play") || key.Contains("media"))
-        {
-            g.FillPolygon(brush, [new Point(x + 3, y + 2), new Point(x + 3, y + h - 2), new Point(x + w - 2, y + h / 2)]);
-        }
-        else if (key.Contains("mute") || key.Contains("vol") || key.Contains("audio"))
-        {
-            g.DrawRectangle(pen, x + 2, y + 5, 4, h - 10);
-            g.DrawLine(pen, x + 6, y + 5, x + 11, y + 2);
-            g.DrawLine(pen, x + 6, y + h - 5, x + 11, y + h - 2);
-            g.DrawLine(pen, x + 11, y + 2, x + 11, y + h - 2);
-        }
-        else if (string.Equals(actionType, ShortcutActionTypes.OpenUrl, StringComparison.OrdinalIgnoreCase) || key.Contains("web") || key.Contains("url"))
-        {
-            g.DrawEllipse(pen, x + 1, y + 1, w - 2, h - 2);
-            g.DrawLine(pen, x + 2, y + h / 2, x + w - 2, y + h / 2);
-        }
-        else if (string.Equals(actionType, ShortcutActionTypes.Hotkey, StringComparison.OrdinalIgnoreCase) || key.Contains("key"))
-        {
-            g.DrawRectangle(pen, x + 1, y + 3, w - 2, h - 6);
-            g.DrawLine(pen, x + 4, y + h / 2, x + w - 4, y + h / 2);
-        }
-        else
-        {
-            g.DrawRectangle(pen, x + 2, y + 2, w - 4, h - 4);
-            g.DrawLine(pen, x + 5, y + 6, x + 9, y + h / 2);
-            g.DrawLine(pen, x + 9, y + h / 2, x + 5, y + h - 6);
-        }
+        ShortcutIconCatalog.Draw(g, iconName, null, bounds, color);
     }
 
     private async Task TestSelectedShortcutAsync(ListView list, List<ShortcutDefinition> shortcuts)
@@ -4532,7 +3518,7 @@ public sealed class SettingsWindow : Form
             return;
         }
 
-        if (string.Equals(currentPage, "Overview", StringComparison.Ordinal))
+        if (currentPage is "Overview" or "Device")
         {
             refreshOverviewWidgets?.Invoke();
         }
@@ -4551,15 +3537,7 @@ public sealed class SettingsWindow : Form
             UpdateDeviceActionAvailability(contentPanel, !string.IsNullOrWhiteSpace(current.DeviceId), current.HostStatus == "connected");
         }
 
-        if (string.Equals(currentPage, "Appearance", StringComparison.Ordinal) && appearanceStatusLabel is not null && !appearanceStatusLabel.IsDisposed)
-        {
-            var isConnected = string.Equals(state.Snapshot().HostStatus, "connected", StringComparison.OrdinalIgnoreCase);
-            if (!appearanceSaveTimer.Enabled)
-            {
-                appearanceStatusLabel.Text = GetAppearanceSyncStatusText(isConnected, state.Snapshot().DeviceName);
-                appearanceStatusLabel.ForeColor = isConnected ? TextMuted : Color.Khaki;
-            }
-        }
+
     }
 
     internal static bool ShouldRebuildPageOnStateChanged(string page)

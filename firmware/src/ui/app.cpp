@@ -8,6 +8,7 @@
 #include <WiFi.h>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <esp_system.h>
 #include <lgfx/v1/LGFX_Sprite.hpp>
 #include <lgfx/v1/lgfx_filesystem_support.hpp>
@@ -183,7 +184,7 @@ void applyConfiguredBacklight() {
   } else if (displayDimmed) {
     applyBacklight(state.appearance.dimBrightness);
   } else {
-    applyBacklight(state.appearance.brightness);
+    applyBacklight(state.ui.localBrightness ? state.ui.localBrightness : state.appearance.brightness);
   }
 }
 
@@ -285,12 +286,17 @@ void loadSetupSettings() {
 
 void loadShortcutSettings() {
   prefs.begin("shortcuts", true);
-  if (prefs.getUChar("version", 0) == 1 && prefs.getBytesLength("slots") == sizeof(state.shortcuts)) {
-    prefs.getBytes("slots", &state.shortcuts, sizeof(state.shortcuts));
+  const auto version = prefs.getUChar("version", 0);
+  const size_t storedBytes = prefs.getBytesLength("slots");
+  const size_t legacyBytes = offsetof(ShortcutState, colors);
+  const size_t version2Bytes = offsetof(ShortcutState, iconPixels);
+  if ((version == 3 && storedBytes == sizeof(state.shortcuts)) || (version == 2 && storedBytes == version2Bytes) || (version == 1 && storedBytes == legacyBytes)) {
+    prefs.getBytes("slots", &state.shortcuts, storedBytes);
     for (int i = 0; i < 6; ++i) {
       state.shortcuts.ids[i][sizeof(state.shortcuts.ids[i]) - 1] = '\0';
       state.shortcuts.names[i][sizeof(state.shortcuts.names[i]) - 1] = '\0';
       state.shortcuts.icons[i][sizeof(state.shortcuts.icons[i]) - 1] = '\0';
+      state.shortcuts.colors[i][sizeof(state.shortcuts.colors[i]) - 1] = '\0';
       state.shortcuts.displayModes[i][sizeof(state.shortcuts.displayModes[i]) - 1] = '\0';
     }
   }
@@ -298,20 +304,26 @@ void loadShortcutSettings() {
 }
 
 void persistShortcutSettings() {
-  ShortcutState previous;
+  auto* previous = new (std::nothrow) ShortcutState;
   prefs.begin("shortcuts", false);
-  const bool unchanged = prefs.getUChar("version", 0) == 1 && prefs.getBytesLength("slots") == sizeof(previous)
-      && prefs.getBytes("slots", &previous, sizeof(previous)) == sizeof(previous)
-      && std::memcmp(&previous, &state.shortcuts, sizeof(previous)) == 0;
+  const bool unchanged = previous && prefs.getUChar("version", 0) == 3 && prefs.getBytesLength("slots") == sizeof(*previous)
+      && prefs.getBytes("slots", previous, sizeof(*previous)) == sizeof(*previous)
+      && std::memcmp(previous, &state.shortcuts, offsetof(ShortcutState, iconRevision)) == 0;
+  delete previous;
   if (!unchanged) {
     prefs.putBytes("slots", &state.shortcuts, sizeof(state.shortcuts));
-    prefs.putUChar("version", 1);
+    prefs.putUChar("version", 3);
   }
   prefs.end();
 }
 
 void loadAppearanceSettings() {
   prefs.begin("appearance", true);
+  const String brightnessRevision = prefs.getString("brightrev", "");
+  applyBrightnessRevision(state.ui, brightnessRevision.c_str(), false);
+  state.appearance.tileColorScheme = prefs.getUChar("tiles", 0);
+  state.appearance.standbyStyle = prefs.getUChar("clock", 0);
+  state.appearance.shortcutsLayout = prefs.getUChar("layout", 0);
   const PreferenceType dimSecondsType = prefs.getType("dimsec");
   const PreferenceType offSecondsType = prefs.getType("offsec");
   state.appearance.theme = prefs.getUChar("theme", state.appearance.theme);
@@ -353,6 +365,10 @@ void loadAppearanceSettings() {
 void persistAppearanceSettings() {
   normalizeAppearance(state.appearance);
   prefs.begin("appearance", false);
+  prefs.putString("brightrev", state.ui.brightnessRevision);
+  prefs.putUChar("tiles", state.appearance.tileColorScheme);
+  prefs.putUChar("clock", state.appearance.standbyStyle);
+  prefs.putUChar("layout", state.appearance.shortcutsLayout);
   prefs.putUChar("theme", state.appearance.theme);
   prefs.putUChar("button", state.appearance.buttonStyle);
   prefs.putUInt("accent", state.appearance.accent);
@@ -457,6 +473,8 @@ void markUserInput() {
   if (displayOff || displayDimmed) {
     displayOff = false;
     displayDimmed = false;
+    state.ui.standby = false;
+    uiRefresh(state);
     applyConfiguredBacklight();
   }
 }
@@ -979,6 +997,7 @@ void readTouch(lv_indev_t*, lv_indev_data_t* data) {
     pt = touchcal::rotate180(pt, board::screenWidth, board::screenHeight);
     const int x = constrain(static_cast<int>(pt.x), 0, board::screenWidth - 1);
     const int y = constrain(static_cast<int>(pt.y), 0, board::screenHeight - 1);
+    uiReportTouch(x, y);
     lastX = x;
     lastY = y;
     data->state = LV_INDEV_STATE_PRESSED;
@@ -995,6 +1014,13 @@ void readTouch(lv_indev_t*, lv_indev_data_t* data) {
 
 void handleIntent(const Intent& intent) {
   switch (intent.type) {
+    case IntentType::TestTouch:
+      uiShowTouchTest();
+      break;
+    case IntentType::SetBrightness:
+      state.ui.localBrightness = clampPercent(intent.value, 10, 100);
+      applyConfiguredBacklight();
+      break;
     case IntentType::Recalibrate:
       beginCalibration();
       break;
@@ -1010,6 +1036,7 @@ void handleIntent(const Intent& intent) {
       lastUserInputAt = millis();
       displayOff = false;
       displayDimmed = false;
+      state.ui.standby = false;
       applyConfiguredBacklight();
       uiRefresh(state);
       break;
@@ -1041,12 +1068,15 @@ void handleIntent(const Intent& intent) {
 
 void serviceDisplayIdle() {
   if (bootMode != BootMode::App || calibrating) return;
+  state.ui.calibrationValid = calibration.valid;
   const uint32_t idleSeconds = (millis() - lastUserInputAt) / 1000UL;
   const DisplayIdleDecision decision = computeDisplayIdleDecision(state, idleSeconds, displayOff, displayDimmed);
   if (decision.resetIdleTimer) lastUserInputAt = millis();
   if (decision.off != displayOff || decision.dimmed != displayDimmed) {
     displayOff = decision.off;
     displayDimmed = decision.dimmed;
+    state.ui.standby = displayDimmed || displayOff;
+    uiRefresh(state);
     applyConfiguredBacklight();
   }
 }
@@ -1162,6 +1192,7 @@ void appBegin() {
   touch.begin();
   beginSdStatus();
   loadCalibration();
+  state.ui.calibrationValid = calibration.valid;
   lvglPortBegin(display);
 
   pointer = lv_indev_create();

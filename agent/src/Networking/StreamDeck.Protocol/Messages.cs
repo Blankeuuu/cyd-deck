@@ -46,7 +46,9 @@ public sealed record DeviceSettingsMessage(
     bool? WakeOnTouch,
     string? TileColorScheme = null,
     string? StandbyStyle = null,
-    string? ShortcutsLayout = null);
+    string? ShortcutsLayout = null,
+    bool? ApplyBrightness = null,
+    string? BrightnessRevision = null);
 
 public sealed record DeviceInfoMessage(
     string FirmwareVersion,
@@ -98,9 +100,10 @@ public sealed record SystemStatsMessage(
     long MemoryTotalBytes,
     int? GpuPercent = null,
     int? TempCelsius = null,
-    int? HostLocalMinutes = null);
+    int? HostLocalMinutes = null,
+    string? HostDate = null);
 
-public sealed record ShortcutDefinition(string Id, string Label, string? Icon = null, string? DisplayMode = null, string? ActionType = null);
+public sealed record ShortcutDefinition(string Id, string Label, string? Icon = null, string? DisplayMode = null, string? ActionType = null, string? Color = null, string? IconData = null);
 
 public sealed record ShortcutsUpdateMessage(IReadOnlyList<ShortcutDefinition> Shortcuts);
 

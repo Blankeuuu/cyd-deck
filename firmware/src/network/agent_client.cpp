@@ -549,6 +549,7 @@ class AgentClient::Impl {
         state_->system.ramPercent = clampPercent(integerField(payload, length, "memoryPercent", state_->system.ramPercent), 0, 100);
         state_->system.gpuPercent = clampPercent(integerField(payload, length, "gpuPercent", state_->system.gpuPercent), 0, 100);
         state_->system.tempCelsius = static_cast<uint8_t>(constrain(integerField(payload, length, "tempCelsius", state_->system.tempCelsius), 0, 120));
+        if (hasField(payload, length, "hostDate")) copyText(state_->system.hostDate, sizeof(state_->system.hostDate), quotedField(payload, length, "hostDate").c_str(), "");
         const long hostMinutes = integerField(payload, length, "hostLocalMinutes", -1);
         if (hostMinutes >= 0 && hostMinutes < 1440) {
           state_->system.hostLocalMinutes = static_cast<int16_t>(hostMinutes);
@@ -608,6 +609,8 @@ class AgentClient::Impl {
   }
 
   void applySettings(const char* payload, size_t length) {
+    const String revision = quotedField(payload, length, "brightnessRevision");
+    applyBrightnessRevision(state_->ui, revision.c_str(), boolField(payload, length, "applyBrightness", false));
     AppearanceState next = state_->appearance;
     next.theme = enumField(payload, length, "theme", "dark", "light", nullptr, next.theme);
     next.buttonStyle = enumField(payload, length, "buttonStyle", "flat", "rounded", "pill", next.buttonStyle);

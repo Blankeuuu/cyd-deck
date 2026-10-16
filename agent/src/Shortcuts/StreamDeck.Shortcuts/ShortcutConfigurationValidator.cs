@@ -80,11 +80,21 @@ public sealed class ShortcutConfigurationValidator
             issues.Add(new ShortcutValidationIssue($"{path}.icon", "Icon must be a non-empty token up to 64 characters."));
         }
 
+        if (shortcut.IconData is not null) {
+            var bytes = new byte[1728];
+            if (shortcut.IconData.Length != 2304 || !Convert.TryFromBase64String(shortcut.IconData, bytes, out var count) || count != bytes.Length)
+                issues.Add(new ShortcutValidationIssue($"{path}.iconData", "Icon must be a 24x24 RGB565A8 image."));
+        }
+        if (shortcut.IconUrl is not null && (!Uri.TryCreate(shortcut.IconUrl, UriKind.Absolute, out var iconUri) || iconUri.Scheme is not ("http" or "https") || shortcut.IconUrl.Length > 2048))
+            issues.Add(new ShortcutValidationIssue($"{path}.iconUrl", "Icon URL must use HTTP or HTTPS."));
+
         if (!ShortcutDisplayModes.IsKnown(shortcut.DisplayMode))
         {
             issues.Add(new ShortcutValidationIssue($"{path}.displayMode", "Display mode must be label, icon or both."));
         }
 
+        if (shortcut.Color is { } color && (color.Length != 7 || color[0] != '#' || !color.Skip(1).All(Uri.IsHexDigit)))
+            issues.Add(new ShortcutValidationIssue($"{path}.color", "Tile color must be #RRGGBB."));
         ValidateAction(shortcut.Action, $"{path}.action", issues);
     }
 

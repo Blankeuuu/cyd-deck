@@ -565,7 +565,7 @@ public static class ProtocolSerializer
             "dimAfterSec",
             "dimBrightness",
             "screenOffAfterSec",
-            "wakeOnTouch");
+            "wakeOnTouch", "tileColorScheme", "standbyStyle", "shortcutsLayout", "applyBrightness", "brightnessRevision");
         if (propertiesValidation is not null)
         {
             return propertiesValidation;
@@ -577,7 +577,10 @@ public static class ProtocolSerializer
         }
 
         var enumValidation = ValidateOptionalEnum(data, "theme", new HashSet<string> { "dark", "light" })
-            ?? ValidateOptionalEnum(data, "buttonStyle", new HashSet<string> { "flat", "rounded", "pill" });
+            ?? ValidateOptionalEnum(data, "buttonStyle", new HashSet<string> { "flat", "rounded", "pill" })
+            ?? ValidateOptionalEnum(data, "tileColorScheme", new HashSet<string> { "control-center", "accent-tint", "oled-contrast" })
+            ?? ValidateOptionalEnum(data, "standbyStyle", new HashSet<string> { "apple-standby", "watchos-modular", "minimal-oled" })
+            ?? ValidateOptionalEnum(data, "shortcutsLayout", new HashSet<string> { "auto", "hero-1", "split-2", "quad-4", "grid-6" });
         if (enumValidation is not null)
         {
             return enumValidation;
@@ -603,6 +606,15 @@ public static class ProtocolSerializer
         {
             return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "device.settings data.wakeOnTouch must be boolean.");
         }
+
+        if (data.TryGetProperty("applyBrightness", out var applyBrightness) && applyBrightness.ValueKind is not JsonValueKind.True and not JsonValueKind.False and not JsonValueKind.Null)
+        {
+            return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "device.settings data.applyBrightness must be boolean.");
+        }
+
+        if (data.TryGetProperty("brightnessRevision", out var brightnessRevision) && brightnessRevision.ValueKind != JsonValueKind.Null &&
+            (brightnessRevision.ValueKind != JsonValueKind.String || brightnessRevision.GetString() is not { Length: 32 } revision || !revision.All(Uri.IsHexDigit)))
+            return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "device.settings data.brightnessRevision must be a 32-character hex ID.");
 
         return ValidateOptionalPageList(data, "pageOrder", requireInfo: true, allowSubset: false)
             ?? ValidateOptionalPageList(data, "pageVisibility", requireInfo: true, allowSubset: true);

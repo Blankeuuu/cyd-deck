@@ -20,6 +20,12 @@ public sealed record AgentConfiguration
     [JsonPropertyName("appearance")]
     public AppearanceConfiguration? Appearance { get; init; } = new();
 
+    [JsonPropertyName("activeProfile")]
+    public string ActiveProfile { get; init; } = "Default";
+
+    [JsonPropertyName("profiles")]
+    public IReadOnlyList<DeckProfileConfiguration> Profiles { get; init; } = [];
+
     [JsonPropertyName("shortcuts")]
     public IReadOnlyList<ShortcutDefinition>? Shortcuts { get; init; } = [];
 
@@ -43,6 +49,12 @@ public sealed record DesktopAppearanceConfiguration
 
 public sealed record ServerConfiguration
 {
+    [JsonPropertyName("usbPort")]
+    public string? UsbPort { get; init; }
+
+    [JsonPropertyName("usbAutoConnect")]
+    public bool UsbAutoConnect { get; init; } = true;
+
     [JsonPropertyName("port")]
     public int Port { get; init; } = 8765;
 }
@@ -64,6 +76,9 @@ public sealed record CoversConfiguration
 
 public sealed record AppearanceConfiguration
 {
+    [JsonPropertyName("brightnessRevision")]
+    public string? BrightnessRevision { get; init; }
+
     [JsonPropertyName("theme")]
     public string Theme { get; init; } = "dark";
 
@@ -106,3 +121,5 @@ public sealed record AppearanceConfiguration
     [JsonPropertyName("wakeOnTouch")]
     public bool WakeOnTouch { get; init; } = true;
 }
+
+public sealed record DeckProfileConfiguration(string Name, IReadOnlyList<ShortcutDefinition> Shortcuts);

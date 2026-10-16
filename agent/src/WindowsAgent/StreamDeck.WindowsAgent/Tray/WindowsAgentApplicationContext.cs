@@ -45,7 +45,7 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
         notifyIcon = new NotifyIcon
         {
             Icon = appIcon,
-            Text = "PC Dock",
+            Text = "CYD-DECK",
             Visible = true,
             ContextMenuStrip = BuildMenu()
         };
@@ -92,9 +92,9 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
         startWithWindowsItem.Click += (_, _) => startup.SetEnabled(startWithWindowsItem.Checked);
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("PC Dock").Enabled = false;
+        menu.Items.Add("CYD-DECK").Enabled = false;
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Open PC Dock", null, (_, _) => ShowMainWindow());
+        menu.Items.Add("Open CYD-DECK", null, (_, _) => ShowMainWindow());
         menu.Items.Add(statusItem);
         menu.Items.Add(deviceItem);
         menu.Items.Add(ipItem);

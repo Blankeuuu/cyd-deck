@@ -19,6 +19,15 @@ public sealed record ShortcutDefinition
     [JsonPropertyName("icon")]
     public string Icon { get; init; } = string.Empty;
 
+    [JsonPropertyName("iconData")]
+    public string? IconData { get; init; }
+
+    [JsonPropertyName("iconUrl")]
+    public string? IconUrl { get; init; }
+
+    [JsonPropertyName("color")]
+    public string? Color { get; init; }
+
     [JsonPropertyName("displayMode")]
     public string DisplayMode { get; init; } = ShortcutDisplayModes.Label;
 
@@ -62,7 +71,7 @@ public static class ShortcutDisplayModes
     }
 }
 
-public sealed record DeviceShortcutDefinition(string Id, string Name, string Icon, string DisplayMode);
+public sealed record DeviceShortcutDefinition(string Id, string Name, string Icon, string DisplayMode, string? Color = null, string? IconData = null);
 
 public sealed record DeviceShortcutConfiguration(IReadOnlyList<DeviceShortcutDefinition> Shortcuts);
 

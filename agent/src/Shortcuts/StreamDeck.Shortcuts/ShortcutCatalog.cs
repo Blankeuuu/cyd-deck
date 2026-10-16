@@ -14,7 +14,7 @@ public sealed class ShortcutCatalog
                     shortcut.Id,
                     shortcut.Name,
                     shortcut.Icon,
-                    NormalizeDisplayMode(shortcut.DisplayMode)))
+                    NormalizeDisplayMode(shortcut.DisplayMode), shortcut.Color, shortcut.IconData))
                 .ToArray());
     }
 

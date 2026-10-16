@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstring>
+#include <string>
 
 #include "network/agent_discovery.h"
 #include "network/agent_protocol.h"
@@ -7,6 +8,29 @@
 #include "ui/app_state.h"
 
 int main() {
+  using namespace streamdeck;
+  {
+  char iconData[2305]; std::memset(iconData, '_', 2304); iconData[2304] = 0;
+  uint8_t pixels[1728]{};
+  assert(protocol::decodeShortcutIcon(iconData, pixels));
+  for (auto pixel : pixels) assert(pixel == 255);
+  iconData[1] = '!'; assert(!protocol::decodeShortcutIcon(iconData, pixels));
+  iconData[1] = '_'; iconData[2303] = 0; assert(!protocol::decodeShortcutIcon(iconData, pixels));
+  std::memset(iconData, 'A', 2304); iconData[2304] = 0;
+  std::string iconFrame = "{\"shortcuts\":[";
+  for (int i = 0; i < 6; ++i) {
+    if (i) iconFrame += ",";
+    iconFrame += "{\"id\":\"slot" + std::to_string(i) + "\",\"label\":\"Custom\",\"icon\":\"custom\",\"displayMode\":\"both\",\"iconData\":\"" + std::string(iconData) + "\"}";
+  }
+  iconFrame += "]}";
+  assert(iconFrame.size() < 16384);
+  ShortcutState imageShortcuts;
+  protocol::applyShortcutsUpdateJson(imageShortcuts, iconFrame.c_str(), iconFrame.size());
+  for (int i = 0; i < 6; ++i) { assert(imageShortcuts.hasIconPixels[i]); assert(imageShortcuts.iconPixels[i][1727] == 0); }
+  protocol::applyShortcutsUpdateJson(imageShortcuts, "{}", 2);
+  assert(!imageShortcuts.hasIconPixels[0]);
+
+  }
   using namespace streamdeck;
 
   const char coverFrame[] = R"({"protocol":1,"type":"cover.chunk","data":{"coverId":"abc","offset":0,"total":5,"data":"SGVsbG8="}})";
@@ -116,6 +140,14 @@ int main() {
   AppState defaultState;
   assert(std::strcmp(defaultState.shortcuts.ids[0], "") == 0);
   assert(std::strcmp(defaultState.shortcuts.names[0], "No shortcut") == 0);
+  ShortcutState colors;
+  const char colored[] = R"({"shortcuts":[{"id":"color-tile","label":"Color","color":"#0A84FF"}]})";
+  protocol::applyShortcutsUpdateJson(colors, colored, sizeof(colored) - 1);
+  assert(std::strcmp(colors.colors[0], "#0A84FF") == 0);
+  const char uncolored[] = R"({"shortcuts":[{"id":"color-tile","label":"Color"}]})";
+  protocol::applyShortcutsUpdateJson(colors, uncolored, sizeof(uncolored) - 1);
+  assert(colors.colors[0][0] == '\0');
+
   ShortcutState shortcutState;
   std::strcpy(shortcutState.names[0], "Stale shortcut");
   std::strcpy(shortcutState.ids[0], "stale-id");

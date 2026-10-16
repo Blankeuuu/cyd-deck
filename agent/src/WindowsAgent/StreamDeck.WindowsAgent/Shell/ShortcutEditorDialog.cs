@@ -25,7 +25,9 @@ internal sealed class ShortcutEditorDialog : Form
     private readonly TextBox nameText = new();
     private readonly TextBox iconText = new();
     private readonly ComboBox displayModeCombo = new();
-    private readonly ComboBox iconPresetCombo = new();
+    private readonly Button chooseIconButton = new();
+    private string? loadedIconData;
+    private string? loadedIconUrl;
     private readonly ComboBox typeCombo = new();
     private readonly TextBox targetText = new();
     private readonly TextBox argumentsText = new();
@@ -37,6 +39,7 @@ internal sealed class ShortcutEditorDialog : Form
     private readonly Label previewBadgeLabel = new();
     private readonly Button testActionButton = new();
     private string? loadedActionType;
+    private string? loadedTileColor;
 
     public ShortcutEditorDialog(ShortcutDefinition? shortcut = null)
     {
@@ -52,7 +55,7 @@ internal sealed class ShortcutEditorDialog : Form
         ForeColor = Color.FromArgb(238, 241, 245);
         Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
         AccessibleName = Text;
-        AccessibleDescription = "Configure an Agent-side shortcut action. Firmware receives only shortcut IDs and labels.";
+        AccessibleDescription = "Configure an Agent-side shortcut action. Choose a built-in icon or import an image URL for the CYD display.";
 
         typeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         typeCombo.AccessibleName = "Shortcut action";
@@ -66,18 +69,14 @@ internal sealed class ShortcutEditorDialog : Form
         displayModeCombo.Items.AddRange(GetDisplayModeChoices().Cast<object>().ToArray());
         displayModeCombo.SelectedIndexChanged += (_, _) => UpdatePreview();
 
-        iconPresetCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        iconPresetCombo.AccessibleName = "Icon presets";
-        iconPresetCombo.Items.AddRange(["[Preset icon]", "shortcut", "browser", "terminal", "audio", "app", "lock", "folder", "play", "star", "tools", "gear"]);
-        iconPresetCombo.SelectedIndex = 0;
-        iconPresetCombo.SelectedIndexChanged += (_, _) =>
-        {
-            if (iconPresetCombo.SelectedIndex > 0 && iconPresetCombo.SelectedItem is string preset)
-            {
-                iconText.Text = preset;
-                UpdatePreview();
-            }
+        chooseIconButton.Text = "Choose icon…";
+        chooseIconButton.AccessibleName = "Choose shortcut icon";
+        chooseIconButton.Click += (_, _) => {
+            using var picker = new ShortcutIconPicker(iconText.Text, loadedIconData, loadedIconUrl);
+            if (picker.ShowDialog(this) != DialogResult.OK) return;
+            loadedIconData = picker.IconData; loadedIconUrl = picker.IconUrl; iconText.Text = picker.IconKey; UpdatePreview();
         };
+        iconText.ReadOnly = true;
 
         idText.ReadOnly = true;
         idText.TabStop = false;
@@ -120,7 +119,12 @@ internal sealed class ShortcutEditorDialog : Form
         previewBadgeLabel.TextAlign = ContentAlignment.MiddleCenter;
         previewBadgeLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
         previewBadgeLabel.ForeColor = Color.FromArgb(82, 153, 224);
-        previewBadge.Controls.Add(previewBadgeLabel);
+        previewBadge.Paint += (_, e) => {
+            var mode = NormalizeDisplayModeChoice(displayModeCombo.SelectedItem?.ToString());
+            if (mode != ShortcutDisplayModes.Label) ShortcutIconCatalog.Draw(e.Graphics, iconText.Text, loadedIconData, new Rectangle(mode == ShortcutDisplayModes.Icon ? (previewBadge.Width - 24) / 2 : 8, (previewBadge.Height - 24) / 2, 24, 24), ForeColor);
+            if (mode != ShortcutDisplayModes.Icon) TextRenderer.DrawText(e.Graphics, nameText.Text.Length == 0 ? "Shortcut" : nameText.Text, Font, new Rectangle(mode == ShortcutDisplayModes.Both ? 40 : 4, 0, previewBadge.Width - (mode == ShortcutDisplayModes.Both ? 44 : 8), previewBadge.Height), ForeColor, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        };
+
 
         testActionButton.Text = "Test action";
         testActionButton.AccessibleName = "Test shortcut action";
@@ -179,10 +183,10 @@ internal sealed class ShortcutEditorDialog : Form
         iconPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
         iconText.Dock = DockStyle.Fill;
         iconText.Margin = new Padding(0, 4, 4, 4);
-        iconPresetCombo.Dock = DockStyle.Fill;
-        iconPresetCombo.Margin = new Padding(4, 4, 0, 4);
+        chooseIconButton.Dock = DockStyle.Fill;
+        chooseIconButton.Margin = new Padding(4, 4, 0, 4);
         iconPanel.Controls.Add(iconText, 0, 0);
-        iconPanel.Controls.Add(iconPresetCombo, 1, 0);
+        iconPanel.Controls.Add(chooseIconButton, 1, 0);
         AddField(root, 2, "Icon", iconPanel);
 
         var displayPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
@@ -257,8 +261,10 @@ internal sealed class ShortcutEditorDialog : Form
     private void LoadShortcut(ShortcutDefinition shortcut)
     {
         loadedActionType = shortcut.Action.Type;
+        loadedTileColor = shortcut.Color;
         idText.Text = shortcut.Id;
         nameText.Text = shortcut.Name;
+        loadedIconData = shortcut.IconData; loadedIconUrl = shortcut.IconUrl;
         iconText.Text = shortcut.Icon;
         displayModeCombo.SelectedItem = ToDisplayModeChoice(shortcut.DisplayMode);
         typeCombo.SelectedItem = ToActionChoice(shortcut.Action.Type);
@@ -279,9 +285,12 @@ internal sealed class ShortcutEditorDialog : Form
 
     private ShortcutDefinition BuildShortcut() => new()
     {
+        Color = loadedTileColor,
         Id = idText.Text.Trim(),
         Name = nameText.Text.Trim(),
         Icon = iconText.Text.Trim(),
+        IconData = loadedIconData,
+        IconUrl = loadedIconUrl,
         DisplayMode = NormalizeDisplayModeChoice(displayModeCombo.SelectedItem?.ToString()),
         Action = CreateActionForInputs(GetActionChoiceForSave(), targetText.Text, argumentsText.Text, builtInActionCombo.SelectedItem?.ToString())
     };
@@ -339,15 +348,7 @@ internal sealed class ShortcutEditorDialog : Form
 
     private void UpdatePreview()
     {
-        var name = string.IsNullOrWhiteSpace(nameText.Text) ? "Shortcut" : nameText.Text.Trim();
-        var icon = string.IsNullOrWhiteSpace(iconText.Text) ? "shortcut" : iconText.Text.Trim();
-        var mode = displayModeCombo.SelectedItem?.ToString() ?? DisplayLabelChoice;
-        previewBadgeLabel.Text = mode switch
-        {
-            DisplayIconChoice => $"[{icon}]",
-            DisplayBothChoice => $"[{icon}] {name}",
-            _ => name
-        };
+        previewBadge.Invalidate();
     }
 
     private async void TestCurrentAction()

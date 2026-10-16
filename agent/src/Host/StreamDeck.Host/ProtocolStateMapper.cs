@@ -9,7 +9,7 @@ namespace StreamDeck.Host;
 
 public static class ProtocolStateMapper
 {
-    public static string CreateAgentHello(string deviceId = "windows-agent", string name = "PC Dock Agent")
+    public static string CreateAgentHello(string deviceId = "windows-agent", string name = "CYD-DECK Windows Agent")
     {
         return ProtocolSerializer.Serialize(
             ProtocolConstants.MessageTypes.Hello,
@@ -65,13 +65,14 @@ public static class ProtocolStateMapper
                 ToSignedBytes(metrics.RamTotalBytes),
                 gpu,
                 temp,
-                hostLocalMinutes));
+                hostLocalMinutes,
+                nowLocal.ToString("dddd, d MMMM", System.Globalization.CultureInfo.InvariantCulture)));
     }
 
     public static string CreateShortcutsUpdate(DeviceShortcutConfiguration configuration)
     {
         var shortcuts = configuration.Shortcuts
-            .Select(shortcut => new global::StreamDeck.Protocol.ShortcutDefinition(shortcut.Id, shortcut.Name, shortcut.Icon, shortcut.DisplayMode))
+            .Select(shortcut => new global::StreamDeck.Protocol.ShortcutDefinition(shortcut.Id, shortcut.Name, shortcut.Icon, shortcut.DisplayMode, Color: shortcut.Color, IconData: shortcut.IconData?.Replace('+', '-').Replace('/', '_')))
             .ToArray();
 
         return ProtocolSerializer.Serialize(
@@ -120,7 +121,7 @@ public static class ProtocolStateMapper
             settings);
     }
 
-    public static string CreateDeviceSettings(string requestId, AppearanceConfiguration appearance)
+    public static string CreateDeviceSettings(string requestId, AppearanceConfiguration appearance, bool applyBrightness = false)
     {
         return CreateDeviceSettings(
             requestId,
@@ -139,7 +140,9 @@ public static class ProtocolStateMapper
                 appearance.WakeOnTouch,
                 appearance.TileColorScheme,
                 appearance.StandbyStyle,
-                appearance.ShortcutsLayout));
+                appearance.ShortcutsLayout,
+                applyBrightness,
+                appearance.BrightnessRevision));
     }
 
     private static long ToMilliseconds(TimeSpan value)

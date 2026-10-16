@@ -114,3 +114,19 @@ Przy autoryzowanym USB oraz przez krótki czas negocjacji USB nie uruchamia się
 Capability cover-cache-request w hello ESP32 uzgadnia tryb żądania przy cache miss. Dla takiego urządzenia media.update zawiera coverId, ale Agent nie przesyła automatycznie obrazu. CYD odczytuje plik SD; tylko gdy go brakuje lub dekoder go odrzuci, wysyła cover.request: {coverId: SHA256}. Żądanie nie wymaga requestId; Agent autoryzuje sesję, waliduje64hex i odpowiada wyłącznie dla aktualnego coverId. Odpowiedź zachowuje cover.chunk/cover.complete. Bez capability pozostaje legacy push. Pierwsza synchronizacja nie czeka na binaria: metadane i connected poprzedzają obsługę ewentualnego requestu z urządzenia.
 
 Heartbeat USB5s, timeout30s. Lokalny timeline interpoluje pozycję co100ms; pakiety media.timeline nadal korygują kotwicę bez zwiększania ruchu. Envelope protocol1; nową parę Agent/firmware wdrożono razem.
+
+## Rozszerzenia UI — 2026-10-16
+
+Wersja koperty pozostaje `protocol: 1`. Opcjonalne pola zachowują zgodność: starszy firmware pomija nowe ustawienia, nowszy przyjmuje ich brak.
+
+- `device.settings.data.applyBrightness` (boolean): jawne zastosowanie jasności również przy tej samej wartości; hydration wysyła false.
+- `device.settings.data.brightnessRevision` (32 znaki hex): identyfikator jawnego zapisu ustawień, także offline. Zmiana rewizji usuwa lokalną korektę jasności; ta sama rewizja przy reconnect ją zachowuje. Ostatnia rewizja jest zapisana w NVS.
+- `device.settings`: walidator uwzględnia teraz `tileColorScheme`, `standbyStyle`, `shortcutsLayout` oraz powyższe pola.
+- `system.stats.data.hostDate`: angielska data z Windows (`dddd, d MMMM`, InvariantCulture), używana na ekranie Default i StandBy; istniejący `hostLocalMinutes` nadal synchronizuje zegar.
+- `shortcuts.update.data.shortcuts[].color`: opcjonalny kolor kafelka `#RRGGBB`; brak oznacza dziedziczenie Display Appearance. Katalog aktywnego profilu jest przesyłany istniejącym mechanizmem; firmware używa pierwszych sześciu wpisów, a Default pierwszych czterech.
+
+Default oraz przycisk ustawień są lokalną nawigacją firmware. Zachowano dotychczasowe identyfikatory konfiguracji `media`, `shortcuts`, `pc`, `info`; nie dodano nowej akcji zdalnej ani dodatkowej strony kafelków. Nawigacja pozostaje dostępna niezależnie od legacy pageVisibility.
+
+NVS skrótów używa wersji 2; starszy zapis wersji 1 jest odczytywany bez utraty identyfikatorów i podpisów, z domyślnym dziedziczeniem kolorów. Cache okładek SD i kolejność transferu USB nie zmieniły się.
+
+Transport potwierdza przyjęcie `device.settings` przez dotychczasowy ACK. Etykieta Windows `sent to CYD` opisuje wysłanie przez transport; nie stanowi dodatkowego potwierdzenia fizycznego renderowania.

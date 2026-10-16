@@ -6,6 +6,133 @@ updated: 2026-10-16
 status: active
 ---
 
+## HANDOFF — ikony skrótów i import obrazków URL (prace w toku)
+
+### Zakres i obowiązujące decyzje
+
+Pracuj wyłącznie w `C:\Users\Syzmon\Documents\VAULT\projects\stream-deck`. Komunikacja i dokumentacja po polsku; interfejs produktu po angielsku. Skill `apple-design` w `.agents/skills` Vaultu przeczytany; stosuj go do galerii i podglądów. Repo ma wiele niezacommitowanych zmian z poprzedniej refaktoryzacji — nie resetuj ich. Użytkownik poprosił o handoff w trakcie implementacji, przed wdrożeniem nowej funkcji.
+
+**Nie usuwaj zegara z doku.** Użytkownik wyraźnie przywrócił HH:mm jako pierwszy przycisk; pozostałe to Deck / Media / PC / gear. Reszta poprzedniego UI została zaakceptowana.
+
+### Ostatnia prośba użytkownika
+
+Ikony działają częściowo, Windows Agent nie pokazuje listy dostępnych obrazków i wymaga zgadywania nazw. Dodać wizualną galerię, zgodność Windows/CYD i możliwość ustawienia ikony przez wklejenie URL obrazu.
+
+Referencje przejrzane:
+- `C:\Users\Syzmon\Pictures\Screenshots\Zrzut ekranu 2026-10-16 195938.png`
+- `C:\Users\Syzmon\Pictures\Screenshots\Zrzut ekranu 2026-10-16 195929.png`
+- `C:\Users\Syzmon\Downloads\IMG_5331.heic`, lokalny podgląd `artifacts/ui-reference/IMG_5331.png`.
+
+Zdjęcie pokazuje wcześniejszy Home w doku; na sprzęcie później przywrócono zegar. Zrzuty Windows potwierdzają brak prawdziwych ikon lock/shortcut: poprzedni renderer rysował inne symbole niż firmware.
+
+### Faktyczny stan sprzętu i uruchomionego Agenta
+
+- CYD ESP32-2432S028R / ST7789 320×240, COM5. Na urządzeniu nadal stabilny firmware **z przywróconym zegarem**, bez importu ikon URL.
+- SHA256 wdrożonego firmware: `450BF4B8F99D5739832E0558F6A1D025083B67E75116134B0702E5ACCDFA9E38`.
+- Agent pozostawiony włączony: PID **10252**, `artifacts/nav-agent/StreamDeck.WindowsAgent.exe`, dashboard `http://127.0.0.1:64212`. Jest to dotychczasowa wersja, bez nowego pickera.
+- Ostatnia weryfikacja wdrożenia: `artifacts/nav-clock-verification.json`, USB connected, cover.status=2/rendered=true, volume=100/muted=false.
+- Nowych zmian **nie flashowano**, nie opublikowano i nie commitowano. Nie ruszano konfiguracji użytkownika, parowania ani cache SD.
+
+### Co jest już w kodzie
+
+**Windows Agent**:
+- `Shell/ShortcutIconPicker.cs`: modalna galeria 21 ikon, podgląd zaznaczenia, pole Image URL + Load preview + Use icon/Cancel. Pobieranie asynchroniczne, anulowanie przy zamknięciu.
+- `Shell/ShortcutIconCatalog.cs`: identyczne maski symboli co CYD, aliasy kluczy, cache bitmap podglądu (128 pozycji), pobieranie HTTP(S) do 2 MB z limitem czasu, dekodowanie SkiaSharp, obraz do 4096×4096, dopasowanie z zachowaniem proporcji do 24×24, przezroczystość. PNG/JPEG/WebP/GIF/BMP; SVG nie jest obsługiwany.
+- `Shell/shortcut-icons.json`: embedded resource, maski alpha wygenerowane z tego samego fontu co firmware.
+- `SettingsWindow.Compact.cs`: tekstowe pole Icon zastąpione przyciskiem Choose icon z miniaturą, podgląd kafelków wyświetla prawdziwy wybrany symbol/obraz oraz respektuje icon/label/both. Podgląd doku pokazuje HH:mm / Deck / Media / PC / gear.
+- `ShortcutEditorDialog.cs`: ten sam picker w edytorze Advanced/Add; tekstowy klucz tylko do odczytu, prawdziwy malowany podgląd zamiast [iconName].
+- `SettingsWindow.cs`: stary ręcznie rysowany renderer symboli zastąpiony wspólnym katalogiem.
+- `ShortcutConfiguration.cs`: opcjonalne `IconData`, `IconUrl` w konfiguracji PC; walidator sprawdza długość obrazu i URL. `DeviceShortcutDefinition` przenosi `IconData`.
+- `ShortcutCatalog.cs`, `ProtocolStateMapper.cs`, `Messages.cs`: dane ikony przechodzą do konfiguracji urządzenia.
+
+**Firmware**:
+- `ShortcutState` ma sześć buforów 1728 B, flagi poprawności i rewizję. Format **24×24 RGB565A8**: 1152 B RGB565 little endian + 576 B alpha (osobna płaszczyzna).
+- `agent_protocol.h`: opcjonalne `iconData`, dekoder dokładnie 2304 znaków Base64/Base64URL, uszkodzony obraz nie ustawia flagi i używa symbolu zastępczego.
+- `ui_manager.cpp`: bitmapa dzieckiem istniejącej etykiety ikony, deskryptory LVGL RGB565A8 wspólne dla Home/Deck; aktualizacja cache/invalidation według rewizji. Wbudowane ikony nadal korzystają z fontu. Dodano camera i mic/microphone.
+- `app.cpp`: zapis NVS skrótów **v3**, odczyt wcześniejszych v1/v2 przez `offsetof` dotychczasowego prefiksu. Porównanie poprzedniego zapisu na stercie (`new(nothrow)`), aby nie umieszczać >10 KB na stosie pętli. Rewizja jest pomijana przy porównaniu zawartości, aby reconnect nie przepisywał NVS bez potrzeby.
+- `scripts/icon-font-generator/Program.cs`: 21 glyphów (dodane camera/mic), opcjonalny trzeci argument generuje także JSON podglądów Windows. Font bitmapy 3649 B; licencja Font Awesome już w repo.
+
+### Zmiana protokołu
+
+`protocol:1` zachowany. `shortcuts.update.data.shortcuts[].iconData` jest opcjonalnym ciągiem **Base64URL bez paddingu**, dokładnie 2304 znaki dla 1728 B. Mapper zastępuje `+` → `-`, `/` → `_`, ponieważ domyślny System.Text.Json escapuje `+` i prosty parser firmware nie dekoduje Unicode escape. Konfiguracja lokalna PC używa zwykłego Base64. Firmware akceptuje obie odmiany. `IconUrl` pozostaje wyłącznie na PC: CYD dostaje piksele i nie pobiera internetu. Sześć obrazków musi mieścić się w limicie ramki 16 KB; test podstawowego przypadku przechodzi, warto sprawdzić również maksymalne etykiety i identyfikatory.
+
+### Zweryfikowane i nieweryfikowane
+
+- Build Windows Agent po pierwszej integracji pickera: **0 errors / 0 warnings**, `artifacts/icon-agent-build.log`. Później rozszerzono generator, aliasy i testy; pełny smoke nie został potwierdzony.
+- Build firmware z bitmapami i NVS v3: **SUCCESS**, `artifacts/icon-firmware-build.log`, RAM 84088 B (25.7%), flash 1679105 B (82.6%). **Ten build jest starszy niż ostatnie zmiany**: mic/camera, Base64URL i explicit invalidation. Konieczny końcowy rebuild.
+- Native C++ testy **network_protocol** i **ui_layout** po ostatnich zmianach: PASS, kompilowane z `-Wall -Wextra -Werror`. Obejmują sześć bitmap, nieprawidłowy/truncated Base64 i zmianę Home ↔ Deck.
+- .NET smoke uruchomiono poleceniem `dotnet run --project agent/src/WindowsAgent/StreamDeck.WindowsAgent.Tests/StreamDeck.WindowsAgent.Tests.csproj -c Release`, log `artifacts/icon-agent-tests.log`. Test nie zakończył się w czasie przygotowania handoffu; log był pusty. Własny proces testowy PID 29240 zatrzymano. **Nie uznawać za PASS**; zbadać, gdzie zatrzymuje się test.
+- Nowe testy .NET na początku Program.cs sprawdzają: 21 ikon, aliasy, rozmiar/kolor/alpha konwersji, round-trip protokołu i render PC. Powstał `artifacts/ui-review/icon-picker.png`, więc wykonanie przeszło wcześniejsze asercje.
+- **Ważne:** wspomniany render pickera jest pustym oknem. Test używa `CreateControl`/`DrawToBitmap` bez pokazania formularza — nie jest to poprawna weryfikacja galerii. Następny krok: pokazać picker na ukrytej/offscreen pozycji w interaktywnym kontekście i dopiero po layout/DoEvents wykonać zrzut. Nie uznawać wizualnej jakości za potwierdzoną.
+- Potrzebny rzeczywisty test pobrania z URL (np. lokalny serwer HTTP z PNG), obsługi błędu i zachowania poprzedniej ikony po nieudanym pobraniu. Obecnie testowana jest konwersja bajtów, nie cały downloader.
+
+### Kolejne kroki
+
+1. Obejrzyj ostatnie zmiany i sprawdź picker w działającym oknie; popraw render testowy i rozpoznaj niedokończony smoke. Nie dodawaj automatycznego zapisu — obowiązuje draft i jawny Save & Sync.
+2. Sprawdź callbacki Dispose/cancellation w pickerze, błędy pobierania, układ przy DPI 150%, brak uciętych miniaturek i zmianę wyboru URL → built-in → URL. W razie potrzeby dopracuj kontrast Load preview/Use icon pod ciemnym motywem.
+3. Sprawdź mapowanie i generator: `dotnet run --project scripts/icon-font-generator/IconFontGenerator.csproj -- <WOFF> firmware/src/ui/fonts/cyd_icons_20.c agent/src/WindowsAgent/StreamDeck.WindowsAgent/Shell/shortcut-icons.json`. WOFF jest w `firmware/.pio/libdeps/cyd28_st7789_app/lvgl/scripts/built_in_font/FontAwesome5-Solid+Brands+Regular.woff`.
+4. Końcowe buildy i testy; zaktualizuj `docs/protocol.md` oraz wiki o iconData / URL / NVS v3. Obecnie te dokumenty jeszcze nie opisują nowej funkcji; ten handoff jest aktualnym źródłem.
+5. Oceń NVS miejsce i odczyt v1/v2/v3 na żywym sprzęcie; nowe skróty zajmują około 11 KB. Zapis jest większy, a bez PSRAM trzeba pilnować peak heap. `persistShortcutSettings` nie może wrócić do dużego obiektu lokalnego na stosie.
+6. Opublikuj Agenta do NOWEGO katalogu artifacts, np. `artifacts/icon-agent`; nie nadpisuj działającego `artifacts/nav-agent`.
+7. Przed zatrzymaniem Agenta sprawdź niezapisane dane. **Uwaga na fałszywy alarm:** napis `Unsaved changes` może pozostać w etykiecie walidacji Tile Inspector także po zapisie. W poprzednim wdrożeniu miarodajny był stan Enabled przycisku toolbar `Save & Sync` (False), a nie sama obecność tego tekstu. Nie trać rzeczywistych draftów.
+8. Zwolnij COM5, wgraj wyłącznie aplikację na 0x10000 (bez erase/NVS reset), uruchom nowego Agenta poprzez jednorazowe ScheduledTask Interactive. Usuń zadanie po starcie; Agent ma pozostać włączony.
+9. Sprawdź realny transfer ikon URL, wszystkie tryby, restart i reconnect, przełączanie stron, brak spadków responsywności, okładki/audio i **zegar w doku**.
+
+### Narzędzia i ograniczenia środowiska
+
+- PowerShell, workdir zawsze repo. Zwykły sandbox potrafi nie widzieć python/zig; `require_escalated` z konkretnym uzasadnieniem działa.
+- Kompilator native: `.tools/windows-host-compiler/ziglang/zig.exe` (inne instalacje Zig miały Access denied).
+- Firmware: `powershell -ExecutionPolicy Bypass -File scripts/build-firmware.ps1 run -e cyd28_st7789_app -j 8`.
+- Flash: `.tools/pio-venv/Scripts/python.exe .tools/platformio-core/packages/tool-esptoolpy/esptool.py --chip esp32 --port COM5 --baud 460800 --before default_reset --after hard_reset write_flash -z 0x10000 .pio-app/cyd28_st7789_app/firmware.bin`.
+- Agent uruchamiać ScheduledTask z principal bieżącego użytkownika, LogonType Interactive, RunLevel Limited. Direct Start-Process wcześniej dawał niewidoczny window station.
+- HEIC: stary `.tools/heif-py` ma Access denied. Zainstalowano lokalnie `.tools/heif-preview` (Pillow/pillow-heif) dla Python 3.12 z `.tools/pio-venv`. Konwersja zdjęcia została wykonana; oryginał nietknięty.
+- Pliki ostatnio zapisane Pythonem mają CRLF; `git -c core.whitespace=cr-at-eol diff --check` nie raportował realnych problemów. Wyłączenie autocrlf w diff może wyprodukować tysiące pozornych trailing whitespace; unikaj pełnego takiego outputu.
+- Nie wypisuj tokenów z hello, parowania ani konfiguracji. Nie publikuj teraz release/commita na podstawie starych próśb — bieżąca prośba to handoff.
+
+Poniżej historia poprzednich wdrożeń.
+
+## Korekta użytkownika: zegar w doku
+
+Wdrożono na COM5; esptool potwierdził hash. Agent PID 10252 pozostaje włączony, dashboard http://127.0.0.1:64212. Stan: connected, transport USB. Dowód: artifacts/nav-clock-verification.json. SHA256: 450BF4B8F99D5739832E0558F6A1D025083B67E75116134B0702E5ACCDFA9E38.
+
+Pierwszy przycisk nawigacji ponownie pokazuje bieżący czas `HH:mm`, na wszystkich stronach. Pozostałe elementy to Deck / Media / PC / koło zębate. Szerokość zegara wynika z najszerszej cyfry fontu; test obejmuje wszystkie 1440 godzin/minut doby. Zmiana zastępuje poprzednie ustalenie etykiety Home. Pozostałe poprawki ikon, daty i układu pozostają aktualne.
+
+## Bieżące wdrożenie: Home / Deck i ikony skrótów
+
+Wgrano na COM5, hash zapisu potwierdzony przez esptool. Agent pozostaje włączony: PID 24992, `artifacts/nav-agent/StreamDeck.WindowsAgent.exe`, dashboard `http://127.0.0.1:62155`. USB Connected, CYD-40C86C, cover status 2/rendered true. Bezpieczny zapis telemetrii: `artifacts/nav-verification.json`.
+
+- Dok: **Home / Deck / Media / PC / koło zębate**, szerokości z metryk fontu + padding 10 px, odstępy 6 px. Home zastępuje czas jako nazwę pierwszej zakładki.
+- Home: zegar po prawej, data `Fri, Oct 16` w jednej linii, szerokość 132 px. Odtwarzacz z tłem okładki po lewej; cztery skróty poniżej.
+- Naprawiono ikony Home i Deck: osobny font `cyd_icons_20` (19 glyphów, bitmapy 3312 B) i oddzielne etykiety ikony/tekstu. Obsługa hotkey, browser, terminal, lock, star, folder, app, media itd. Tryby `icon`, `label`, `both` są respektowane; Label celowo nie wyświetla ikony.
+- Windows: kompaktowy selektor profilu i przycisk zapisu, podgląd respektuje Display Mode. Protokół pozostaje `protocol:1`, bez zmian pól.
+- Testy: ui_layout (w tym powtarzane przełączanie stron), font_glyph (rzeczywiste szerokości wszystkich kombinacji krótkiej daty i symbole), WindowsAgent smoke PASS. Agent Release 0 błędów/ostrzeżeń; firmware ST7789 bez błędów/ostrzeżeń, RAM 73512 B, flash 1666993 B.
+- SHA256 firmware: `3A5101509CC558A04EF5CBB1EBFF9DD1DE235ECC1FE61A3036376D2EBAF9C8F5`. Parowanie, konfiguracja i SD zachowane; przed restartem brak niezapisanych zmian. Jednorazowe zadanie startu usunięto.
+- Telemetria potwierdza stan połączenia i renderowania okładki; fizyczne wyrównanie ikon i ergonomia wymagają oceny użytkownika na TFT.
+
+Poniżej historia poprzednich wdrożeń; powyższa sekcja określa aktualny stan.
+
+## Najnowsze doprecyzowanie Default
+
+Wgrane na COM5 i połączone po USB. Agent pozostawiony włączony: PID 7788, `artifacts/ui-refactor-final/StreamDeck.WindowsAgent.exe`, dashboard `http://127.0.0.1:65163`. Okładka status 2/rendered true. Aktualny zapis weryfikacji: `artifacts/home-verification.json`.
+
+Dok wyświetla HH:mm zamiast Default. Na Home Screen muzyka z okładką jako tłem jest po lewej, zegar po prawej; pod nimi cztery większe kafelki 148×44 w układzie 2×2. Zmiana ograniczona do firmware i testów widoku. Szczegóły: [Ustalenia UI — Default](docs/ui-refactor-decisions.md#doprecyzowanie-default--bieżący-widok).
+
+## 2026-10-16 — kompaktowy UI, Default i jawny zapis (bieżące)
+
+- Wdrożono zmianę uzgodnioną przez `grill-with-docs` i dodatkową prośbę użytkownika: CYD startuje na Default z zegarem 48 px, małym odtwarzaczem i czterema skrótami. Dok: Default / Shortcut / Media / PC + osobna ikona ustawień.
+- Kalibracja, test dotyku, jasność, restart/reset i dane techniczne są w ustawieniach pod kołem zębatym. Wszystkie systemowe napisy są angielskie; treści użytkownika nie są tłumaczone.
+- Windows: `SettingsWindow.Compact.cs`, toolbar 60 px, podgląd + edytowalny Tile Inspector, trzy kompletne karty Settings w 1200×760/100%, podzakładki przy mniejszej przestrzeni. Profile New/Duplicate/Delete i katalog zachowują dane offline. Usunięto ponad 1000 linii zastąpionych widoków.
+- Jeden jawny Save/Save & Sync. Draft przetrwa nawigację; zamknięcie okna oferuje Save/Discard/Cancel. Import pełnej konfiguracji jest również roboczy do Save. Zapis lokalny jest atomowy, wynik wysłania odrębny od zapisu.
+- Opcjonalny kolor pojedynczego kafelka i migracja NVS shortcuts v1 → v2. Rewizja jasności odróżnia nowy zapis, także offline, od reconnect. Wspólny `protocol:1` zachowany.
+- Firmware ST7789 zbudowany bez ostrzeżeń i wgrany na COM5, hash po zapisie zweryfikowany przez esptool. RAM statyczny 73456 B (22.4%), flash 1591069 B (78.3%).
+- Testy: Protocol 80/80, Shortcuts 22/22, Configuration PASS, WindowsAgent smoke PASS, C++ ui_logic/ui_layout/network_protocol/usb_protocol PASS. Rendery wszystkich zakładek w `artifacts/ui-review/compact-*.png`; dodatkowo symulacja skalowania 150% (nie zastępuje testu zmiany DPI na monitorze).
+- Po wdrożeniu: USB Connected, CYD-40C86C, cover status 2/rendered true, audio 100%/muted false. Agent pozostaje uruchomiony; jednorazowe zadanie Harmonogramu usunięto po starcie. Nie usunięto parowania, cache SD ani konfiguracji użytkownika.
+- Dokumenty: [Ustalenia UI](docs/ui-refactor-decisions.md), [ADR 0002](docs/adr/0002-explicit-save-and-offline-sync.md), [Protokół](docs/protocol.md), [Wiki refaktoryzacji](docs/wiki/2026-10-16-compact-ui.md).
+
+Poniższe starsze sekcje opisują wcześniejsze wdrożenia. Fizyczny wygląd i ergonomia nowego Default oczekują oceny użytkownika; telemetria i testy nie są zdjęciem wyświetlacza.
+
+
+
 # Kontynuacja projektu
 
 Pracuj wyłącznie w projekcie stream-deck. Pełny historyczny kontekst: [docs/HANDOFF.md](docs/HANDOFF.md). Fizyczna płytka ESP32-2432S028R, ST7789 320×240; COM5. Nie resetuj istniejących zmian w repozytorium. Komunikacja po polsku.

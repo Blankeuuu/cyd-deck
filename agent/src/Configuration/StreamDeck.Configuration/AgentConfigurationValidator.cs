@@ -32,6 +32,8 @@ public sealed class AgentConfigurationValidator
         }
         else
         {
+            if (configuration.Server.UsbPort is { } usbPort && !System.Text.RegularExpressions.Regex.IsMatch(usbPort, @"^COM[1-9][0-9]{0,3}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                issues.Add(new ConfigurationValidationIssue("$.server.usbPort", "Use a valid COM port or automatic discovery."));
             ValidateRange(configuration.Server.Port, 1, 65535, "$.server.port", "Server port must be between 1 and 65535.", issues);
         }
 
@@ -73,11 +75,32 @@ public sealed class AgentConfigurationValidator
             issues.AddRange(shortcutIssues.Select(issue => new ConfigurationValidationIssue(issue.Path, issue.Message)));
         }
 
+        var profileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (configuration.Profiles is null || configuration.Profiles.Count > 32)
+            issues.Add(new ConfigurationValidationIssue("$.profiles", "Use at most 32 profiles."));
+        else foreach (var profile in configuration.Profiles)
+        {
+            if (profile is null || string.IsNullOrWhiteSpace(profile.Name) || profile.Name.Length > 40 || !profileNames.Add(profile.Name))
+            {
+                issues.Add(new ConfigurationValidationIssue("$.profiles", "Profile names must be unique and 1–40 characters long."));
+                continue;
+            }
+            var profileIssues = _shortcutValidator.Validate(new ShortcutConfiguration { Shortcuts = profile.Shortcuts });
+            issues.AddRange(profileIssues.Select(issue => new ConfigurationValidationIssue("$.profiles." + profile.Name + issue.Path, issue.Message)));
+        }
+        if (profileNames.Count > 0 && !profileNames.Contains(configuration.ActiveProfile))
+            issues.Add(new ConfigurationValidationIssue("$.activeProfile", "Select an existing profile."));
+
         return issues;
     }
 
     private static void ValidateAppearance(AppearanceConfiguration appearance, List<ConfigurationValidationIssue> issues)
     {
+        if (appearance.BrightnessRevision is { } revision && (revision.Length != 32 || !revision.All(Uri.IsHexDigit)))
+            issues.Add(new ConfigurationValidationIssue("$.appearance.brightnessRevision", "Brightness revision must be a 32-character hex ID."));
+        ValidateEnum(appearance.TileColorScheme, new HashSet<string> { "control-center", "accent-tint", "oled-contrast" }, "$.appearance.tileColorScheme", "Choose a known tile color scheme.", issues);
+        ValidateEnum(appearance.StandbyStyle, new HashSet<string> { "apple-standby", "watchos-modular", "minimal-oled" }, "$.appearance.standbyStyle", "Choose a known clock style.", issues);
+        ValidateEnum(appearance.ShortcutsLayout, new HashSet<string> { "auto", "hero-1", "split-2", "quad-4", "grid-6" }, "$.appearance.shortcutsLayout", "Choose a known tile layout.", issues);
         ValidateEnum(appearance.Theme, ValidThemes, "$.appearance.theme", "Appearance theme must be one of: dark, light.", issues);
         ValidateEnum(appearance.ButtonStyle, ValidButtonStyles, "$.appearance.buttonStyle", "Appearance button style must be one of: flat, rounded, pill.", issues);
         ValidateColor(appearance.Accent, "$.appearance.accent", "Appearance accent must be #RRGGBB.", issues);

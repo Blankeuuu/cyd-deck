@@ -69,6 +69,22 @@ int main() {
   state.connection.online = true;
   streamdeck::IntentQueue intents;
   streamdeck::uiBegin(state, intents);
+  assert(state.ui.page == streamdeck::Page::Home);
+  assert(homeClock != nullptr);
+  assert(homePlayer->x == 8 && homeClockCard->x == 164);
+  assert(homePlayer->clip_corner);
+  assert(homeCoverImage->image_align == LV_IMAGE_ALIGN_COVER);
+  assert(homeShortcutButtons[0]->w == 148 && homeShortcutButtons[0]->h == 44);
+  assert(homeShortcutButtons[3]->y + homeShortcutButtons[3]->h < navBar->y);
+  assert(navClockLabel == navLabels[0]);
+  assert(navLabels[0]->text == "--:--");
+  assert(navLabels[1]->text == "Deck");
+  for (int i = 1; i < 4; ++i) assert(navButtons[i]->x - navButtons[i - 1]->x - navButtons[i - 1]->w == 6);
+  assert(settingsButton->x - navButtons[3]->x - navButtons[3]->w == 6);
+  assert(navBar->y == 202);
+  assert(findButtonByText(lv_test_root(), LV_SYMBOL_SETTINGS) != nullptr);
+  assertInsideParent(lv_test_root());
+  streamdeck::uiSetPage(streamdeck::Page::Media);
   assert(lv_test_indev.long_press_time == 3000);
 
   const lv_obj_t* screen = lv_test_root();
@@ -87,24 +103,24 @@ int main() {
   assert(findLabel(lv_test_root(), "PC online") != nullptr);
   assert(findLabel(lv_test_root(), "Offline actions queue") == nullptr);
   assert(findButtonByText(lv_test_root(), "Media") != nullptr);
-  assert(findButtonByText(lv_test_root(), "Skróty") != nullptr);
+  assert(findButtonByText(lv_test_root(), "Deck") != nullptr);
   assert(findButtonByText(lv_test_root(), "PC") != nullptr);
-  assert(findButtonByText(lv_test_root(), "Info") != nullptr);
-  lv_test_send_event(findButtonByText(lv_test_root(), "Info"), LV_EVENT_CLICKED);
+  assert(findButtonByText(lv_test_root(), LV_SYMBOL_SETTINGS) != nullptr);
+  lv_test_send_event(findButtonByText(lv_test_root(), LV_SYMBOL_SETTINGS), LV_EVENT_CLICKED);
   assert(state.ui.page == streamdeck::Page::Info);
   lv_test_send_event(findButtonByText(lv_test_root(), "Media"), LV_EVENT_CLICKED);
   assert(state.ui.page == streamdeck::Page::Media);
   std::vector<lv_obj_t*> initialButtons;
   collectButtons(lv_test_root(), initialButtons);
   for (lv_obj_t* button : initialButtons) {
-    assert(button->w >= 48 || button->h >= 40);
+    assert(button->w >= 28 && button->h >= 28);
     assert(lv_obj_get_child(button, 0)->text_align == LV_TEXT_ALIGN_CENTER);
   }
   assert(findLabel(lv_test_root(), "Ready to play") != nullptr);
   state.connection.online = false;
   streamdeck::uiRefresh(state);
   assert(findLabel(lv_test_root(), "Waiting for PC") != nullptr);
-  assert(findLabel(lv_test_root(), "Offline - actions queue") != nullptr);
+  assert(findLabel(lv_test_root(), "Offline") != nullptr);
   assert(findLabel(lv_test_root(), "Offline actions queue") != nullptr);
   state.connection.online = true;
 
@@ -207,12 +223,11 @@ int main() {
   assert(findLabel(lv_test_root(), "Now playing")->text_color == 0xF7F8FA);
   streamdeck::uiSetPage(streamdeck::Page::Info);
   streamdeck::uiRefresh(state);
-  assert(findLabel(lv_test_root(), "FW 1.1.0") != nullptr);
+  assert(findLabel(lv_test_root(), "FW 1.1.0  |  Calibration: Needed") != nullptr);
   assert(findLabel(lv_test_root(), "Wi-Fi  LabWiFi  -53 dBm") != nullptr);
   assert(findLabel(lv_test_root(), "IP      192.168.50.205") != nullptr);
-  assert(findLabel(lv_test_root(), "PC      Connected") != nullptr);
+  assert(findLabel(lv_test_root(), "Agent: Connected  |  192.168.50.190") != nullptr);
   assert(findLabel(lv_test_root(), "WIFI") != nullptr);
-  assert(findLabel(lv_test_root(), "Agent   192.168.50.190") != nullptr);
   state.appearance.pageOrder[0] = streamdeck::Page::Media;
   state.appearance.pageOrder[1] = streamdeck::Page::Info;
   state.appearance.pageOrder[2] = streamdeck::Page::Shortcuts;
@@ -221,11 +236,9 @@ int main() {
   streamdeck::uiSetPage(streamdeck::Page::Media);
   streamdeck::uiNavigate(1);
   assert(state.ui.page == streamdeck::Page::Info);
-  assert(dots[0]->w == 6);
-  assert(dots[1]->w == 18);
-  assert(dots[2]->bg_color == 0x2B3038);
+  for (auto* dot : dots) assert((dot->flags & LV_OBJ_FLAG_HIDDEN) != 0);
   streamdeck::uiSetPage(streamdeck::Page::Shortcuts);
-  assert(state.ui.page == streamdeck::Page::Info);
+  assert(state.ui.page == streamdeck::Page::Shortcuts);
 
   state.appearance.pageVisible[streamdeck::pageIndex(streamdeck::Page::Shortcuts)] = true;
   streamdeck::uiSetPage(streamdeck::Page::Shortcuts);
@@ -245,9 +258,11 @@ int main() {
   streamdeck::uiRefresh(state);
   assert(findButtonByText(lv_test_root(), "Keep A") != nullptr);
   assert(findButtonByText(lv_test_root(), "Delete B") != nullptr);
-  assert(findButtonByText(lv_test_root(), "[play] Zażółć") != nullptr);
+  assert(findButtonByText(lv_test_root(), "Zażółć") != nullptr);
+  assert(shortcutIcons[2]->text == LV_SYMBOL_PLAY);
+  assert(shortcutIcons[2]->font == &cyd_icons_20);
   assert(findButtonByText(lv_test_root(), "[next]") != nullptr);
-  assert(findButtonByText(lv_test_root(), "Icon hidden label") == nullptr);
+  assert((shortcutLabels[3]->flags & LV_OBJ_FLAG_HIDDEN) != 0);
   streamdeck::resetShortcuts(state.shortcuts);
   std::strcpy(state.shortcuts.names[0], "Keep A");
   std::strcpy(state.shortcuts.ids[0], "shortcut-a");
@@ -256,13 +271,13 @@ int main() {
   assert(findButtonByText(lv_test_root(), "Delete B") == nullptr);
   assert(findButtonByText(lv_test_root(), "No shortcut") != nullptr);
   // With 1 active shortcut in auto mode (0), button 0 scales to hero-1 (296x182)
-  assert(shortcutButtons[0]->w == 296 && shortcutButtons[0]->h == 182);
+  assert(shortcutButtons[0]->w == 296 && shortcutButtons[0]->h == 180);
   assert((shortcutButtons[1]->flags & LV_OBJ_FLAG_HIDDEN) != 0);
   // Explicit split-2 layout (2) scales buttons 0..1 to 144x182
   state.appearance.shortcutsLayout = 2;
   streamdeck::uiRefresh(state);
-  assert(shortcutButtons[0]->w == 144 && shortcutButtons[0]->h == 182);
-  assert(shortcutButtons[1]->w == 144 && shortcutButtons[1]->h == 182);
+  assert(shortcutButtons[0]->w == 144 && shortcutButtons[0]->h == 180);
+  assert(shortcutButtons[1]->w == 144 && shortcutButtons[1]->h == 180);
   assert((shortcutButtons[1]->flags & LV_OBJ_FLAG_HIDDEN) == 0);
   assert((shortcutButtons[2]->flags & LV_OBJ_FLAG_HIDDEN) != 0);
   // Explicit quad-4 layout (3) scales buttons 0..3 to 144x86
@@ -288,11 +303,11 @@ int main() {
   state.system.gpuPercent = 18;
   state.system.tempCelsius = 54;
   streamdeck::uiSetPage(streamdeck::Page::Pc);
-  assert(findLabel(lv_test_root(), "14:37") != nullptr);
+  assert(navLabels[0]->text == "14:37");
   assert(findLabel(lv_test_root(), "CPU") != nullptr);
   assert(findLabel(lv_test_root(), "RAM") != nullptr);
   assert(findLabel(lv_test_root(), "GPU") != nullptr);
-  assert(findLabel(lv_test_root(), "TMP") != nullptr);
+  assert(findLabel(lv_test_root(), "TEMP") != nullptr);
   assert(findLabel(lv_test_root(), "34%") != nullptr);
   assert(findLabel(lv_test_root(), "62%") != nullptr);
   assert(findLabel(lv_test_root(), "18%") != nullptr);
@@ -322,7 +337,7 @@ int main() {
 
   streamdeck::uiSetPage(streamdeck::Page::Info);
   lv_obj_t* restart = findButtonByText(lv_test_root(), "Restart");
-  lv_obj_t* factoryReset = findButtonByText(lv_test_root(), "Factory Reset");
+  lv_obj_t* factoryReset = findButtonByText(lv_test_root(), "Reset (hold)");
   lv_obj_t* setupKey = findButtonByText(lv_test_root(), "Setup key");
   assert(restart != nullptr);
   assert(factoryReset != nullptr);
@@ -344,15 +359,15 @@ int main() {
   assert(intents.pop(intent));
   assert(intent.type == streamdeck::IntentType::FactoryReset);
 
-  std::size_t objectCounts[streamdeck::kPageCount]{};
+  std::size_t objectCounts[streamdeck::kPageCount + 1]{};
   for (int cycle = 0; cycle < 40; ++cycle) {
     state.appearance.theme = cycle % 2;
     streamdeck::normalizeAppearance(state.appearance);
-    for (uint8_t p = 0; p < streamdeck::kPageCount; ++p) {
+    for (uint8_t p = 0; p <= streamdeck::kPageCount; ++p) {
       streamdeck::uiSetPage(static_cast<streamdeck::Page>(p));
       assertInsideParent(lv_test_root());
       assertNoScrollbars(lv_test_root());
-      for (uint8_t other = 0; other < streamdeck::kPageCount; ++other) assert((pages[other] != nullptr) == (other == p));
+      for (uint8_t other = 0; other <= streamdeck::kPageCount; ++other) assert((pages[other] != nullptr) == (other == p));
       assert(lv_test_root()->children.front() == pages[p]);
       if (cycle == 0) objectCounts[p] = lv_test_allocations.size();
       else assert(lv_test_allocations.size() == objectCounts[p]);
@@ -362,6 +377,60 @@ int main() {
       }
     }
   }
+  streamdeck::uiSetPage(streamdeck::Page::Home);
+  assert(homeCoverImage->image_src == &testCover);
+  assert((homeCoverImage->flags & LV_OBJ_FLAG_HIDDEN) == 0);
+  std::strcpy(state.system.hostDate, "Friday, 16 October");
+  streamdeck::uiRefresh(state);
+  assert(homeDate->text == "Fri, Oct 16");
+  assert(homeDate->long_mode == LV_LABEL_LONG_MODE_CLIP);
+  state.system.hostLocalMinutes = 18 * 60 + 54;
+  state.system.hostTimeSyncedAtSec = state.device.uptimeSeconds;
+  streamdeck::uiRefresh(state);
+  assert(navLabels[0]->text == "18:54" && homeClock->text == "18:54");
+  assert(std::strcmp(shortcutSymbolFor("browser"), "\xEF\x82\xAC") == 0);
+  assert(std::strcmp(shortcutSymbolFor("terminal"), "\xEF\x84\xA0") == 0);
+  assert(std::strcmp(shortcutSymbolFor("star"), "\xEF\x80\x85") == 0);
+  assert(std::strcmp(shortcutSymbolFor("lock"), "\xEF\x80\xA3") == 0);
+  std::strcpy(state.shortcuts.icons[0], "hotkey");
+  std::strcpy(state.shortcuts.displayModes[0], "icon");
+  streamdeck::uiRefresh(state);
+  assert(homeShortcutIcons[0]->text == LV_SYMBOL_KEYBOARD);
+  assert((homeShortcutIcons[0]->flags & LV_OBJ_FLAG_HIDDEN) == 0);
+  assert((homeShortcutLabels[0]->flags & LV_OBJ_FLAG_HIDDEN) != 0);
+  assert(homeShortcutIcons[0]->font == &cyd_icons_20);
+  std::strcpy(state.shortcuts.displayModes[0], "both");
+  streamdeck::uiRefresh(state);
+  assert((homeShortcutLabels[0]->flags & LV_OBJ_FLAG_HIDDEN) == 0);
+  const int beforeTilePositions = lv_test_position_writes;
+  streamdeck::uiRefresh(state);
+  assert(lv_test_position_writes == beforeTilePositions); // Repeated hydration must not repaint/reposition unchanged tiles.
+  lv_test_send_event(navButtons[0], LV_EVENT_CLICKED);
+  assert(state.ui.page == streamdeck::Page::Home);
+  std::strcpy(state.shortcuts.displayModes[0], "label");
+  streamdeck::uiRefresh(state);
+  assert((homeShortcutIcons[0]->flags & LV_OBJ_FLAG_HIDDEN) != 0);
+  assert((homeShortcutLabels[0]->flags & LV_OBJ_FLAG_HIDDEN) == 0);
+  state.shortcuts.hasIconPixels[0] = true;
+  ++state.shortcuts.iconRevision;
+  std::strcpy(state.shortcuts.displayModes[0], "icon");
+  streamdeck::uiRefresh(state);
+  auto* customImage = lv_obj_get_child(homeShortcutIcons[0], 0);
+  assert((customImage->flags & LV_OBJ_FLAG_HIDDEN) == 0);
+  assert((homeShortcutIcons[0]->flags & LV_OBJ_FLAG_HIDDEN) == 0);
+  assert(shortcutImageDescriptors[0].header.cf == LV_COLOR_FORMAT_RGB565A8);
+  assert(shortcutImageDescriptors[0].data == state.shortcuts.iconPixels[0]);
+  streamdeck::uiSetPage(streamdeck::Page::Shortcuts);
+  assert(lv_image_get_src(lv_obj_get_child(shortcutIcons[0], 0)) == &shortcutImageDescriptors[0]);
+  state.shortcuts.hasIconPixels[0] = false;
+  streamdeck::uiRefresh(state);
+  assert((lv_obj_get_child(shortcutIcons[0], 0)->flags & LV_OBJ_FLAG_HIDDEN) != 0);
+  streamdeck::uiSetPage(streamdeck::Page::Home);
+  lv_image_dsc_t liveCover{};
+  streamdeck::uiSetCoverImage(&liveCover);
+  assert(homeCoverImage->image_src == &liveCover);
+  streamdeck::uiSetCoverImage(nullptr);
+  assert((homeCoverImage->flags & LV_OBJ_FLAG_HIDDEN) != 0);
   lv_image_dsc_t nextCover{};
   streamdeck::uiSetCoverImage(&nextCover); // While Media widgets are absent.
   streamdeck::uiSetPage(streamdeck::Page::Media);

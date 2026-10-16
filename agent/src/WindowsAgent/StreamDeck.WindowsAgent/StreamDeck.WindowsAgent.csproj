@@ -16,6 +16,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Shell/shortcut-icons.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="StreamDeck.WindowsAgent.Tests" />
   </ItemGroup>
 

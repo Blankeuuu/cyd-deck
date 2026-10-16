@@ -1,3 +1,11 @@
+---
+title: Słownik domeny CYD-DECK
+tags: [cyd-deck, domain-modeling, glossary]
+aliases: [CYD-DECK Glossary, słownik CYD]
+updated: 2026-10-16
+status: active
+---
+
 # CYD-DECK
 
 System łączący fizyczny panel dotykowy ESP32 (320×240) z aplikacją towarzyszącą na systemie Windows do sterowania multimediami, wywoływania skrótów oraz monitorowania parametrów komputera w estetyce Apple Human Interface Guidelines.
@@ -28,9 +36,13 @@ _Avoid_: Button size mode, Grid density
 Panel boczny w **Windows Agent** prezentujący oraz pozwalający edytować techniczne parametry wybranego **Deck Tile** (ścieżki wykonywalne, kombinacje klawiszy, argumenty skryptów, identyfikator), odciążając wizualnie samą siatkę kafelków.
 _Avoid_: Inline tile details, Shortcut properties dump
 
-**Status Bar Clock**:
-Stały widżet zegara w prawym górnym rogu paska nawigacyjnego **CYD Display** (oraz w pasku **Windows Agent**), wyświetlający aktualną godzinę lokalną systemu Windows (`HH:mm`) niezależnie od aktywnej strony.
-_Avoid_: Header timer, Corner uptime
+**Home Screen**:
+Ekran startowy CYD Display, nazywany Default, łączący zegar, odtwarzacz z okładką oraz cztery najważniejsze przypisane skróty. W nawigacji reprezentuje go bieżący czas HH:mm, zgodnie z korektą użytkownika.
+_Avoid_: Status Bar Clock, Header timer, Corner uptime
+
+**Deck Profile**:
+Nazwany zestaw skrótów użytkownika, z którego pochodzą przypisane pozycje CYD Display. Aktywny profil określa zestaw przeznaczony do zapisania i synchronizacji.
+_Avoid_: Theme profile, Display Appearance
 
 **Desktop Appearance**:
 Konfiguracja wizualna dotycząca wyłącznie okna aplikacji **Windows Agent** na komputerze (motyw jasny/ciemny/systemowy, styl tła okna, kolor akcentu UI).
@@ -43,3 +55,15 @@ _Avoid_: Device Theme, Hardware Colors
 **StandBy Mode**:
 Wysokokontrastowy widok zegara i statusu na **CYD Display** wzorowany na iOS StandBy / watchOS, prezentowany w strefie bezpiecznej ekranu bez obcinania krawędzi.
 _Avoid_: Screensaver, Idle text
+
+**Configuration Draft**:
+Robocza konfiguracja edytowana w **Windows Agent**, której użytkownik jeszcze nie zapisał.
+_Avoid_: Live configuration, Pending sync
+
+**Saved Configuration**:
+Konfiguracja zatwierdzona przez użytkownika i zachowana przez **Windows Agent**, przeznaczona do synchronizacji z **CYD Display** również po ponownym połączeniu.
+_Avoid_: Draft, Device state
+
+**Local Brightness Override**:
+Lokalna korekta jasności wybrana na **CYD Display**, obowiązująca do jawnego zastosowania ustawień z **Windows Agent**.
+_Avoid_: Saved Display Appearance, Synced brightness

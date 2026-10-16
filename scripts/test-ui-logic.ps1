@@ -36,7 +36,9 @@ try {
                 (Join-Path $projectRoot 'firmware\src\ui\fonts\streamdeck_polish_14.c'),
                 (Join-Path $projectRoot 'firmware\src\ui\fonts\streamdeck_polish_16.c'),
                 (Join-Path $projectRoot 'firmware\src\ui\fonts\streamdeck_polish_20.c'),
-                (Join-Path $lvglDir 'src\font\lv_font_montserrat_16.c')
+                (Join-Path $projectRoot 'firmware\src\ui\fonts\cyd_icons_20.c'),
+                (Join-Path $lvglDir 'src\font\lv_font_montserrat_16.c'),
+                (Join-Path $lvglDir 'src\font\lv_font_montserrat_20.c')
             )
             Executable = (Join-Path $projectRoot '.tools\font_glyph_test.exe')
             Includes = @($lvglDir, (Join-Path $lvglDir 'src'), $includeDir)
