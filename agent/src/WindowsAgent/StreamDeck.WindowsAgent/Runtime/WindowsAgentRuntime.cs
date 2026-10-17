@@ -26,6 +26,7 @@ public sealed class WindowsAgentRuntime(
     private MediaSessionMonitor? mediaMonitor;
     private CoverProcessor? coverProcessor;
     private ShortcutCatalog? shortcutCatalog;
+    private IReadOnlyList<string?>? deviceSlots;
     private string? lastPublishedMedia;
     private readonly SemaphoreSlim mediaPublishGate = new(1, 1);
     private UsbDeviceRuntime? usbRuntime;
@@ -54,7 +55,8 @@ public sealed class WindowsAgentRuntime(
         try
         {
             shortcutCatalog = ShortcutCatalog.Create(new ShortcutConfiguration { Shortcuts = configuration.Shortcuts ?? [] });
-            var deviceShortcuts = shortcutCatalog.DeviceConfiguration;
+            deviceSlots = configuration.Profiles.FirstOrDefault(p => p.Name == configuration.ActiveProfile)?.AssignedShortcutIds;
+            var deviceShortcuts = BuildDeviceShortcuts(shortcutCatalog.DeviceConfiguration, deviceSlots);
             var dispatcher = options.MockMode
                 ? CreateMockDispatcher()
                 : await CreateLiveDispatcherAsync(configuration, monitoringInterval, cancellation.Token).ConfigureAwait(false);
@@ -70,13 +72,13 @@ public sealed class WindowsAgentRuntime(
                 dispatcher,
                 pairingService,
                 state,
-                configuration.Appearance ?? new AppearanceConfiguration(),
+                ResolveAssignedLayout(configuration.Appearance ?? new AppearanceConfiguration(), deviceSlots),
                 deviceShortcuts,
                 coverCacheDirectory,
                 initialAudioProvider ?? ReadCurrentAudioSnapshot,
                 HandleShortcutsReportAsync,
-                shortcutsProvider: () => shortcutCatalog!.DeviceConfiguration,
-                appearanceProvider: () => AgentConfigurationStoreFactory.CreateForCurrentUser().LoadOrDefault().Appearance ?? new AppearanceConfiguration(),
+                shortcutsProvider: () => BuildDeviceShortcuts(shortcutCatalog!.DeviceConfiguration, deviceSlots),
+                appearanceProvider: () => ResolveAssignedLayout(AgentConfigurationStoreFactory.CreateForCurrentUser().LoadOrDefault().Appearance ?? new AppearanceConfiguration(), deviceSlots),
                 initialMediaSender: (sink, token) => new ValueTask(PublishMediaUpdateAsync(mediaMonitor?.CurrentSnapshot, token, sink)));
 
             if (!options.MockMode && (configuration.Server?.UsbAutoConnect != false || options.UsbPort is not null))
@@ -91,13 +93,13 @@ public sealed class WindowsAgentRuntime(
                     dispatcher,
                     pairingService,
                     state,
-                    configuration.Appearance ?? new AppearanceConfiguration(),
+                    ResolveAssignedLayout(configuration.Appearance ?? new AppearanceConfiguration(), deviceSlots),
                     deviceShortcuts,
                     coverCacheDirectory,
                     initialAudioProvider ?? ReadCurrentAudioSnapshot,
                     HandleShortcutsReportAsync,
-                shortcutsProvider: () => shortcutCatalog!.DeviceConfiguration,
-                appearanceProvider: () => AgentConfigurationStoreFactory.CreateForCurrentUser().LoadOrDefault().Appearance ?? new AppearanceConfiguration(),
+                shortcutsProvider: () => BuildDeviceShortcuts(shortcutCatalog!.DeviceConfiguration, deviceSlots),
+                appearanceProvider: () => ResolveAssignedLayout(AgentConfigurationStoreFactory.CreateForCurrentUser().LoadOrDefault().Appearance ?? new AppearanceConfiguration(), deviceSlots),
                 initialMediaSender: (sink, token) => new ValueTask(PublishMediaUpdateAsync(mediaMonitor?.CurrentSnapshot, token, sink)));
                 await usbRuntime.StartAsync(cancellation.Token).ConfigureAwait(false);
             }
@@ -214,13 +216,31 @@ public sealed class WindowsAgentRuntime(
         return Task.FromResult(true);
     }
 
-    public async Task<bool> UpdateShortcutsAsync(IReadOnlyList<StreamDeck.Shortcuts.ShortcutDefinition> shortcuts, CancellationToken cancellationToken = default)
+    public async Task<bool> UpdateShortcutsAsync(IReadOnlyList<StreamDeck.Shortcuts.ShortcutDefinition> shortcuts, CancellationToken cancellationToken = default, IReadOnlyList<string?>? assignedSlots = null)
     {
         var configuration = new ShortcutConfiguration { Shortcuts = shortcuts };
         var current = shortcutCatalog;
         if (current is null) return false;
         current.Replace(configuration);
-        return await SendDeviceCommandAsync(ProtocolStateMapper.CreateShortcutsUpdate(current.DeviceConfiguration), cancellationToken).ConfigureAwait(false);
+        deviceSlots = assignedSlots?.ToArray();
+        return await SendDeviceCommandAsync(ProtocolStateMapper.CreateShortcutsUpdate(BuildDeviceShortcuts(current.DeviceConfiguration, deviceSlots)), cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static DeviceShortcutConfiguration BuildDeviceShortcuts(DeviceShortcutConfiguration catalog, IReadOnlyList<string?>? slots)
+    {
+        if (slots is null) return new(catalog.Shortcuts.Take(6).ToArray());
+        return new(Enumerable.Range(0, 6).Select(index => {
+            var id = index < slots.Count ? slots[index] : null;
+            return catalog.Shortcuts.FirstOrDefault(s => s.Id == id)
+                ?? new DeviceShortcutDefinition($"__empty_slot_{index}", "No shortcut", "empty", "label");
+        }).ToArray());
+    }
+
+    internal static AppearanceConfiguration ResolveAssignedLayout(AppearanceConfiguration appearance, IReadOnlyList<string?>? slots)
+    {
+        if (appearance.ShortcutsLayout != "auto" || slots is null) return appearance;
+        var last = Enumerable.Range(0, Math.Min(6, slots.Count)).Where(i => slots[i] is not null).DefaultIfEmpty(0).Max();
+        return appearance with { ShortcutsLayout = last < 1 ? "hero-1" : last < 2 ? "split-2" : last < 4 ? "quad-4" : "grid-6" };
     }
 
     public async Task ReconnectAsync()
@@ -249,7 +269,7 @@ public sealed class WindowsAgentRuntime(
     public Task<bool> ApplyDeviceSettingsAsync(AppearanceConfiguration appearance, CancellationToken cancellationToken = default)
     {
         AgentDiagnosticLog.Write("Sending device settings command");
-        return SendDeviceCommandAsync(ProtocolStateMapper.CreateDeviceSettings(CreateRequestId("settings"), appearance, applyBrightness: true), cancellationToken);
+        return SendDeviceCommandAsync(ProtocolStateMapper.CreateDeviceSettings(CreateRequestId("settings"), ResolveAssignedLayout(appearance, deviceSlots), applyBrightness: true), cancellationToken);
     }
 
     public async Task<bool> ForgetDeviceAsync(string? specificDeviceId = null, CancellationToken cancellationToken = default)
@@ -325,6 +345,7 @@ public sealed class WindowsAgentRuntime(
             systemMetricsTask = null;
         }
 
+        systemMetricsProvider?.Dispose(); systemMetricsProvider = null;
         if (mediaMonitor is not null)
         {
             mediaMonitor.SnapshotChanged -= HandleMediaSnapshotChanged;

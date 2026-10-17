@@ -20,6 +20,16 @@ using StreamDeck.Shortcuts;
 using StreamDeck.WindowsAgent.Updates;
 using ShortcutDefinition = StreamDeck.Shortcuts.ShortcutDefinition;
 
+if (args.Contains("--live-system")) {
+    using var liveMetrics = new StreamDeck.SystemMonitoring.WindowsSystemMetricsProvider();
+    for (var i = 0; i < 8; ++i) { var reading = liveMetrics.GetSnapshot(); Console.WriteLine($"GPU={reading.GpuUsagePercent?.ToString("F1") ?? "unavailable"}; TEMP={reading.CpuTemperatureCelsius?.ToString("F1") ?? "unavailable"}; source={reading.TemperatureSource}"); await Task.Delay(1000); }
+    return;
+}
+
+if (args.Contains("--bug-repro")) { DesktopBugRegressionTests.Run(); return; }
+
+if (args.Contains("--desktop-review")) { DesktopViewportTests.Run(); return; }
+
 // Icon previews use the same glyph masks as the CYD; URL images round-trip to RGB565A8.
 AssertEqual(21, ShortcutIconCatalog.All.Count, "all supported icons are visible in picker");
 AssertEqual("hotkey", ShortcutIconCatalog.Normalize(" Keyboard "), "icon alias normalization");
@@ -590,88 +600,8 @@ AssertContains("\"brightnessRevision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", hy
 var forceSettings = ProtocolStateMapper.CreateDeviceSettings("save", brightnessRevisionConfig, applyBrightness: true);
 AssertContains("\"applyBrightness\":true", forceSettings, "explicit sync applies brightness");
 AssertTrue(!ProtocolSerializer.Parse("""{"protocol":1,"type":"device.settings","data":{"version":1,"brightnessRevision":"bad"}}""").IsSuccess, "invalid brightness revision is rejected");
-var previousSettingsShortcutsContext = SynchronizationContext.Current;
-var settingsUiState = new AgentState();
-var settingsPairingStore = Path.Combine(Path.GetTempPath(), $"streamdeck-settings-shortcuts-{Guid.NewGuid():N}.json");
-using (var settingsIcon = AppIconFactory.CreateIcon())
-await using (var settingsRuntime = new WindowsAgentRuntime(new AgentState(), new PairingApprovalService(settingsPairingStore), AgentOptions.FromArgs(["--mock"]), listenPortOverride: 0))
-await using (var settingsDashboard = new LocalDashboardServer(new AgentState()))
-using (var settingsWindow = new SettingsWindow(settingsUiState, settingsRuntime, settingsDashboard, new WindowsStartupService(AgentOptions.FromArgs(["--mock"])), new PairingApprovalService(settingsPairingStore), settingsIcon, shortcutFixtureStore))
-{
-    settingsWindow.StartPosition = FormStartPosition.Manual;
-    settingsWindow.Location = new Point(-2000, -2000);
-    settingsWindow.ShowInTaskbar = false;
-    settingsWindow.Size = new Size(1200, 760);
-    settingsWindow.Show();
-    Application.DoEvents();
-    void Navigate(string name) => FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == name).PerformClick();
-    foreach (var name in new[] { "Overview", "Deck Builder", "Settings", "Device", "Pairing", "Updates", "Logs" })
-    {
-        Navigate(name);
-        Application.DoEvents();
-        var body = FlattenControls(settingsWindow).OfType<Panel>().Single(control => Equals(control.Tag, "settings-page-body"));
-        AssertTrue(!body.VerticalScroll.Visible, $"{name} fits 1200x760 without page scroll");
-        foreach (var control in FlattenControls(body).Where(c => c.Visible && c is TextBox or ComboBox or NumericUpDown or Button))
-        {
-            var bounds = BoundsInClient(settingsWindow, control);
-            AssertTrue(bounds.Bottom <= settingsWindow.ClientSize.Height && bounds.Right <= settingsWindow.ClientSize.Width, $"{name}: {control.AccessibleName ?? control.Text} stays inside window");
-        }
-        using var bitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height);
-        settingsWindow.DrawToBitmap(bitmap, new Rectangle(Point.Empty, settingsWindow.Size));
-        bitmap.Save($"artifacts/ui-review/compact-{name.Replace(" ", "-")}.png");
-    }
-    Navigate("Deck Builder");
-    var nameInput = FlattenControls(settingsWindow).OfType<TextBox>().Single(control => control.AccessibleName == "Label");
-    var catalogList = FlattenControls(settingsWindow).OfType<ListView>().Single(control => control.AccessibleName == "Shortcut catalog");
-    catalogList.Items[0].Selected = true;
-    Application.DoEvents();
-    nameInput.Text = "Draft name";
-    AssertEqual("First shortcut", shortcutFixtureStore.LoadOrDefault().Shortcuts![0].Name, "editing does not write persisted configuration");
-    Navigate("Settings"); Navigate("Deck Builder");
-    catalogList = FlattenControls(settingsWindow).OfType<ListView>().Single(control => control.AccessibleName == "Shortcut catalog");
-    AssertEqual("Draft name", catalogList.Items[0].SubItems[1].Text, "draft survives navigation");
-    AssertTrue(await settingsWindow.SaveConfigurationDraftAsync(), "offline save succeeds");
-    AssertEqual("Draft name", shortcutFixtureStore.LoadOrDefault().Shortcuts![0].Name, "explicit save persists draft offline");
-    Navigate("Deck Builder");
-    FlattenControls(settingsWindow).OfType<Button>().Single(button => button.Text == "Duplicate").PerformClick();
-    AssertEqual(2, FlattenControls(settingsWindow).OfType<ListView>().Single(control => control.AccessibleName == "Shortcut catalog").Items.Count, "duplicate profile preserves shortcuts");
-    AssertTrue(await settingsWindow.SaveConfigurationDraftAsync(), "profile save succeeds offline");
-    var profileConfiguration = shortcutFixtureStore.LoadOrDefault();
-    AssertEqual(2, profileConfiguration.Profiles.Count, "profiles persist alongside active configuration");
-    AssertEqual("Profile 1", profileConfiguration.ActiveProfile, "new profile becomes active");
-    Navigate("Device");
-    settingsUiState.MarkDeviceConnected("ui-device", "UI CYD", "USB");
-    settingsUiState.UpdateDeviceInfo(new DeviceInfoMessage("ui-firmware", 30,
-        new DeviceWifiInfo(true, "lab", -50, "192.168.1.8"), "192.168.1.10",
-        new DeviceStorageInfo(true, true, 1024, 512), new DeviceHeapInfo(1000, 900, 800)));
-    Application.DoEvents();
-    AssertTrue(FlattenControls(settingsWindow).OfType<ListView>().Any(list => list.Items.Cast<ListViewItem>().Any(item => item.SubItems.Cast<ListViewItem.ListViewSubItem>().Any(sub => sub.Text == "ui-firmware"))), "device telemetry refreshes live");
-    foreach (var size in new[] { new Size(900, 620), new Size(1200, 760) })
-    {
-        settingsWindow.Size = size;
-        for (var round = 0; round < 3; ++round)
-            foreach (var name in new[] { "Overview", "Deck Builder", "Settings", "Device", "Pairing", "Updates", "Logs" })
-            {
-                Navigate(name); settingsUiState.SetMode("live"); Application.DoEvents();
-                AssertTrue(!settingsWindow.IsDisposed, $"navigation remains alive: {name}");
-            }
-    }
-    settingsWindow.Size = new Size(1200, 760);
-    Navigate("Settings"); Application.DoEvents();
-    AssertTrue(!FlattenControls(settingsWindow).OfType<TabControl>().Any(control => control.Visible), "normal Settings shows all three complete cards without sub-tabs");
-    settingsWindow.Scale(new SizeF(1.5f, 1.5f));
-    settingsWindow.MinimumSize = SettingsWindow.GetMinimumWindowSizeForTests(); // Match OnDpiChanged physical bounds.
-    settingsWindow.Size = new Size(1200, 760);
-    Application.DoEvents();
-    AssertTrue(FlattenControls(settingsWindow).OfType<TabControl>().Any(control => control.Visible), "scaled Settings adapts to tabs");
-    using (var scaledBitmap = new Bitmap(settingsWindow.Width, settingsWindow.Height))
-    {
-        settingsWindow.DrawToBitmap(scaledBitmap, new Rectangle(Point.Empty, settingsWindow.Size));
-        scaledBitmap.Save("artifacts/ui-review/compact-Settings-scaled.png");
-    }
-    settingsWindow.CloseForExit();
-}
-SynchronizationContext.SetSynchronizationContext(previousSettingsShortcutsContext);
+DesktopBugRegressionTests.Run();
+DesktopViewportTests.Run();
 var minimumClientHeight = 620 - SettingsWindow.GetClientContentPadding().Vertical;
 AssertTrue(SettingsWindow.PageLayoutHasScrollableBodyAndAccessibleFooterForTests(minimumClientWidth, minimumClientHeight, contentHeight: 980, shortcutActionButtonWidths), "shortcuts page keeps wrapped footer accessible while tall body scrolls at minimum size");
 AssertTrue(SettingsWindow.PageLayoutHasScrollableBodyAndAccessibleFooterForTests(minimumClientWidth, minimumClientHeight, contentHeight: 860, new[] { "Reconnect", "Restart", "Factory reset", "Forget device" }.Select(SettingsWindow.MeasureSettingsActionButtonWidth).ToArray()), "device page keeps safety actions accessible while tall body scrolls at minimum size");

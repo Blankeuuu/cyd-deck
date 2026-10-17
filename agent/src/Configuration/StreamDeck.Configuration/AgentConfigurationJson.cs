@@ -13,8 +13,9 @@ public static class AgentConfigurationJson
     {
         try
         {
-            return JsonSerializer.Deserialize<AgentConfiguration>(json, Options)
+            var configuration = JsonSerializer.Deserialize<AgentConfiguration>(json, Options)
                 ?? throw new AgentConfigurationException([new ConfigurationValidationIssue("$", "Configuration JSON was empty.")]);
+            return ConfigurationColorNormalizer.Normalize(configuration);
         }
         catch (JsonException exception)
         {

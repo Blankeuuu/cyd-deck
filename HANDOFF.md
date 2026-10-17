@@ -2,9 +2,40 @@
 title: CYD-DECK — bieżący handoff interfejsu urządzenia
 tags: [cyd-deck, handoff, ui, firmware, backlight]
 aliases: [STREAMDECK_HANDOFF, CYD UI handoff]
-updated: 2026-10-16
+updated: 2026-10-17
 status: active
 ---
+
+## 2026-10-17 — poprawki po manualnych testach Windows Agenta
+
+- Aktualnie uruchomiony `artifacts/desktop-polish-20261017/StreamDeck.WindowsAgent.exe`, PID 23504, dashboard `http://127.0.0.1:63766`. USB connected, firmware 1.2.0, cover=2/rendered=true, audio=100/muted=false. GPU z PDH: 5,38%; temperatura niedostępna przez dostępne WMI, UI: Start LibreHardwareMonitor.
+- Odtworzono i naprawiono ObjectDisposedException dla ContextMenuStrip (nie niszczyć w Closed; ownership do Dispose okna) oraz błąd named color Red (normalizacja podczas importu/load/save/sync). Default=null pozostaje dziedziczeniem motywu. Poprawiono ścieżki błędów profili.
+- Nowy `SettingsWindow.Controls.cs`: rounded buttons, segmented controls i kontenery pól; zachowane klawiatura i dostępność. Default w całości, pełne COM/Ready, inputy 32 px, równe Save Shortcut/Delete i zaokrąglona biblioteka.
+- Wykresy przy dole kart, stała wysokość 64 px i gradient area fill. Brak dashed border podglądu.
+- `WindowsHardwareMetricsReader.cs`: PDH GPU Engine z właściwą agregacją iGPU/dGPU; asynchroniczne WMI Libre/OpenHardwareMonitor + ACPI. Dodano System.Management 10.0.0. Nie instalowano sterowników ani zewnętrznego monitora. Nie pokazuj estymacji jako rzeczywistej temperatury.
+- Regression `--bug-repro` przeszedł po FAIL przed poprawką; DesktopViewportTests, SystemMonitoring.Tests i Configuration.Tests PASS. Logi: `polish-smoke-final.log`, `polish-system-tests.log`, `polish-config-tests.log`, `polish-publish.log`. Screenshoty nadal `artifacts/ui-review/desktop-*.png`.
+- Szczegóły i źródła API: [Wiki napraw](docs/wiki/2026-10-17-agent-controls-bugfix.md). Dowód uruchomienia bez sekretów: `artifacts/polish-live-verification.json`.
+- Firmware i zegar CYD niezmienione. Jednorazowe zadanie startu usunięte, Agent pozostawiony włączony. Zmiany nie zostały jeszcze commitowane/pushowane; zachowaj cały obecny worktree.
+
+Poniżej wcześniejsze wdrożenia.
+
+## 2026-10-17 — Windows Agent: cztery widoki desktopowe
+
+**Bieżąca praca dotyczy wyłącznie PC. Firmware i zegar HH:mm w doku nie zostały zmienione.**
+
+- Uruchomiono `artifacts/desktop-agent-20261017/StreamDeck.WindowsAgent.exe`, PID 7796, dashboard `http://127.0.0.1:52335`. USB connected, firmware 1.2.0, cover.status=2/rendered=true, volume=100. Agent pozostaje włączony.
+- Sidebar 210 px: Deck Builder / Media Controls / System Monitor / Settings. Device, Pairing, Updates i Logs w menu Device & Tools.
+- Jeden Unified Toolbar 56 px; główny AutoScroll=false. Scrolluje wyłącznie wewnętrzna Shortcut Library.
+- Podglądy Shortcuts / Home Screen 4:3, galeria ikon zachowana, Assign/Unassign i drag/drop, Tile Inspector 354 px, trzy kolumny Settings, żywe media/audio i monitor 2×2 z 30 próbkami.
+- Nowe pliki UI: `SettingsWindow.Desktop.cs`, `.Deck.cs`, `.MediaMonitor.cs`, `DesktopCanvas.cs`. Usunięto stare zastąpione Deck/Settings z Compact.cs.
+- `DeckProfileConfiguration.AssignedShortcutIds` opcjonalne: sześć ID/null. Brak pola oznacza stare pierwsze sześć pozycji. Puste sloty kodowane jako bezczynne `__empty_slot_N`, ignorowane przez import raportów. Auto rozwiązywane w Runtime na istniejące layouty, aby nie przesuwać pozycji. Nie dodano pól protokołu firmware.
+- `DesktopAppearanceConfiguration.Clock24Hour` dotyczy podglądów PC. CYD pozostaje w formacie HH:mm. Brak raportu Local Brightness Override jest jawnie pokazany jako Not reported.
+- Release build/publish bez błędów/ostrzeżeń. WindowsAgent smoke PASS, Configuration tests PASS. Nowe DesktopViewportTests sprawdzają 4 widoki w 1200×780 i 1280×800, clipping kontenerów, Assign/Unassign, trwałość draftu, zapis, Volume/Mute, jasny i ciemny motyw.
+- Rendery `artifacts/ui-review/desktop-*.png`; logi `desktop-smoke.log`, `desktop-config-tests.log`, `desktop-publish.log`. Dane testowe nie są zdjęciem TFT. Weryfikacja nie obejmowała fizycznej zmiany DPI monitora.
+- Szczegóły: [Wiki desktop viewport](docs/wiki/2026-10-17-desktop-viewport.md). Dowód żywego połączenia: `artifacts/desktop-live-verification.json`.
+- Przed zastąpieniem Agenta sprawdzono brak niezapisanych zmian. Jednorazowe ScheduledTask usunięto. Nie wykonano flasha, nowego pusha, instalatora ani release. Przy kolejnej pracy zachowaj wszystkie niezacommitowane zmiany.
+
+Poniżej historia wcześniejszych wdrożeń.
 
 ## Wdrożenie zakończone sukcesem: Wydanie 1.2.0 (Wyśrodkowanie przycisków, Galeria ikon, Instalator Windows)
 

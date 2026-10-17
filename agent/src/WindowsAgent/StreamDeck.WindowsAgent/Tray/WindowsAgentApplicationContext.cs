@@ -74,6 +74,8 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
             singleInstanceWait.Unregister(null);
             mainWindow?.Dispose();
             notifyIcon.Visible = false;
+            var menu = notifyIcon.ContextMenuStrip; notifyIcon.ContextMenuStrip = null;
+            menu?.Dispose();
             notifyIcon.Dispose();
             appIcon.Dispose();
             uiControl.Dispose();
@@ -210,7 +212,7 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
             return;
         }
 
-        if (notifyIcon.ContextMenuStrip is null)
+        if (notifyIcon.ContextMenuStrip is null || notifyIcon.ContextMenuStrip.IsDisposed)
         {
             return;
         }

@@ -123,7 +123,7 @@ static void AppearanceConfigurationValidatesAndSerializes()
         Appearance = new AppearanceConfiguration
         {
             Theme = "blue",
-            Accent = "red",
+            Accent = "not-a-color",
             Background = "#12345Z",
             ButtonStyle = "square",
             PageOrder = ["media", "media", "pc", "info"],

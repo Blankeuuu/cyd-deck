@@ -37,6 +37,7 @@ public sealed class AgentConfigurationStore
 
     public void Save(AgentConfiguration configuration)
     {
+        configuration = ConfigurationColorNormalizer.Normalize(configuration);
         ValidateOrThrow(configuration);
 
         var directory = Path.GetDirectoryName(_path);

@@ -1,19 +1,23 @@
 namespace StreamDeck.SystemMonitoring;
 
-public sealed class WindowsSystemMetricsProvider : ISystemMetricsProvider
+public sealed class WindowsSystemMetricsProvider : ISystemMetricsProvider, IDisposable
 {
     private readonly IWindowsSystemMetricsApi _api;
     private readonly object _sync = new();
+    private readonly IHardwareMetricsReader? _hardware;
     private CpuTimes? _previousCpuTimes;
     private double _lastCpuUsagePercent;
 
     public WindowsSystemMetricsProvider()
-        : this(new WindowsSystemMetricsApi())
+        : this(new WindowsSystemMetricsApi(), OperatingSystem.IsWindows() ? new WindowsHardwareMetricsReader() : null)
     {
     }
 
-    public WindowsSystemMetricsProvider(IWindowsSystemMetricsApi api)
+    public WindowsSystemMetricsProvider(IWindowsSystemMetricsApi api) : this(api, null) { }
+
+    public WindowsSystemMetricsProvider(IWindowsSystemMetricsApi api, IHardwareMetricsReader? hardware)
     {
+        _hardware = hardware;
         _api = api ?? throw new ArgumentNullException(nameof(api));
 
         if (_api.TryGetSystemTimes(out var initialTimes))
@@ -26,6 +30,7 @@ public sealed class WindowsSystemMetricsProvider : ISystemMetricsProvider
     {
         var cpuUsagePercent = ReadCpuUsagePercent();
         var memory = ReadMemoryStatus();
+        var hardware = _hardware?.Read();
 
         return new SystemMetrics
         {
@@ -34,11 +39,13 @@ public sealed class WindowsSystemMetricsProvider : ISystemMetricsProvider
             RamTotalBytes = memory.TotalBytes,
             RamUsedBytes = memory.UsedBytes,
             Uptime = TimeSpan.FromMilliseconds(_api.GetTickCount64()),
-            GpuUsagePercent = null,
+            GpuUsagePercent = hardware?.GpuPercent,
             VramTotalBytes = null,
             VramUsedBytes = null,
-            CpuTemperatureCelsius = null,
-            GpuTemperatureCelsius = null,
+            CpuTemperatureCelsius = hardware?.CpuTemperature,
+            GpuTemperatureCelsius = hardware?.GpuTemperature,
+            GpuSource = hardware?.GpuSource,
+            TemperatureSource = hardware?.TemperatureSource,
         };
     }
 
@@ -85,6 +92,8 @@ public sealed class WindowsSystemMetricsProvider : ISystemMetricsProvider
 
         return new MemoryStatus(0, 0);
     }
+
+    public void Dispose() => _hardware?.Dispose();
 
     private static ulong SaturatingDelta(ulong current, ulong previous) =>
         current >= previous ? current - previous : 0;

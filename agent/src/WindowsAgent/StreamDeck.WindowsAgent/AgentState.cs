@@ -16,11 +16,11 @@ public sealed record HostSystemTelemetrySnapshot(
     IReadOnlyList<double> CpuHistory,
     IReadOnlyList<double> RamHistory,
     IReadOnlyList<double> GpuHistory,
-    IReadOnlyList<double> TempHistory);
+    IReadOnlyList<double> TempHistory, bool GpuAvailable = true, bool TempAvailable = true, string? GpuSource = null, string? TemperatureSource = null);
 
 public sealed class AgentState
 {
-    private const int MaxHistorySamples = 28;
+    private const int MaxHistorySamples = 30;
     private readonly object syncRoot = new();
     private string hostStatus = "starting";
     private string? deviceId;
@@ -90,15 +90,15 @@ public sealed class AgentState
             var ram = Math.Clamp(metrics.RamUsagePercent, 0, 100);
             var gpu = metrics.GpuUsagePercent.HasValue
                 ? Math.Clamp(metrics.GpuUsagePercent.Value, 0, 100)
-                : Math.Clamp(cpu * 0.65 + 8.0, 4.0, 98.0);
+                : 0;
             var temp = metrics.CpuTemperatureCelsius.HasValue
                 ? Math.Clamp(metrics.CpuTemperatureCelsius.Value, 20, 110)
-                : Math.Clamp(38.0 + cpu * 0.42, 35.0, 92.0);
+                : 0;
 
             PushSample(cpuHistory, cpu);
             PushSample(ramHistory, ram);
-            PushSample(gpuHistory, gpu);
-            PushSample(tempHistory, temp);
+            if (metrics.GpuUsagePercent.HasValue) PushSample(gpuHistory, gpu); else gpuHistory.Clear();
+            if (metrics.CpuTemperatureCelsius.HasValue) PushSample(tempHistory, temp); else tempHistory.Clear();
 
             systemTelemetry = new HostSystemTelemetrySnapshot(
                 cpu,
@@ -110,7 +110,7 @@ public sealed class AgentState
                 cpuHistory.ToArray(),
                 ramHistory.ToArray(),
                 gpuHistory.ToArray(),
-                tempHistory.ToArray());
+                tempHistory.ToArray(), metrics.GpuUsagePercent.HasValue, metrics.CpuTemperatureCelsius.HasValue, metrics.GpuSource, metrics.TemperatureSource);
         }
 
         Changed?.Invoke(this, EventArgs.Empty);

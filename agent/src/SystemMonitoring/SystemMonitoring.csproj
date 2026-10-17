@@ -6,4 +6,7 @@
     <AssemblyName>StreamDeck.SystemMonitoring</AssemblyName>
     <RootNamespace>StreamDeck.SystemMonitoring</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Management" Version="10.0.0" />
+  </ItemGroup>
 </Project>

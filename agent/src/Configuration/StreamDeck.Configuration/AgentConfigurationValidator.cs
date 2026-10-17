@@ -85,8 +85,10 @@ public sealed class AgentConfigurationValidator
                 issues.Add(new ConfigurationValidationIssue("$.profiles", "Profile names must be unique and 1–40 characters long."));
                 continue;
             }
+            if (profile.AssignedShortcutIds is { } slots && (slots.Count != 6 || slots.Where(id => id is not null).Any(id => !profile.Shortcuts.Any(s => s.Id == id)) || slots.Where(id => id is not null).Distinct().Count() != slots.Count(id => id is not null)))
+                issues.Add(new ConfigurationValidationIssue("$.profiles." + profile.Name, "Use six unique assigned shortcut IDs or empty slots."));
             var profileIssues = _shortcutValidator.Validate(new ShortcutConfiguration { Shortcuts = profile.Shortcuts });
-            issues.AddRange(profileIssues.Select(issue => new ConfigurationValidationIssue("$.profiles." + profile.Name + issue.Path, issue.Message)));
+            issues.AddRange(profileIssues.Select(issue => new ConfigurationValidationIssue("$.profiles." + profile.Name + issue.Path.TrimStart('$'), issue.Message)));
         }
         if (profileNames.Count > 0 && !profileNames.Contains(configuration.ActiveProfile))
             issues.Add(new ConfigurationValidationIssue("$.activeProfile", "Select an existing profile."));

@@ -37,6 +37,7 @@ public sealed record AgentConfiguration
 
 public sealed record DesktopAppearanceConfiguration
 {
+    public bool Clock24Hour { get; init; } = true;
     [JsonPropertyName("theme")]
     public string Theme { get; init; } = "dark";
 
@@ -122,4 +123,4 @@ public sealed record AppearanceConfiguration
     public bool WakeOnTouch { get; init; } = true;
 }
 
-public sealed record DeckProfileConfiguration(string Name, IReadOnlyList<ShortcutDefinition> Shortcuts);
+public sealed record DeckProfileConfiguration(string Name, IReadOnlyList<ShortcutDefinition> Shortcuts, IReadOnlyList<string?>? AssignedShortcutIds = null);

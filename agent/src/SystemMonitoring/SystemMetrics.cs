@@ -11,6 +11,8 @@ public sealed record SystemMetrics
     public ulong? VramTotalBytes { get; init; }
     public ulong? VramUsedBytes { get; init; }
     public double? CpuTemperatureCelsius { get; init; }
+    public string? GpuSource { get; init; }
+    public string? TemperatureSource { get; init; }
     public double? GpuTemperatureCelsius { get; init; }
 
     public double RamUsagePercent =>

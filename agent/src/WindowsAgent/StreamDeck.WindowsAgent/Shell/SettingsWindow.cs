@@ -38,8 +38,8 @@ public sealed partial class SettingsWindow : Form
     private static readonly Color DeviceDefaultAccent = Color.FromArgb(126, 175, 227);
     private static readonly Color DeviceDefaultBackground = Color.FromArgb(16, 18, 22);
     private static readonly Padding WindowContentPadding = new(20, 12, 20, 16);
-    private const int NavigationWidth = 188;
-    private const int NavigationButtonWidth = 148;
+    private const int NavigationWidth = 210;
+    private const int NavigationButtonWidth = 172;
     private const int NavigationButtonHeight = 42;
     private const int PageTitleHeight = 60;
     private const int ActionButtonHeight = 36;
@@ -112,6 +112,11 @@ public sealed partial class SettingsWindow : Form
         if (!IsHandleCreated) return;
         var dark = clientLightTheme ? 0 : 1;
         _ = DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+        var appearance = LoadDesktopAppearanceConfiguration();
+        var backdrop = appearance.WindowStyle == "acrylic" ? 3 : 1;
+        _ = DwmSetWindowAttribute(Handle, 38, ref backdrop, sizeof(int));
+        var corners = 2;
+        _ = DwmSetWindowAttribute(Handle, 33, ref corners, sizeof(int));
     }
 
     [DllImport("user32.dll")]
@@ -135,7 +140,7 @@ public sealed partial class SettingsWindow : Form
     private readonly Dictionary<string, Label> infoValueLabels = new(StringComparer.Ordinal);
     private readonly Panel contentPanel;
     private readonly System.Windows.Forms.Timer shortcutImportRefreshTimer = new() { Interval = 1000 };
-    private string currentPage = "Overview";
+    private string currentPage = "Shortcuts";
     private bool allowClose;
     private AppearanceState? pendingAppearance;
     private DesktopAppearanceState? pendingDesktopAppearance;
@@ -174,7 +179,7 @@ public sealed partial class SettingsWindow : Form
         DoubleBuffered = true;
         AutoScaleMode = AutoScaleMode.Dpi;
         MinimumSize = new Size(MinimumWindowWidth, MinimumWindowHeight);
-        Size = new Size(1200, 760);
+        Size = new Size(1200, 780);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Background;
         ForeColor = TextPrimary;
@@ -205,6 +210,12 @@ public sealed partial class SettingsWindow : Form
         _ = ShowWindow(Handle, 5); // SW_SHOW preserves an existing maximized window.
         Activate();
         BringToFront();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { desktopViewLifetime?.Cancel(); desktopViewLifetime?.Dispose(); desktopViewLifetime = null; desktopArtwork?.Dispose(); desktopArtwork = null; desktopToolsMenu?.Dispose(); desktopToolsMenu = null; desktopTips.Dispose(); }
+        base.Dispose(disposing);
     }
 
     public void CloseForExit()
@@ -246,114 +257,7 @@ public sealed partial class SettingsWindow : Form
         return root;
     }
 
-    private Control CreateNavigation()
-    {
-        var panel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Surface,
-            Padding = new Padding(20, 24, 20, 18)
-        };
-        panel.Paint += (_, e) =>
-        {
-            using var pen = new Pen(Border, 1f);
-            e.Graphics.DrawLine(pen, panel.Width - 1, 0, panel.Width - 1, panel.Height);
-        };
-
-        var brand = new Panel { Dock = DockStyle.Top, Height = 64, BackColor = Surface };
-        var title = new Label
-        {
-            Text = AppDisplayName,
-            Dock = DockStyle.Top,
-            Height = 32,
-            Font = new Font(Font.FontFamily, 17F, FontStyle.Bold),
-            ForeColor = TextPrimary
-        };
-        var subtitle = new Label
-        {
-            Text = $"Control Center  •  {DateTime.Now:HH:mm}",
-            Dock = DockStyle.Top,
-            Height = 24,
-            Font = new Font(Font.FontFamily, 8.75F, FontStyle.Regular),
-            ForeColor = TextMuted
-        };
-        brand.Controls.Add(subtitle);
-        brand.Controls.Add(title);
-
-        var nav = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            Padding = new Padding(0, 14, 0, 0),
-            BackColor = Surface
-        };
-
-        var workspaceHeader = new Label
-        {
-            Text = "WORKSPACE",
-            Font = new Font(Font.FontFamily, 7.5F, FontStyle.Bold),
-            ForeColor = TextMuted,
-            Width = NavigationButtonWidth,
-            Height = 20,
-            Margin = new Padding(8, 0, 0, 4),
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-        nav.Controls.Add(workspaceHeader);
-
-        foreach (var page in new[] { "Overview", "Shortcuts", "Appearance", "Device" })
-        {
-            var button = CreateNavButton(page);
-            navButtons.Add(page, button);
-            nav.Controls.Add(button);
-        }
-
-        var sectionLabel = new Label
-        {
-            Text = "MAINTENANCE",
-            Font = new Font(Font.FontFamily, 7.5F, FontStyle.Bold),
-            ForeColor = TextMuted,
-            Width = NavigationButtonWidth,
-            Height = 22,
-            Margin = new Padding(8, 12, 0, 4),
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-        nav.Controls.Add(sectionLabel);
-
-        foreach (var page in new[] { "Pairing", "Updates", "Logs" })
-        {
-            var button = CreateNavButton(page);
-            navButtons.Add(page, button);
-            nav.Controls.Add(button);
-        }
-
-        panel.Controls.Add(nav);
-        panel.Controls.Add(brand);
-        return panel;
-    }
-
-    internal static string FormatSidebarConnectionStatus(AgentStatusSnapshot snapshot)
-    {
-        var clock = DateTime.Now.ToString("HH:mm");
-        if (string.Equals(snapshot.HostStatus, "connected", StringComparison.OrdinalIgnoreCase))
-        {
-            if (string.Equals(snapshot.RemoteAddress, "USB", StringComparison.OrdinalIgnoreCase))
-            {
-                var ch340 = UsbSerialPortDiscovery.FindConnectedCh340Ports().FirstOrDefault();
-                return !string.IsNullOrWhiteSpace(ch340) ? $"Connected {ch340} • {clock}" : $"Connected USB • {clock}";
-            }
-
-            var host = FormatRemoteHost(snapshot.RemoteAddress);
-            return host != "Unavailable" ? $"Connected {host} • {clock}" : $"Connected Wi-Fi • {clock}";
-        }
-
-        if (string.Equals(snapshot.HostStatus, "pairing pending", StringComparison.OrdinalIgnoreCase))
-        {
-            return $"Pairing Pending • {clock}";
-        }
-
-        return $"Listening :{snapshot.HostPort} • {clock}";
-    }
+    private Control CreateNavigation() => CreateDesktopNavigation();
 
     private Button CreateNavButton(string page)
     {
@@ -437,17 +341,23 @@ public sealed partial class SettingsWindow : Form
         contentPanel.Controls.Clear();
         infoValueLabels.Clear();
         refreshOverviewWidgets = null;
+        desktopRefresh = null;
+        desktopViewLifetime?.Cancel(); desktopViewLifetime?.Dispose(); desktopViewLifetime = new();
         contentPanel.Controls.Add(page switch
         {
             "Overview" => CreateCompactOverviewPage(),
-            "Shortcuts" => CreateCompactDeckPage(),
-            "Appearance" => CreateCompactSettingsPage(),
+            "Shortcuts" => CreateDesktopDeckPage(),
+            "Appearance" => CreateDesktopSettingsPage(),
+            "Media" => CreateDesktopMediaPage(),
+            "Monitor" => CreateDesktopMonitorPage(),
             "Device" => CreateCompactDevicePage(),
             "Pairing" => CreatePairingPage(),
             "Updates" => CreateUpdatesPage(),
             "Logs" => CreateLogsPage(),
             _ => CreateCompactOverviewPage()
         });
+        if (page is "Shortcuts" or "Appearance" or "Media" or "Monitor") WrapDesktopInputs(contentPanel);
+        FitDesktopRows(contentPanel);
         UpdateShortcutImportRefreshTimer(page);
     }
 
@@ -1729,21 +1639,19 @@ public sealed partial class SettingsWindow : Form
         var toolbar = CreateUnifiedToolbar(title);
         panel.Controls.Add(body);
         panel.Controls.Add(toolbar);
-        unifiedFeedback = new Label { Dock = DockStyle.Bottom, Height = 24, ForeColor = TextMuted, TextAlign = ContentAlignment.MiddleLeft };
-        panel.Controls.Add(unifiedFeedback);
         RefreshUnifiedToolbar();
         return panel;
     }
 
-    private static Panel CreatePageBodyPanel()
+    private static Panel CreatePageBodyPanel(bool allowScroll = false)
     {
         var panel = new Panel
         {
             Dock = DockStyle.Fill,
-            AutoScroll = true,
+            AutoScroll = allowScroll,
             BackColor = Background,
             Tag = PageBodyTag,
-            Padding = new Padding(0, 0, 12, 0)
+            Padding = Padding.Empty
         };
         DisableHorizontalAutoScroll(panel);
         panel.SizeChanged += (_, _) => DisableHorizontalAutoScroll(panel);
@@ -1784,7 +1692,7 @@ public sealed partial class SettingsWindow : Form
         {
             using var page = new Panel { Size = new Size(width, height), BackColor = Background };
             using var title = new Label { Dock = DockStyle.Top, Height = PageTitleHeight };
-            using var body = CreatePageBodyPanel();
+            using var body = CreatePageBodyPanel(allowScroll: true);
             using var content = new Panel { Dock = DockStyle.Top, Height = contentHeight };
             using var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = CalculateActionBarHeight(width, footerButtonWidths), Tag = PageFooterTag };
             body.Controls.Add(content);
@@ -2594,10 +2502,13 @@ public sealed partial class SettingsWindow : Form
     {
         try
         {
-            return configurationDraft ?? configurationStore.LoadOrDefault();
+            var loaded = configurationDraft ?? configurationStore.LoadOrDefault();
+            shortcutsConfigurationLoadFailed = false;
+            return loaded;
         }
         catch (Exception exception)
         {
+            shortcutsConfigurationLoadFailed = true;
             AgentDiagnosticLog.Write($"Configuration load failed in settings window: {exception.GetType().Name}");
             return AgentConfiguration.CreateDefault();
         }
@@ -3340,10 +3251,15 @@ public sealed partial class SettingsWindow : Form
         switch (page)
         {
             case "Overview":
+            case "Monitor":
                 g.DrawRectangle(pen, x + 1, y + 1, w / 2 - 2, h / 2 - 2);
                 g.DrawRectangle(pen, x + w / 2 + 1, y + 1, w / 2 - 2, h / 2 - 2);
                 g.DrawRectangle(pen, x + 1, y + h / 2 + 1, w / 2 - 2, h / 2 - 2);
                 g.DrawRectangle(pen, x + w / 2 + 1, y + h / 2 + 1, w / 2 - 2, h / 2 - 2);
+                break;
+            case "Media":
+                g.DrawEllipse(pen, x, y, w, h);
+                g.DrawLine(pen, x + w / 2, y + 4, x + w / 2, y + h - 4);
                 break;
             case "Shortcuts":
                 g.DrawRectangle(pen, x + 1, y + 2, w - 2, h - 4);
@@ -3518,6 +3434,7 @@ public sealed partial class SettingsWindow : Form
             return;
         }
 
+        desktopRefresh?.Invoke();
         if (currentPage is "Overview" or "Device")
         {
             refreshOverviewWidgets?.Invoke();
@@ -3755,6 +3672,7 @@ public sealed partial class SettingsWindow : Form
             Accent = "#5299E0"
         };
 
+        public bool Clock24Hour { get; set; } = true;
         public string Theme { get; set; } = "dark";
         public string WindowStyle { get; set; } = "acrylic";
         public string Accent { get; set; } = "#5299E0";
@@ -3763,6 +3681,7 @@ public sealed partial class SettingsWindow : Form
         {
             return new DesktopAppearanceState
             {
+                Clock24Hour = configuration.Clock24Hour,
                 Theme = string.IsNullOrWhiteSpace(configuration.Theme) ? "dark" : configuration.Theme,
                 WindowStyle = string.IsNullOrWhiteSpace(configuration.WindowStyle) ? "acrylic" : configuration.WindowStyle,
                 Accent = string.IsNullOrWhiteSpace(configuration.Accent) ? "#5299E0" : configuration.Accent
@@ -3773,6 +3692,7 @@ public sealed partial class SettingsWindow : Form
         {
             return new DesktopAppearanceConfiguration
             {
+                Clock24Hour = Clock24Hour,
                 Theme = Theme,
                 WindowStyle = WindowStyle,
                 Accent = Accent

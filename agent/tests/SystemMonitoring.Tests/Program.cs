@@ -5,12 +5,28 @@ var tests = new (string Name, Action Run)[]
     ("snapshot contains cpu ram and uptime with optional gpu and temperature fields", SnapshotContainsExpectedValues),
     ("cpu usage is calculated from GetSystemTimes deltas", CpuUsageUsesSystemTimeDeltas),
     ("first cpu sample is controlled when no baseline exists", FirstCpuSampleIsControlled),
+    ("GPU aggregation sums shared engines without adding unrelated engines", GpuAggregation),
+    ("hardware readings and source labels pass through provider", HardwareReadings),
 };
 
 foreach (var test in tests)
 {
     test.Run();
     Console.WriteLine($"PASS {test.Name}");
+}
+
+static void GpuAggregation()
+{
+    if (!OperatingSystem.IsWindows()) return;
+    var value = WindowsHardwareMetricsReader.AggregateGpuEngines(new[] { ("pid_1_luid_a_b_phys_0_eng_0_engtype_3D", 20d), ("pid_2_luid_a_b_phys_0_eng_0_engtype_3D", 30d), ("pid_3_luid_a_b_phys_0_eng_1_engtype_Copy", 40d) });
+    AssertEqual(50d, value!.Value, "busiest engine");
+    if (WindowsHardwareMetricsReader.AggregateGpuEngines([]).HasValue) throw new Exception("Missing GPU is not a zero reading");
+}
+static void HardwareReadings()
+{
+    var api = new FakeWindowsSystemMetricsApi([new(100, 500, 500)], new(8000, 2000), 1);
+    using var provider = new WindowsSystemMetricsProvider(api, new FakeHardware()); var snapshot = provider.GetSnapshot();
+    AssertEqual(31d, snapshot.GpuUsagePercent!.Value, "real GPU value"); AssertEqual(65d, snapshot.CpuTemperatureCelsius!.Value, "real temperature value"); AssertEqual("CPU sensor", snapshot.TemperatureSource!, "sensor provenance");
 }
 
 static void SnapshotContainsExpectedValues()
@@ -129,3 +145,5 @@ internal sealed class FakeWindowsSystemMetricsApi : IWindowsSystemMetricsApi
 
     public ulong GetTickCount64() => _uptimeMilliseconds;
 }
+
+sealed class FakeHardware : IHardwareMetricsReader { public HardwareMetricsSnapshot Read() => new(31, 65, null, "GPU counter", "CPU sensor"); public void Dispose() {} }

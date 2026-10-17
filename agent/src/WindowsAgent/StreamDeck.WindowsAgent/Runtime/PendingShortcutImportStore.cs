@@ -14,7 +14,7 @@ public sealed class PendingShortcutImportStore
         lock (gate)
         {
             pending.Clear();
-            foreach (var shortcut in report.Shortcuts.Take(6))
+            foreach (var shortcut in report.Shortcuts.Take(6).Where(s => !s.Id.StartsWith("__empty_slot_", StringComparison.Ordinal)))
             {
                 if (savedShortcutIds.Contains(shortcut.Id) || pending.ContainsKey(shortcut.Id))
                 {
