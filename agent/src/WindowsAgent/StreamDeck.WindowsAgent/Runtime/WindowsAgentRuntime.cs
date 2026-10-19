@@ -15,8 +15,11 @@ public sealed class WindowsAgentRuntime(
     PairingApprovalService pairingService,
     AgentOptions options,
     Func<AudioSnapshot?>? initialAudioProvider = null,
-    int? listenPortOverride = null) : IAsyncDisposable
+    int? listenPortOverride = null,
+    AgentConfigurationStore? configurationStore = null) : IAsyncDisposable
 {
+    private readonly AgentConfigurationStore configurationStore = configurationStore ?? AgentConfigurationStoreFactory.CreateForCurrentUser();
+    private int reconnectCount;
     private CancellationTokenSource? cancellation;
     private WindowsAgentWebSocketServer? webSocketServer;
     private MdnsAdvertiser? mdnsAdvertiser;
@@ -36,6 +39,8 @@ public sealed class WindowsAgentRuntime(
     private int port;
 
     public int Port => port;
+    internal int ReconnectCount => reconnectCount;
+    internal string? EffectiveUsbPort => options.UsbPort ?? configurationStore.LoadOrDefault().Server?.UsbPort;
 
     public async Task StartAsync()
     {
@@ -44,7 +49,7 @@ public sealed class WindowsAgentRuntime(
             return;
         }
 
-        var configuration = AgentConfigurationStoreFactory.CreateForCurrentUser().LoadOrDefault();
+        var configuration = configurationStore.LoadOrDefault();
         port = listenPortOverride ?? configuration.Server?.Port ?? 8765;
         var monitoringInterval = TimeSpan.FromMilliseconds(configuration.Monitoring?.IntervalMs ?? 1000);
         var coverCacheDirectory = GetCoverCacheDirectory();
@@ -78,13 +83,14 @@ public sealed class WindowsAgentRuntime(
                 initialAudioProvider ?? ReadCurrentAudioSnapshot,
                 HandleShortcutsReportAsync,
                 shortcutsProvider: () => BuildDeviceShortcuts(shortcutCatalog!.DeviceConfiguration, deviceSlots),
-                appearanceProvider: () => ResolveAssignedLayout(AgentConfigurationStoreFactory.CreateForCurrentUser().LoadOrDefault().Appearance ?? new AppearanceConfiguration(), deviceSlots),
+                appearanceProvider: () => ResolveAssignedLayout(configurationStore.LoadOrDefault().Appearance ?? new AppearanceConfiguration(), deviceSlots),
                 initialMediaSender: (sink, token) => new ValueTask(PublishMediaUpdateAsync(mediaMonitor?.CurrentSnapshot, token, sink)));
 
-            if (!options.MockMode && (configuration.Server?.UsbAutoConnect != false || options.UsbPort is not null))
+            var effectiveUsbPort = options.UsbPort ?? configuration.Server?.UsbPort;
+            if (!options.MockMode && (configuration.Server?.UsbAutoConnect != false || effectiveUsbPort is not null))
             {
                 usbRuntime = new UsbDeviceRuntime(
-                    () => ResolveUsbPortCandidates(options with { UsbPort = options.UsbPort ?? configuration.Server?.UsbPort }),
+                    () => ResolveUsbPortCandidates(options with { UsbPort = effectiveUsbPort }),
                     usbPort =>
                     {
                         AgentDiagnosticLog.Write($"Opening USB serial transport on {usbPort}");
@@ -99,7 +105,7 @@ public sealed class WindowsAgentRuntime(
                     initialAudioProvider ?? ReadCurrentAudioSnapshot,
                     HandleShortcutsReportAsync,
                 shortcutsProvider: () => BuildDeviceShortcuts(shortcutCatalog!.DeviceConfiguration, deviceSlots),
-                appearanceProvider: () => ResolveAssignedLayout(AgentConfigurationStoreFactory.CreateForCurrentUser().LoadOrDefault().Appearance ?? new AppearanceConfiguration(), deviceSlots),
+                appearanceProvider: () => ResolveAssignedLayout(configurationStore.LoadOrDefault().Appearance ?? new AppearanceConfiguration(), deviceSlots),
                 initialMediaSender: (sink, token) => new ValueTask(PublishMediaUpdateAsync(mediaMonitor?.CurrentSnapshot, token, sink)));
                 await usbRuntime.StartAsync(cancellation.Token).ConfigureAwait(false);
             }
@@ -124,7 +130,7 @@ public sealed class WindowsAgentRuntime(
     {
         return !string.IsNullOrWhiteSpace(options.UsbPort)
             ? [options.UsbPort]
-            : UsbSerialPortDiscovery.FindConnectedCh340Ports();
+            : UsbSerialPortDiscovery.FindConnectedSupportedPorts();
     }
 
     private async Task<DeviceCommandDispatcher> CreateLiveDispatcherAsync(
@@ -245,6 +251,7 @@ public sealed class WindowsAgentRuntime(
 
     public async Task ReconnectAsync()
     {
+        reconnectCount++;
         await StopAsync().ConfigureAwait(false);
         await StartAsync().ConfigureAwait(false);
     }
@@ -460,7 +467,7 @@ public sealed class WindowsAgentRuntime(
 
     private ValueTask HandleShortcutsReportAsync(ShortcutsReportMessage report, CancellationToken cancellationToken)
     {
-        var configuration = AgentConfigurationStoreFactory.CreateForCurrentUser().LoadOrDefault();
+        var configuration = configurationStore.LoadOrDefault();
         var savedIds = (configuration.Shortcuts ?? [])
             .Select(shortcut => shortcut.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);

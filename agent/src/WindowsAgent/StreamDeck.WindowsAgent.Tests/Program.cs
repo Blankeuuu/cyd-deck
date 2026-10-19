@@ -222,6 +222,37 @@ AssertEqual(
         [("VID_10C4&PID_EA60", "COM7")],
         ["COM7"]).Count,
     "USB discovery does not claim unrelated serial hardware");
+
+AssertTrue(UsbSerialPortDiscovery.IsCp210xHardwareId("VID_10C4&PID_EA60"), "USB discovery recognizes CP210x parent key hardware ID");
+AssertTrue(UsbSerialPortDiscovery.IsCp210xHardwareId(@"USB\VID_10C4&PID_EA60&REV_0100"), "USB discovery recognizes CP210x hardware ID in device-instance value");
+AssertTrue(!UsbSerialPortDiscovery.IsCp210xHardwareId(@"USB\VID_0403&PID_6001"), "USB discovery rejects unrelated non-CP210x hardware IDs");
+AssertTrue(UsbSerialPortDiscovery.IsSupportedHardwareId(@"USB\VID_1A86&PID_7523"), "Supported discovery recognizes CH340");
+AssertTrue(UsbSerialPortDiscovery.IsSupportedHardwareId(@"USB\VID_10C4&PID_EA60"), "Supported discovery recognizes CP210x");
+AssertTrue(!UsbSerialPortDiscovery.IsSupportedHardwareId(@"USB\VID_0403&PID_6001"), "Supported discovery rejects unrelated FTDI adapters");
+AssertTrue(!UsbSerialPortDiscovery.IsSupportedHardwareId(@"USB\VID_067B&PID_2303"), "Supported discovery rejects unrelated Prolific adapters");
+
+AssertEqual(
+    "COM7",
+    UsbSerialPortDiscovery.SelectAvailableSupportedPorts([(@"USB\VID_10C4&PID_EA60", "COM7")], ["COM7"]).Single(),
+    "USB discovery selects connected CP210x port");
+AssertEqual(
+    "COM5,COM7",
+    string.Join(',', UsbSerialPortDiscovery.SelectAvailableSupportedPorts(
+        [("VID_10C4&PID_EA60", "COM7"), ("VID_1A86&PID_7523", "COM5")],
+        ["COM5", "COM7"])),
+    "USB discovery returns both CH340 and CP210x sorted candidates");
+AssertEqual(
+    0,
+    UsbSerialPortDiscovery.SelectAvailableSupportedPorts(
+        [("VID_0403&PID_6001", "COM9")],
+        ["COM9"]).Count,
+    "USB discovery rejects unrelated serial hardware");
+
+AssertTrue(WindowsAgentApplicationContext.ShouldTriggerPairingNotification("listening", "pairing pending"), "Pairing pending transition triggers tray notification");
+AssertTrue(!WindowsAgentApplicationContext.ShouldTriggerPairingNotification("pairing pending", "pairing pending"), "Repeated pairing pending does not trigger notification spam");
+AssertTrue(WindowsAgentApplicationContext.ShouldTriggerPairingNotification("connected", "pairing pending"), "Reconnect to pairing pending triggers notification");
+AssertTrue(!WindowsAgentApplicationContext.ShouldTriggerPairingNotification("pairing pending", "connected"), "Connected transition does not trigger pairing notification");
+
 AssertEqual("COM7", WindowsAgentRuntime.ResolveUsbPortCandidates(usbOptions).Single(), "explicit USB override is a hard single candidate");
 await TestUsbLineProtocolTransportAsync();
 await TestUsbCoverSenderAsync();
@@ -233,6 +264,12 @@ await TestUsbRuntimeDisposesTimedOutProbeAsync();
 await TestUsbProbeDoesNotConsumeFrameAfterHelloAsync();
 await TestUsbProbeRecoversFromLeadingEmptyLineAndFragmentAsync();
 await TestUsbDeviceRuntimeHandshakeAsync();
+await TestReconnectWithSelectedComPortAsync();
+await TestRuntimePortSwitchingAsync();
+await TestDraftNullComPortResolvesToAutomaticAsync();
+await TestSameIdLabelActionDraftPreservesDirtyAndDoesNotPersistShortcutsAsync();
+await TestSaveFailureDoesNotTriggerReconnectAndPreservesDraftAsync();
+await TestTrayProductionNotificationAndBalloonClickAsync();
 var usbFirstCalls = new List<string>();
 AssertTrue(await WindowsAgentRuntime.SendWithUsbPriorityAsync(
     usbReady: true,
@@ -1339,7 +1376,7 @@ static async Task TestArduinoOtaUploadSuccessAsync()
             () => new MemoryStream(firmware, writable: false),
             peer.Port,
             TimeSpan.FromSeconds(5)),
-        new Progress<FirmwareUpdateProgress>(progressValues.Add),
+        new SynchronousProgress<FirmwareUpdateProgress>(progressValues.Add),
         CancellationToken.None);
 
     AssertTrue(result.Success, "ota upload succeeds");
@@ -1777,6 +1814,332 @@ static async Task TestShortcutIconDownloadLoopbackAsync()
     }
 }
 
+static async Task TestReconnectWithSelectedComPortAsync()
+{
+    await RunOnStaAsync(async () =>
+    {
+        var testConfigPath = Path.GetFullPath("artifacts/ui-review/reconnect-test-config.json");
+        Directory.CreateDirectory("artifacts/ui-review");
+        var testStore = new AgentConfigurationStore(testConfigPath);
+        var shortcutA = new ShortcutDefinition { Id = "shortcut-a", Name = "Shortcut A", Icon = "app", Action = new() { Type = ShortcutActionTypes.OpenUrl, Url = "https://example.com" } };
+        var shortcutDraftB = new ShortcutDefinition { Id = "shortcut-b", Name = "Shortcut B (Unsaved Draft)", Icon = "browser", Action = new() { Type = ShortcutActionTypes.OpenUrl, Url = "https://draft.com" } };
+        testStore.Save(AgentConfiguration.CreateDefault() with
+        {
+            Server = new ServerConfiguration { UsbPort = "COM3" },
+            Shortcuts = [shortcutA]
+        });
+
+        var testState = new AgentState();
+        var testPairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/reconnect-pairing.json"));
+        var testRuntime = new WindowsAgentRuntime(testState, testPairing, new AgentOptions(true), listenPortOverride: 0, configurationStore: testStore);
+        await testRuntime.StartAsync();
+
+        using var icon = AppIconFactory.CreateIcon();
+        using var window = new SettingsWindow(testState, testRuntime, new WindowsStartupService(new AgentOptions(true)), testPairing, icon, testStore);
+
+        var draftWithUnsavedShortcut = testStore.LoadOrDefault() with
+        {
+            Shortcuts = [shortcutA, shortcutDraftB],
+            Server = new ServerConfiguration { UsbPort = "COM9" }
+        };
+        window.SetConfigurationDraftForTests(draftWithUnsavedShortcut);
+        AssertTrue(window.IsConfigurationDirtyForTests, "Window draft is marked dirty");
+
+        await window.ReconnectWithSelectedPortAsync("COM9");
+
+        var diskConfig = testStore.LoadOrDefault();
+        AssertEqual("COM9", diskConfig.Server?.UsbPort, "Reconnect persists selected COM port to disk");
+        AssertEqual(1, diskConfig.Shortcuts?.Count ?? 0, "Reconnect does NOT persist unconfirmed shortcut drafts");
+        AssertEqual("shortcut-a", diskConfig.Shortcuts![0].Id, "Disk config still has only saved shortcut A");
+        AssertEqual(2, window.GetConfigurationDraftForTests()?.Shortcuts?.Count ?? 0, "Window draft in memory preserves uncommitted shortcut B");
+        AssertTrue(window.IsConfigurationDirtyForTests, "Window draft remains dirty because shortcut B is still uncommitted");
+
+        await testRuntime.DisposeAsync();
+
+        // Clean test where only port is changed and no other drafts exist:
+        var cleanStore = new AgentConfigurationStore(Path.GetFullPath("artifacts/ui-review/reconnect-clean-config.json"));
+        cleanStore.Save(AgentConfiguration.CreateDefault() with { Server = new ServerConfiguration { UsbPort = "COM3" } });
+        var cleanRuntime = new WindowsAgentRuntime(testState, testPairing, new AgentOptions(true), listenPortOverride: 0, configurationStore: cleanStore);
+        await cleanRuntime.StartAsync();
+        using var cleanWindow = new SettingsWindow(testState, cleanRuntime, new WindowsStartupService(new AgentOptions(true)), testPairing, icon, cleanStore);
+        cleanWindow.SetConfigurationDraftForTests(cleanStore.LoadOrDefault() with { Server = new ServerConfiguration { UsbPort = "COM8" } });
+        await cleanWindow.ReconnectWithSelectedPortAsync("COM8");
+        AssertEqual("COM8", cleanStore.LoadOrDefault().Server?.UsbPort, "Reconnect persists port when only port is changed");
+        AssertTrue(!cleanWindow.IsConfigurationDirtyForTests, "Window draft is no longer dirty when only port was changed");
+        await cleanRuntime.DisposeAsync();
+    });
+}
+
+static async Task TestRuntimePortSwitchingAsync()
+{
+    await RunOnStaAsync(async () =>
+    {
+        var testConfigPath = Path.GetFullPath("artifacts/ui-review/runtime-port-switch-config.json");
+        Directory.CreateDirectory("artifacts/ui-review");
+        var testStore = new AgentConfigurationStore(testConfigPath);
+        testStore.Save(AgentConfiguration.CreateDefault() with
+        {
+            Server = new ServerConfiguration { UsbPort = "COM7" }
+        });
+
+        var testState = new AgentState();
+        var testPairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/runtime-switch-pairing.json"));
+        var testRuntime = new WindowsAgentRuntime(testState, testPairing, new AgentOptions(true), listenPortOverride: 0, configurationStore: testStore);
+        await testRuntime.StartAsync();
+
+        AssertEqual("COM7", testRuntime.EffectiveUsbPort, "Initial runtime effective port matches saved COM7");
+
+        using var icon = AppIconFactory.CreateIcon();
+        using var window = new SettingsWindow(testState, testRuntime, new WindowsStartupService(new AgentOptions(true)), testPairing, icon, testStore);
+
+        // 1. COM7 -> Automatic:
+        await window.ReconnectWithSelectedPortAsync("Automatic");
+        var savedAfterAutomatic = testStore.LoadOrDefault();
+        AssertEqual(null, savedAfterAutomatic.Server?.UsbPort, "Store has null port after selecting Automatic");
+        AssertEqual(null, testRuntime.EffectiveUsbPort, "Runtime reloaded with null effective port, not stuck on COM7");
+
+        // 2. COM7 -> Save COM8:
+        await window.ReconnectWithSelectedPortAsync("COM8");
+        var savedAfterCom8 = testStore.LoadOrDefault();
+        AssertEqual("COM8", savedAfterCom8.Server?.UsbPort, "Store has COM8 after selecting COM8");
+        AssertEqual("COM8", testRuntime.EffectiveUsbPort, "Runtime reloaded with COM8, showing no stale activeUsbPortOverride");
+
+        await testRuntime.DisposeAsync();
+
+        // 3. CLI override precedence:
+        var cliRuntime = new WindowsAgentRuntime(testState, testPairing, new AgentOptions(true) { UsbPort = "COM1" }, listenPortOverride: 0, configurationStore: testStore);
+        await cliRuntime.StartAsync();
+        AssertEqual("COM1", cliRuntime.EffectiveUsbPort, "CLI override options.UsbPort takes precedence over stored port");
+        await cliRuntime.DisposeAsync();
+    });
+}
+
+static async Task TestDraftNullComPortResolvesToAutomaticAsync()
+{
+    await RunOnStaAsync(async () =>
+    {
+        var testConfigPath = Path.GetFullPath("artifacts/ui-review/draft-automatic-config.json");
+        Directory.CreateDirectory("artifacts/ui-review");
+        var testStore = new AgentConfigurationStore(testConfigPath);
+        testStore.Save(AgentConfiguration.CreateDefault() with
+        {
+            Server = new ServerConfiguration { UsbPort = "COM7" }
+        });
+
+        var testState = new AgentState();
+        var testPairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/draft-automatic-pairing.json"));
+        var testRuntime = new WindowsAgentRuntime(testState, testPairing, new AgentOptions(true), listenPortOverride: 0, configurationStore: testStore);
+        await testRuntime.StartAsync();
+
+        using var icon = AppIconFactory.CreateIcon();
+        using var window = new SettingsWindow(testState, testRuntime, new WindowsStartupService(new AgentOptions(true)), testPairing, icon, testStore);
+
+        var draft = testStore.LoadOrDefault() with
+        {
+            Server = new ServerConfiguration { UsbPort = null }
+        };
+        window.SetConfigurationDraftForTests(draft);
+
+        await window.ReconnectAsyncForTests();
+
+        var reloaded = testStore.LoadOrDefault();
+        AssertEqual(null, reloaded.Server?.UsbPort, "Draft null port correctly preserved as Automatic, not overridden by disk COM7 via ??");
+        AssertEqual(null, testRuntime.EffectiveUsbPort, "Runtime reconnected with null port from draft");
+
+        await testRuntime.DisposeAsync();
+    });
+}
+
+static async Task TestSameIdLabelActionDraftPreservesDirtyAndDoesNotPersistShortcutsAsync()
+{
+    await RunOnStaAsync(async () =>
+    {
+        var testConfigPath = Path.GetFullPath("artifacts/ui-review/same-id-diff-label-config.json");
+        Directory.CreateDirectory("artifacts/ui-review");
+        var testStore = new AgentConfigurationStore(testConfigPath);
+        var initialShortcut = new ShortcutDefinition
+        {
+            Id = "shortcut-1",
+            Name = "Original Label",
+            Icon = "app",
+            Action = new ShortcutActionDefinition { Type = ShortcutActionTypes.OpenUrl, Url = "https://original.com" }
+        };
+        testStore.Save(AgentConfiguration.CreateDefault() with
+        {
+            Server = new ServerConfiguration { UsbPort = "COM3" },
+            Shortcuts = [initialShortcut]
+        });
+
+        var testState = new AgentState();
+        var testPairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/same-id-pairing.json"));
+        var testRuntime = new WindowsAgentRuntime(testState, testPairing, new AgentOptions(true), listenPortOverride: 0, configurationStore: testStore);
+        await testRuntime.StartAsync();
+
+        using var icon = AppIconFactory.CreateIcon();
+        using var window = new SettingsWindow(testState, testRuntime, new WindowsStartupService(new AgentOptions(true)), testPairing, icon, testStore);
+
+        var modifiedShortcut = initialShortcut with
+        {
+            Name = "Modified Label",
+            Action = new ShortcutActionDefinition { Type = ShortcutActionTypes.OpenUrl, Url = "https://modified.com" }
+        };
+        var draft = testStore.LoadOrDefault() with
+        {
+            Shortcuts = [modifiedShortcut],
+            Server = new ServerConfiguration { UsbPort = "COM9" }
+        };
+        window.SetConfigurationDraftForTests(draft);
+        AssertTrue(window.IsConfigurationDirtyForTests, "Window draft is marked dirty initially");
+
+        await window.ReconnectWithSelectedPortAsync("COM9");
+
+        var diskConfig = testStore.LoadOrDefault();
+        AssertEqual("COM9", diskConfig.Server?.UsbPort, "Selected COM port is persisted to disk");
+        AssertEqual("Original Label", diskConfig.Shortcuts![0].Name, "Shortcut Label on disk was NOT overwritten by port-only save");
+        AssertEqual("https://original.com", diskConfig.Shortcuts![0].Action?.Url, "Shortcut Action on disk was NOT overwritten by port-only save");
+
+        AssertTrue(window.IsConfigurationDirtyForTests, "configurationDirty remains TRUE because modified label/action are uncommitted");
+        AssertEqual("Modified Label", window.GetConfigurationDraftForTests()?.Shortcuts![0].Name, "In-memory draft preserves unsaved label");
+        AssertEqual("https://modified.com", window.GetConfigurationDraftForTests()?.Shortcuts![0].Action?.Url, "In-memory draft preserves unsaved action");
+
+        await testRuntime.DisposeAsync();
+    });
+}
+
+static async Task TestSaveFailureDoesNotTriggerReconnectAndPreservesDraftAsync()
+{
+    await RunOnStaAsync(async () =>
+    {
+        var testConfigPath = Path.GetFullPath("artifacts/ui-review/save-fail-config.json");
+        Directory.CreateDirectory("artifacts/ui-review");
+        var realFs = new ConfigurationFileSystem();
+        realFs.WriteAllText(testConfigPath, AgentConfigurationJson.Serialize(AgentConfiguration.CreateDefault() with
+        {
+            Server = new ServerConfiguration { UsbPort = "COM3" }
+        }));
+
+        var failingFs = new FailingConfigurationFileSystem(realFs, failWrites: true);
+        var testStore = new AgentConfigurationStore(testConfigPath, fileSystem: failingFs);
+
+        var testState = new AgentState();
+        var testPairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/save-fail-pairing.json"));
+        var testRuntime = new WindowsAgentRuntime(testState, testPairing, new AgentOptions(true), listenPortOverride: 0, configurationStore: testStore);
+        await testRuntime.StartAsync();
+
+        using var icon = AppIconFactory.CreateIcon();
+        using var window = new SettingsWindow(testState, testRuntime, new WindowsStartupService(new AgentOptions(true)), testPairing, icon, testStore);
+
+        var draft = testStore.LoadOrDefault() with
+        {
+            Server = new ServerConfiguration { UsbPort = "COM9" }
+        };
+        window.SetConfigurationDraftForTests(draft);
+        AssertTrue(window.IsConfigurationDirtyForTests, "Draft is dirty before reconnect");
+
+        string? capturedDialogTitle = null;
+        string? capturedDialogMessage = null;
+        SettingsWindow.DialogMessageHookForTests = (title, msg) =>
+        {
+            capturedDialogTitle = title;
+            capturedDialogMessage = msg;
+        };
+
+        try
+        {
+            var reconnectCountBefore = testRuntime.ReconnectCount;
+            await window.ReconnectWithSelectedPortAsync("COM9");
+
+            AssertEqual(reconnectCountBefore, testRuntime.ReconnectCount, "ReconnectAsync was NOT called after save failure");
+            AssertTrue(window.IsConfigurationDirtyForTests, "Draft remains dirty after save failure");
+            AssertEqual("COM9", window.GetConfigurationDraftForTests()?.Server?.UsbPort, "Draft in memory is preserved");
+            AssertEqual("Configuration save failed", capturedDialogTitle, "Error was routed to UI dialog handler");
+        }
+        finally
+        {
+            SettingsWindow.DialogMessageHookForTests = null;
+        }
+
+        await testRuntime.DisposeAsync();
+    });
+}
+
+static async Task TestTrayProductionNotificationAndBalloonClickAsync()
+{
+    await RunOnStaAsync(async () =>
+    {
+        var testConfigPath = Path.GetFullPath("artifacts/ui-review/tray-test-config.json");
+        Directory.CreateDirectory("artifacts/ui-review");
+        var testStore = new AgentConfigurationStore(testConfigPath);
+        testStore.Save(AgentConfiguration.CreateDefault());
+
+        var testState = new AgentState();
+        var testPairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/tray-pairing.json"));
+        var testRuntime = new WindowsAgentRuntime(testState, testPairing, new AgentOptions(true), listenPortOverride: 0, configurationStore: testStore);
+        await testRuntime.StartAsync();
+
+        var startup = new WindowsStartupService(new AgentOptions(true));
+        using var guard = SingleInstanceGuard.Acquire("Local\\CYD_Deck_Tray_Test_" + Guid.NewGuid().ToString("N"));
+        using var context = new WindowsAgentApplicationContext(testState, testRuntime, startup, testPairing, guard, new AgentOptions(true) { StartMinimized = true });
+
+        // 1. Przejście ze stanu listening do pairing pending:
+        context.CheckConnectionNotificationForTests(new AgentStatusSnapshot("pairing pending", "cyd-1", "CYD-Dev", "USB", 8765, 5000, "live", []));
+        AssertEqual("Pairing", context.GetBalloonTipTargetPageForTests(), "Tray notification targets Pairing page on pairing pending");
+
+        // Kliknięcie w dymek:
+        context.TriggerBalloonTipClickedForTests();
+        AssertEqual(null, context.GetBalloonTipTargetPageForTests(), "Balloon target page reset after click");
+        AssertEqual("Pairing", context.MainWindowForTests?.CurrentPageForTests, "Window navigated to Pairing page on balloon click");
+
+        // 2. Kolejny tick w stanie pairing pending nie spamuje (cel pozostaje null):
+        context.CheckConnectionNotificationForTests(new AgentStatusSnapshot("pairing pending", "cyd-1", "CYD-Dev", "USB", 8765, 5000, "live", []));
+        AssertEqual(null, context.GetBalloonTipTargetPageForTests(), "Subsequent pairing pending tick produces no balloon notification spam");
+
+        // 3. Połączenie urządzenia:
+        context.CheckConnectionNotificationForTests(new AgentStatusSnapshot("connected", "cyd-1", "CYD-Dev", "USB", 8765, 5000, "live", []));
+        AssertEqual(null, context.GetBalloonTipTargetPageForTests(), "Connected balloon has null target (opens default page)");
+
+        // Kliknięcie w dymek połączenia:
+        context.MainWindowForTests?.ShowPage("Shortcuts");
+        context.TriggerBalloonTipClickedForTests();
+        AssertEqual("Shortcuts", context.MainWindowForTests?.CurrentPageForTests, "Connected balloon click does not force navigate to Pairing");
+
+        context.Dispose();
+        await testRuntime.DisposeAsync();
+    });
+}
+
+sealed class FailingConfigurationFileSystem : IConfigurationFileSystem
+{
+    private readonly IConfigurationFileSystem inner;
+    private readonly bool failWrites;
+
+    public FailingConfigurationFileSystem(IConfigurationFileSystem inner, bool failWrites = true)
+    {
+        this.inner = inner;
+        this.failWrites = failWrites;
+    }
+
+    public bool FileExists(string path) => inner.FileExists(path);
+    public void CreateDirectory(string path) => inner.CreateDirectory(path);
+    public string ReadAllText(string path) => inner.ReadAllText(path);
+    public void WriteAllText(string path, string contents)
+    {
+        if (failWrites) throw new IOException("Simulated disk write error");
+        inner.WriteAllText(path, contents);
+    }
+    public void ReplaceFile(string sourceFileName, string destinationFileName, string? destinationBackupFileName)
+    {
+        if (failWrites) throw new IOException("Simulated file replacement error");
+        inner.ReplaceFile(sourceFileName, destinationFileName, destinationBackupFileName);
+    }
+    public void MoveFile(string sourceFileName, string destinationFileName, bool overwrite)
+    {
+        if (failWrites) throw new IOException("Simulated file move error");
+        inner.MoveFile(sourceFileName, destinationFileName, overwrite);
+    }
+    public void DeleteFile(string path) => inner.DeleteFile(path);
+}
+
 sealed class TestMediaController : IHostMediaController
 {
     public Task<bool> ExecuteAsync(MediaCommand command, CancellationToken cancellationToken = default)
@@ -2015,4 +2378,9 @@ static class TestAssert
             throw new InvalidOperationException($"{label}: expected {expected}, got {actual}");
         }
     }
+}
+
+sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
+{
+    public void Report(T value) => handler(value);
 }

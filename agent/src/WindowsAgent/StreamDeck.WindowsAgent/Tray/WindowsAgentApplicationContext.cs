@@ -29,6 +29,7 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
     private SettingsWindow? mainWindow;
     private bool exiting;
     private string? lastKnownHostStatus;
+    private string? balloonTipTargetPage;
 
     public WindowsAgentApplicationContext(
         AgentState state,
@@ -57,6 +58,19 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
         };
 
         notifyIcon.MouseUp += OnNotifyIconMouseUp;
+        notifyIcon.BalloonTipClicked += (_, _) =>
+        {
+            if (balloonTipTargetPage is not null)
+            {
+                var target = balloonTipTargetPage;
+                balloonTipTargetPage = null;
+                ShowMainWindow(target);
+            }
+            else
+            {
+                ShowMainWindow();
+            }
+        };
         state.Changed += (_, _) => PostUpdateMenu();
         singleInstanceWait = ThreadPool.RegisterWaitForSingleObject(
             singleInstance.ShowWindowWaitHandle,
@@ -285,29 +299,62 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
 
     private void CheckConnectionNotification(AgentStatusSnapshot snapshot)
     {
-        if (lastKnownHostStatus is null)
+        var previousStatus = lastKnownHostStatus;
+        if (snapshot.HostStatus == previousStatus)
         {
-            lastKnownHostStatus = snapshot.HostStatus;
             return;
         }
 
-        if (snapshot.HostStatus != lastKnownHostStatus)
+        lastKnownHostStatus = snapshot.HostStatus;
+
+        if (ShouldTriggerPairingNotification(previousStatus, snapshot.HostStatus))
         {
-            var wasConnected = lastKnownHostStatus == "connected";
+            balloonTipTargetPage = "Pairing";
+            var deviceName = snapshot.DeviceName ?? snapshot.DeviceId ?? "CYD";
+            notifyIcon.ShowBalloonTip(3000, "CYD-DECK", $"Wykryto nowe urządzenie ({deviceName}). Kliknij, aby zatwierdzić parowanie w Windows Agent.", ToolTipIcon.Info);
+            return;
+        }
+
+        if (previousStatus is not null)
+        {
+            var wasConnected = previousStatus == "connected";
             var isConnected = snapshot.HostStatus == "connected";
-            lastKnownHostStatus = snapshot.HostStatus;
 
             if (isConnected)
             {
+                balloonTipTargetPage = null;
                 var transport = snapshot.RemoteAddress == "USB" ? "USB" : "Wi-Fi";
                 var deviceName = snapshot.DeviceName ?? snapshot.DeviceId ?? "Device";
                 notifyIcon.ShowBalloonTip(2500, "CYD-DECK", $"{deviceName} connected via {transport}.", ToolTipIcon.Info);
             }
             else if (wasConnected)
             {
+                balloonTipTargetPage = null;
                 notifyIcon.ShowBalloonTip(2500, "CYD-DECK", "Device disconnected.", ToolTipIcon.Warning);
             }
         }
+    }
+
+    internal void CheckConnectionNotificationForTests(AgentStatusSnapshot snapshot) => CheckConnectionNotification(snapshot);
+    internal string? GetBalloonTipTargetPageForTests() => balloonTipTargetPage;
+    internal SettingsWindow? MainWindowForTests => mainWindow;
+    internal void TriggerBalloonTipClickedForTests()
+    {
+        if (balloonTipTargetPage is not null)
+        {
+            var target = balloonTipTargetPage;
+            balloonTipTargetPage = null;
+            ShowMainWindow(target);
+        }
+        else
+        {
+            ShowMainWindow();
+        }
+    }
+
+    internal static bool ShouldTriggerPairingNotification(string? previousStatus, string currentStatus)
+    {
+        return currentStatus == "pairing pending" && previousStatus != "pairing pending";
     }
 
     private async Task SafeExecuteMediaCommandAsync(MediaCommand command)

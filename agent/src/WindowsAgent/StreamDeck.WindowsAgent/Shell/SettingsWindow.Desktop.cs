@@ -80,7 +80,7 @@ public sealed partial class SettingsWindow
 
         unifiedFeedback = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, AutoEllipsis = true, AccessibleName = "Configuration state", Font = new Font(Font.FontFamily, 9.5f) }; toolbar.Controls.Add(unifiedFeedback, 3, 0);
         unifiedSave = CompactButton("Zapisz i synchronizuj", async () => await SaveConfigurationDraftAsync()); unifiedSave.Dock = DockStyle.Fill; unifiedSave.AccessibleName = "Save & Sync"; unifiedSave.BackColor = Accent; unifiedSave.ForeColor = Color.White; toolbar.Controls.Add(unifiedSave, 4, 0);
-        connectedUsbPort ??= UsbSerialPortDiscovery.FindConnectedCh340Ports().FirstOrDefault(); RefreshDesktopToolbar(); return toolbar;
+        connectedUsbPort ??= UsbSerialPortDiscovery.FindConnectedSupportedPorts().FirstOrDefault(); RefreshDesktopToolbar(); return toolbar;
     }
     private void RefreshDesktopToolbar()
     {
@@ -267,10 +267,18 @@ public sealed partial class SettingsWindow
         var ports = new DarkComboBox { Dock = DockStyle.Fill, AccessibleName = "COM Port", Margin = Padding.Empty };
         bool refreshingPorts = false;
         void RefreshPorts() { refreshingPorts = true; var selected = ports.SelectedItem?.ToString() ?? server.UsbPort ?? "Automatic"; ports.Items.Clear(); ports.Items.AddRange(new[] { "Automatic" }.Concat(System.IO.Ports.SerialPort.GetPortNames()).Concat(server.UsbPort is null ? [] : new[] { server.UsbPort }).Distinct().Cast<object>().ToArray()); ports.SelectedItem = ports.Items.Contains(selected) ? selected : "Automatic"; refreshingPorts = false; }
-        RefreshPorts(); ports.SelectedIndexChanged += (_, _) => { if (refreshingPorts) return; server = server with { UsbPort = ports.SelectedItem?.ToString() is "Automatic" ? null : ports.SelectedItem?.ToString() }; configurationDraft = LoadConfiguration() with { Server = server }; MarkDraft(); };
+        RefreshPorts();
+        ports.SelectedIndexChanged += (_, _) => {
+            if (refreshingPorts) return;
+            var chosen = ports.SelectedItem?.ToString() is "Automatic" ? null : ports.SelectedItem?.ToString();
+            server = server with { UsbPort = chosen };
+            configurationDraft = (configurationDraft ?? LoadConfiguration()) with { Server = server };
+            MarkDraft();
+        };
+        desktopTips.SetToolTip(ports, "Wybierz port COM urządzenia. Kliknij ↪ aby zapisać port i połączyć ponownie.");
         var portRow = new TableLayoutPanel { ColumnCount = 3, Margin = Padding.Empty }; portRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); portRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 32)); portRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 32)); portRow.Controls.Add(ports, 0, 0);
         var refresh = CompactButton("↻", () => { RefreshPorts(); return Task.CompletedTask; }); refresh.Dock = DockStyle.Fill; refresh.Margin = Padding.Empty; refresh.AccessibleName = "Refresh COM ports"; desktopTips.SetToolTip(refresh, "Odśwież listę portów COM"); portRow.Controls.Add(refresh, 1, 0);
-        var reconnect = CompactButton("↪", ReconnectAsync); reconnect.Dock = DockStyle.Fill; reconnect.Margin = Padding.Empty; reconnect.AccessibleName = "Reconnect"; desktopTips.SetToolTip(reconnect, "Połącz ponownie z urządzeniem"); portRow.Controls.Add(reconnect, 2, 0); CompactField(hardware, "COM Port", portRow);
+        var reconnect = CompactButton("↪", async () => await ReconnectWithSelectedPortAsync(ports.SelectedItem?.ToString())); reconnect.Dock = DockStyle.Fill; reconnect.Margin = Padding.Empty; reconnect.AccessibleName = "Połącz z wybranym portem"; desktopTips.SetToolTip(reconnect, "Zastosuj wybrany port i połącz ponownie z urządzeniem"); portRow.Controls.Add(reconnect, 2, 0); CompactField(hardware, "COM Port", portRow);
 
         var standby = new DarkNumberPicker(display.DimAfterSec);
         standby.ValueChanged += (_, _) => { display.DimAfterSec = standby.Value; MarkDraft(); };
@@ -279,11 +287,11 @@ public sealed partial class SettingsWindow
         var powerNote = new Label { Text = "Ekran aktywny przy podłączonym PC (USB keep-awake)", AutoEllipsis = true, ForeColor = TextMuted, Dock = DockStyle.Fill, Font = new Font(Font.FontFamily, 8.5f) };
         CompactField(hardware, "Display Power", powerNote, 46);
 
-        CompactField(hardware, "", ToggleRow("Automatyczne łączenie przy starcie", server.UsbAutoConnect, v => { server = server with { UsbAutoConnect = v }; configurationDraft = LoadConfiguration() with { Server = server }; }), 44);
+        CompactField(hardware, "", ToggleRow("Automatyczne łączenie przy starcie", server.UsbAutoConnect, v => { server = server with { UsbAutoConnect = v }; configurationDraft = (configurationDraft ?? LoadConfiguration()) with { Server = server }; }), 44);
         CompactField(hardware, "", ToggleRow("Wybudzanie dotykiem ekranu", display.WakeOnTouch, v => display.WakeOnTouch = v), 44);
 
         CompactField(hardware, "Narzędzia", CompactButton("Urządzenie i parowanie…", () => { ShowPage("Device"); return Task.CompletedTask; }));
-        CompactField(hardware, "", CompactButton("Przywróć domyślne", () => { if (MessageBox.Show(this, "Czy na pewno chcesz przywrócić domyślne ustawienia wyglądu i sprzętu w szkicu roboczym?", "Przywracanie domyślnych", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK) { pendingAppearance = AppearanceState.Default; pendingDesktopAppearance = DesktopAppearanceState.Default; configurationDraft = LoadConfiguration() with { Server = new() }; MarkDraft(); ShowPage("Appearance"); } return Task.CompletedTask; }));
+        CompactField(hardware, "", CompactButton("Przywróć domyślne", () => { if (MessageBox.Show(this, "Czy na pewno chcesz przywrócić domyślne ustawienia wyglądu i sprzętu w szkicu roboczym?", "Przywracanie domyślnych", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK) { pendingAppearance = AppearanceState.Default; pendingDesktopAppearance = DesktopAppearanceState.Default; configurationDraft = (configurationDraft ?? LoadConfiguration()) with { Server = new() }; MarkDraft(); ShowPage("Appearance"); } return Task.CompletedTask; }));
         FinishCard(hardware);
 
         grid.Controls.Add(windows, 0, 0); grid.Controls.Add(cyd, 1, 0); grid.Controls.Add(hardware, 2, 0); AddPageBodyControl(page, grid); return page;

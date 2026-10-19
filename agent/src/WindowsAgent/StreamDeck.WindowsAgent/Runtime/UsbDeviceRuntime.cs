@@ -136,7 +136,7 @@ public sealed class UsbDeviceRuntime(
             {
                 if (!waitingForUsbPortLogged)
                 {
-                    AgentDiagnosticLog.Write("USB discovery has no usable CH340 serial port");
+                    AgentDiagnosticLog.Write("USB discovery has no usable CH340/CP210x serial port");
                     waitingForUsbPortLogged = true;
                 }
             }

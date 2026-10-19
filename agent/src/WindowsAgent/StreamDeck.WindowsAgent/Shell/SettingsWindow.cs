@@ -65,6 +65,12 @@ public sealed partial class SettingsWindow : Form
     internal const string PendingShortcutImportsText = "Device-reported shortcuts needing configuration. These drafts are inactive and are not executable or synced until you configure and save a valid Agent-side action.";
     internal const string DeviceColorPreviewTagForTests = DeviceColorPreviewTag;
     internal const string DeviceColorPickerTagForTests = DeviceColorPickerTag;
+    internal bool IsConfigurationDirtyForTests => configurationDirty;
+    internal string CurrentPageForTests => currentPage;
+    internal Task ReconnectAsyncForTests() => ReconnectAsync();
+    internal void SetConfigurationDraftForTests(AgentConfiguration draft) { configurationDraft = draft; configurationDirty = true; RefreshUnifiedToolbar(); }
+    internal AgentConfiguration? GetConfigurationDraftForTests() => configurationDraft;
+    internal static Action<string, string>? DialogMessageHookForTests;
     private static bool clientLightTheme;
     internal static bool IsClientLightTheme => clientLightTheme;
     internal static Color CurrentSurface => Surface;
@@ -401,7 +407,7 @@ public sealed partial class SettingsWindow : Form
 
         var instructionsLabel = new Label
         {
-            Text = "USB connects automatically — no approval needed.\nFor Wi-Fi, connect CYD to the same network and approve its request below.",
+            Text = "Pierwsze połączenie (zarówno przez USB, jak i Wi-Fi) wymaga jednorazowego zatwierdzenia urządzenia w Windows Agent (poniżej).\nPo zatwierdzeniu urządzenie staje się zaufane i łączy się automatycznie.",
             ForeColor = TextMuted,
             AutoSize = true,
             Padding = new Padding(0, 0, 0, 12),
@@ -2282,9 +2288,76 @@ public sealed partial class SettingsWindow : Form
 
     private async Task ReconnectAsync()
     {
-        AgentDiagnosticLog.Write("Reconnect requested from settings window");
+        var targetPort = configurationDraft is not null
+            ? configurationDraft.Server?.UsbPort
+            : LoadConfiguration().Server?.UsbPort;
+        await ReconnectWithSelectedPortAsync(targetPort);
+    }
+
+    internal async Task ReconnectWithSelectedPortAsync(string? portName)
+    {
+        var targetPort = portName is null or "Automatic" ? null : portName;
+        AgentDiagnosticLog.Write($"Reconnect requested from settings window with port: {targetPort ?? "Automatic"}");
+        if (!PersistConnectionPort(targetPort))
+        {
+            return;
+        }
+
         await runtime.ReconnectAsync();
         ShowPage(currentPage);
+    }
+
+    internal bool PersistConnectionPort(string? usbPort)
+    {
+        AgentConfiguration saved;
+        try
+        {
+            saved = configurationStore.LoadOrDefault();
+        }
+        catch (Exception exception)
+        {
+            if (DialogMessageHookForTests is not null)
+            {
+                DialogMessageHookForTests("Configuration unavailable", exception.Message);
+            }
+            else
+            {
+                MessageBox.Show(this, $"Recover the existing configuration before saving. {exception.GetType().Name}", "Configuration unavailable", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            return false;
+        }
+
+        if (!string.Equals(saved.Server?.UsbPort, usbPort, StringComparison.OrdinalIgnoreCase))
+        {
+            var updatedServer = (saved.Server ?? new ServerConfiguration()) with { UsbPort = usbPort };
+            var candidateToSave = saved with { Server = updatedServer };
+            if (!TrySaveConfiguration(candidateToSave, $"Connection port updated to {usbPort ?? "Automatic"}"))
+            {
+                return false;
+            }
+            saved = candidateToSave;
+        }
+
+        if (configurationDraft is not null)
+        {
+            var updatedDraftServer = (configurationDraft.Server ?? new ServerConfiguration()) with { UsbPort = usbPort };
+            configurationDraft = configurationDraft with { Server = updatedDraftServer };
+
+            var hasPendingAppearance = pendingAppearance is not null || pendingDesktopAppearance is not null;
+            if (!hasPendingAppearance)
+            {
+                var draftJson = AgentConfigurationJson.Serialize(configurationDraft);
+                var savedJson = AgentConfigurationJson.Serialize(saved);
+                if (string.Equals(draftJson, savedJson, StringComparison.Ordinal))
+                {
+                    configurationDirty = false;
+                    configurationDraft = null;
+                    RefreshUnifiedToolbar();
+                }
+            }
+        }
+
+        return true;
     }
 
     private async Task RestartDeviceAsync()
@@ -2813,12 +2886,26 @@ public sealed partial class SettingsWindow : Form
         }
         catch (AgentConfigurationException exception)
         {
-            ShowConfigurationIssues("Configuration is invalid", exception.Issues);
+            if (DialogMessageHookForTests is not null)
+            {
+                DialogMessageHookForTests("Configuration is invalid", string.Join("\n", exception.Issues.Select(i => i.Message)));
+            }
+            else
+            {
+                ShowConfigurationIssues("Configuration is invalid", exception.Issues);
+            }
             return false;
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "Configuration save failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (DialogMessageHookForTests is not null)
+            {
+                DialogMessageHookForTests("Configuration save failed", exception.Message);
+            }
+            else
+            {
+                MessageBox.Show(this, exception.Message, "Configuration save failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
             return false;
         }
     }
