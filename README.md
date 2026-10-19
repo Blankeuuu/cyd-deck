@@ -3,15 +3,15 @@
 <div align="center">
 
 ![Platform](https://img.shields.io/badge/Platform-ESP32--2432S028R-blue?style=flat-square)
-![Firmware](https://img.shields.io/badge/Firmware-v1.3.0-success?style=flat-square)
-![Windows Agent](https://img.shields.io/badge/Windows%20Agent-.NET%2010%20x64-512bd4?style=flat-square)
+[![Firmware](https://img.shields.io/badge/Firmware-v1.3.0-success?style=flat-square)](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0)
+[![Windows Agent](https://img.shields.io/badge/Windows%20Agent-.NET%2010%20x64-512bd4?style=flat-square)](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0)
 ![UI](https://img.shields.io/badge/Graphics-LVGL%209.3-orange?style=flat-square)
-![Web Serial](https://img.shields.io/badge/Web%20Flasher-Ready-teal?style=flat-square)
+[![Web Flasher](https://img.shields.io/badge/Web%20Flasher-Online-teal?style=flat-square)](https://blankeuuu.github.io/cyd-deck/web-installer/)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
 **A touchscreen desktop dock powered by ESP32 ("Cheap Yellow Display") and a companion Windows agent.**
 
-[Overview](#overview) • [Features](#features) • [Firmware Installation](#firmware-installation-cyd-esp32) • [Windows Agent Installation](#windows-agent-installation) • [Building from Source](#building-from-source) • [Documentation](#documentation) • [License](#license)
+[Web Installer (Browser)](https://blankeuuu.github.io/cyd-deck/web-installer/) • [Windows Setup](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0) • [Overview](#overview) • [Features](#features) • [Installation Guide](#firmware-installation-cyd-esp32) • [Documentation](#documentation) • [License](#license)
 
 </div>
 
