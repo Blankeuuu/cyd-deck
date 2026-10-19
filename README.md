@@ -11,7 +11,7 @@
 
 **A touchscreen desktop dock powered by ESP32 ("Cheap Yellow Display") and a companion Windows agent.**
 
-[Web Installer (Browser)](https://blankeuuu.github.io/cyd-deck/web-installer/) • [Windows Setup](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.4.0) • [Overview](#overview) • [Features](#features) • [Installation Guide](#firmware-installation-cyd-esp32) • [Documentation](#documentation) • [License](#license)
+[Web Installer (Browser)](https://blankeuuu.github.io/cyd-deck/web-installer/) • [Windows Setup](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.4.0) • [Overview](#overview) • [Features](#features) • [Installation Guide](#firmware-installation-cyd-esp32) • [Documentation](#documentation) • [Roadmap](#roadmap--todo) • [License](#license)
 
 </div>
 
@@ -157,6 +157,16 @@ dotnet run --project agent/src/WindowsAgent/StreamDeck.WindowsAgent.Tests/Stream
 - [Hardware & Display Guide (ST7789 vs ILI9341)](docs/hardware.md)
 - [Troubleshooting Guide](docs/troubleshooting.md)
 - [Release Notes](docs/releases/)
+
+---
+
+## Roadmap / TODO
+
+- [ ] **Windows SmartScreen & Code Signing** — Eliminate the *"Windows protected your PC"* SmartScreen warning when launching the Windows installer and `CYD-DECK.exe` binary through Authenticode code signing and trusted distribution.
+- [ ] **Seamless In-App Auto-Updates (Agent & Firmware)** — Automatic detection, download, and installation of updates for both the Windows Agent application and the CYD ESP32 firmware directly from GitHub Releases without requiring manual reinstallation.
+- [ ] **Custom 3D-Printable CYD-DECK Enclosure** — Dedicated 3D-printable desktop enclosure and angled stand designed specifically for the ESP32-2432S028R (CYD-DECK) board.
+- [ ] **Album Artwork Reliability (Spotify & Brave)** — Fix recurring cover art extraction and display failures for media sessions originating from desktop Spotify and Chromium/Brave browsers.
+- [ ] **Media Timeline & Progress Bar Synchronization** — Eliminate timeline jitter and stutter loops (e.g., rubberbanding 01s → 02s → 01s → 02s → 06s on CYD display) and resolve missing timeline progress (stuck at 00:00 on YouTube and web video playback) by stabilizing Windows Agent GSMTC timeline polling and CYD local interpolation.
 
 ---
 
