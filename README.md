@@ -9,123 +9,159 @@
 ![Web Serial](https://img.shields.io/badge/Web%20Flasher-Ready-teal?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-**Nowoczesny, dotykowy dock biurkowy oparty na płytce ESP32 „Cheap Yellow Display” (CYD) oraz aplikacji Windows Agent.**
+**A touchscreen desktop dock powered by ESP32 ("Cheap Yellow Display") and a companion Windows agent.**
 
-[⚡ Instalator przeglądarkowy (Web Installer)](#-szybka-instalacja-firmware-przeglądarka) • [💻 Instalator Windows](#-instalacja-windows-agent) • [📖 Dokumentacja](#-architektura-i-dokumentacja) • [🚀 Zmiany w 1.3.0](docs/releases/1.3.0.md)
+[Overview](#overview) • [Features](#features) • [Firmware Installation](#firmware-installation-cyd-esp32) • [Windows Agent Installation](#windows-agent-installation) • [Building from Source](#building-from-source) • [Documentation](#documentation) • [License](#license)
 
 </div>
 
 ---
 
-## 🌟 O projekcie
+## Overview
 
-**CYD-DECK** przekształca tanią i popularną płytkę **ESP32-2432S028R** (ekran dotykowy 2.8" 320×240) w zaawansowaną stację kontrolną PC. Projekt integruje sterowanie multimediami, monitorowanie podzespołów komputera, uruchamianie skrótów klawiszowych, skryptów i aplikacji, oferując spójny interfejs graficzny inspirowany zasadami Apple HIG i Windows 11 Fluent Design.
+**CYD-DECK** turns the affordable and popular **ESP32-2432S028R** development board (2.8" 320x240 touchscreen) into an interactive desktop controller and monitoring station for Windows PCs. It integrates media playback controls, real-time PC hardware monitoring, application hotkeys, macro shortcuts, and system controls into a cohesive graphical interface built with LVGL 9.3 and inspired by Apple HIG and Windows 11 Fluent Design principles.
 
-Komunikacja bazuje na priorytetowym połączeniu **USB-Serial** z automatycznym fallbackiem na **Wi-Fi / WebSocket**, gwarantując zerowe opóźnienia i brak podatności na zakłócenia sieci.
-
----
-
-## ✨ Główne możliwości
-
-### 🖥️ Ekran urządzenia (CYD ESP32)
-- **Ekran domowy (Home)**: Zegar w doku `HH:mm`, dynamiczny format daty, miniaturowy odtwarzacz z okładką albumu w tle oraz 4 powiększone kafelki szybkiego dostępu (148×44 px).
-- **Strona skrótów (Deck)**: Elastyczne układy siatek (1, 2, 4 lub 6 kafelków), symetrycznie wyśrodkowane ikony i etykiety, biblioteka 21 wbudowanych wektorowych glifów oraz obsługa własnych grafik 24×24 px dekodowanych z URL.
-- **Odtwarzacz multimedialny (Media)**: Podgląd tytułu, wykonawcy i albumu, pasek postępu odtwarzania z lokalną interpolacją czasu (odświeżanie co 100 ms), sterowanie odtwarzaniem i głośnością oraz okładki 128×128 zapisywane na karcie microSD.
-- **Monitor zasobów (PC Stats)**: Wykresy w czasie rzeczywistym dla obciążenia CPU, pamięci RAM oraz silników graficznych GPU (agregacja PDH dla układów zintegrowanych i dedykowanych).
-- **Zintegrowane ustawienia**: Kalibracja dotyku, regulacja jasności, wygaszanie ekranu oraz diagnostyka połączenia.
-
-### 🪟 Windows Agent (Aplikacja PC)
-- **Integracja z zasobnikiem (Tray)**: Nowoczesne menu podręczne z bezpośrednim sterowaniem multimediami (Play/Pause, utwory, suwak głośności, Mute) oraz powiadomieniami balonowymi o podłączeniu USB.
-- **Windows 11 DWM Dark Mode**: Spójny ciemny pasek tytułowy okien dialogowych i zaokrąglone narożniki zgodne z systemem.
-- **Nowoczesny Color Picker**: Zaawansowany selektor barw z podglądem na żywo, wprowadzaniem kodów HEX i paletą predefiniowanych akcentów.
-- **Odporność USB**: Automatyczne wykrywanie i obsługa wielu portów COM, bezpieczna izolacja zajętych portów oraz obsługa odłączenia przewodu bez błędów w aplikacji.
-- **Atomowy zapis**: Bezpieczny zapis konfiguracji i profili offline bez ryzyka utraty stanu urządzenia.
+Communication between the PC and the dock utilizes a low-latency **USB-Serial** primary connection with an automatic fallback to **Wi-Fi / WebSocket**, ensuring instant touch response and continuous operation even when physical cables are disconnected.
 
 ---
 
-## ⚡ Szybka instalacja Firmware (Przeglądarka)
+## Features
 
-Najprostszym sposobem wgrania oprogramowania na płytkę CYD jest użycie **instalatora w przeglądarce** (wymaga Google Chrome, Microsoft Edge lub Brave):
+### Device Interface (CYD ESP32)
+- **Home Screen**: Persistent dock clock (`HH:mm`), dynamic date display, compact media player with album art backdrop, and 4 quick-access tiles (148x44 px).
+- **Deck Screen**: Flexible shortcut grids supporting 1, 2, 4, or 6 tiles, symmetrically centered icon and label alignment, built-in library of 21 vector glyphs, and support for custom 24x24 px icons decoded dynamically from web URLs.
+- **Media Player**: Track metadata (title, artist, album), seek timeline with local 100 ms time interpolation, playback and volume controls, and 128x128 album art caching on microSD storage.
+- **PC Resource Monitor**: Real-time telemetry graphs for CPU utilization, RAM usage (in megabytes and percentage), and aggregated GPU engine metrics via Windows PDH.
+- **On-Device Settings**: Touch calibration, backlight brightness control, display sleep timers, and connection diagnostics.
 
-1. Podłącz płytkę CYD kablem USB do komputera.
-2. Wejdź do katalogu projektu i uruchom:
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File scripts/launch-web-flasher.ps1
+### Windows Agent (Companion App)
+- **System Tray Controls**: Context menu media player controls (Play/Pause, Previous/Next track, volume adjustment, Mute) and Windows balloon notifications on device connect/disconnect.
+- **Windows 11 DWM Dark Mode**: Immersive dark titlebars and native rounded corners across all modal dialogs.
+- **Modern Color Picker**: Dedicated dark-theme color selector with live previews, hex code input, RGB sliders, and quick accent presets.
+- **USB Fault Tolerance**: Multi-port COM probing that gracefully handles busy ports and safely recovers from unexpected USB disconnects without application crashes.
+- **Atomic Persistence**: Reliable offline profile configuration and shortcut saves without risking state corruption.
+
+---
+
+## Firmware Installation (CYD ESP32)
+
+CYD-DECK is designed for the **ESP32-2432S028R** board with the **ST7789** display driver (320x240 landscape).
+
+Choose the method that best fits your setup:
+
+### Option 1: Direct Flashing via `esptool.py` (Recommended, No Repository Clone Needed)
+
+If you only want to flash the board without cloning or building the project source code:
+
+1. Download the prebuilt firmware binary from the [v1.3.0 Release](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0):
+   - **First-time install on a new board**: Download `firmware-ST7789-1.3.0-full.bin` (flashed at offset `0x0`).
+   - **Upgrading an existing CYD-DECK**: Download `firmware-ST7789-1.3.0.bin` (flashed at offset `0x10000`, preserves Wi-Fi credentials and pairing).
+2. Connect your CYD board to your computer using a micro-USB cable (verify that your cable supports data transfer, not charge-only).
+3. Install `esptool` (if not already installed):
+   ```bash
+   pip install esptool
    ```
-3. W otwartej karcie przeglądarki kliknij **⚡ Zainstaluj CYD-DECK**, wskaż port COM urządzenia i zatwierdź.
-4. Instalator wgra bootloader, partycje oraz firmware w około 30 sekund!
-
-> Alternatywnie możesz użyć narzędzia `esptool`:
-> ```powershell
-> esptool.py --chip esp32 --port COM5 write_flash 0x10000 artifacts/release-v1.3.0/firmware-ST7789-1.3.0.bin
-> ```
-
----
-
-## 💻 Instalacja Windows Agent
-
-Wybierz jedną z dwóch wygodnych metod:
-
-### 1. Instalator automatyczny (Zalecany)
-Pobierz **`CYD-DECK-Setup-1.3.0-win-x64.exe`** z [Wydania GitHub](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0).
-- Instalacja per-user (nie wymaga uprawnień administratora).
-- Zawiera zintegrowany runtime .NET 10 i biblioteki SkiaSharp.
-- Tworzy wpisy w menu Start oraz opcjonalny skrót na pulpicie.
-- **Czyste i bezpieczne odinstalowanie**: Aplikacja rejestruje się w systemowym aplecie *Aplikacje i funkcje* (Windows Settings), a deinstalator automatycznie zamyka pracujący proces w zasobniku i czyści rejestr autostartu.
-
-### 2. Paczka Portable
-Pobierz **`StreamDeck.WindowsAgent-win-x64.zip`**, wypakuj do dowolnego folderu i uruchom `StreamDeck.WindowsAgent.exe`.
+4. Flash the board:
+   - **First-time installation (merged full image at offset 0x0)**:
+     ```bash
+     esptool.py --chip esp32 --port COM5 --baud 460800 write_flash -z 0x0 firmware-ST7789-1.3.0-full.bin
+     ```
+   - **Upgrade existing device (application image at offset 0x10000)**:
+     ```bash
+     esptool.py --chip esp32 --port COM5 --baud 460800 write_flash -z 0x10000 firmware-ST7789-1.3.0.bin
+     ```
+   *(Replace `COM5` with your actual serial port name, e.g., `/dev/ttyUSB0` on Linux).*
 
 ---
 
-## 🛠️ Budowanie ze źródeł
+### Option 2: Browser Web Installer (Web Serial)
 
-### Wymagania
-- Windows 10/11 x64, PowerShell 5.1+.
-- .NET 10 SDK.
-- PlatformIO (zarządzane lokalnie w `.tools/`).
+If you prefer a graphical in-browser installer:
 
-### Kompilacja Agenta Windows
+1. Clone or download this repository:
+   ```bash
+   git clone https://github.com/Blankeuuu/cyd-deck.git
+   cd cyd-deck
+   ```
+2. Connect your CYD board to your computer via micro-USB.
+3. Open a terminal (PowerShell on Windows) inside the repository folder and run the launcher script:
+   ```powershell
+   .\scripts\launch-web-flasher.ps1
+   ```
+   - **Script location**: [`scripts/launch-web-flasher.ps1`](scripts/launch-web-flasher.ps1)
+   - **What it does**: Starts a lightweight local web server on port 8080 and automatically opens `http://localhost:8080/` in your default browser.
+4. In your browser (Google Chrome, Microsoft Edge, or Brave), click **Install CYD-DECK**, select your board's COM port in the browser prompt, and click **Connect**.
+5. Select **Install CYD-DECK** to write the firmware. The process takes approximately 30 to 45 seconds, after which the device automatically reboots into the CYD-DECK interface.
+
+---
+
+## Windows Agent Installation
+
+The Windows Agent runs as a background companion service with a tray icon and a desktop management window. It requires Windows 10 (version 1809+) or Windows 11 (x64).
+
+### Option 1: Windows Setup Installer (Recommended)
+
+1. Download **`CYD-DECK-Setup-1.3.0-win-x64.exe`** from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0).
+2. Run the installer. It installs the application for the current user into `%LOCALAPPDATA%\Programs\CYD-DECK` without requiring administrator privileges.
+3. The installer bundles the .NET 10 runtime, SkiaSharp graphics engine, and creates Start Menu and optional Desktop shortcuts.
+4. **Clean Uninstallation**: To uninstall, open Windows *Settings > Apps > Installed apps* and click **Uninstall**. The uninstaller automatically terminates any running background tray instance, removes autostart entries, and deletes all program files cleanly without file-in-use errors.
+
+### Option 2: Portable Package
+
+1. Download **`StreamDeck.WindowsAgent-win-x64.zip`** from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0).
+2. Extract the archive into any directory.
+3. Launch `StreamDeck.WindowsAgent.exe`.
+
+---
+
+## Building from Source
+
+### Prerequisites
+- Windows 10/11 x64, PowerShell 5.1+
+- .NET 10 SDK
+- Python 3.10+ and PlatformIO Core
+
+### Build Windows Agent
 ```powershell
-dotnet build agent/src/WindowsAgent/StreamDeck.WindowsAgent/StreamDeck.WindowsAgent.csproj
+dotnet build agent/src/WindowsAgent/StreamDeck.WindowsAgent/StreamDeck.WindowsAgent.csproj -c Release
 ```
 
-### Kompilacja Firmware ESP32
+### Build ESP32 Firmware
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/build-firmware.ps1 run -e cyd28_st7789_app
 ```
 
-### Uruchomienie testów
+### Run Automated Tests
 ```powershell
-# Testy natywne C++ firmware i layoutu
+# Native C++ firmware logic and layout unit tests
 powershell -ExecutionPolicy Bypass -File scripts/test-ui-logic.ps1
 
-# Testy integracyjne i jednostkowe Windows Agenta
+# Windows Agent unit and integration smoke tests
 dotnet run --project agent/src/WindowsAgent/StreamDeck.WindowsAgent.Tests/StreamDeck.WindowsAgent.Tests.csproj
 ```
 
 ---
 
-## 📖 Architektura i dokumentacja
+## Documentation
 
-- [Architektura systemu](docs/architecture.md)
-- [Protokół komunikacji Agent ↔ CYD](docs/protocol.md)
-- [Specyfikacja interfejsu UI](docs/ui.md)
-- [Opis sprzętu i wyświetlaczy (ST7789 vs ILI9341)](docs/hardware.md)
-- [Rozwiązywanie problemów (Troubleshooting)](docs/troubleshooting.md)
-- [Instrukcje i historia wydań](docs/releases/)
-
----
-
-## 📋 Historia wydań
-
-- **[Wydanie 1.3.0](docs/releases/1.3.0.md)** (Bieżące) — Przeglądarkowy instalator Web Serial, integracja zasobnika systemowego z kontrolkami multimediów, DWM Immersive Dark Mode, nowoczesny selektor kolorów, odporność wieloportowa USB i metryki sprzętowe PC.
-- **[Wydanie 1.2.0](docs/releases/1.2.0.md)** — Wyśrodkowane etykiety i ikony, wizualna galeria 21 ikon, dekodowanie grafik URL do RGB565A8, instalator Windows.
-- **[Wydanie 1.1.0](docs/releases/1.1.0.md)** — Pamięć podręczna SD dla okładek, interpolacja osi czasu 100 ms, odświeżony dok nawigacyjny z zegarem HH:mm.
+- [System Architecture](docs/architecture.md)
+- [Agent <-> CYD Protocol Specification](docs/protocol.md)
+- [User Interface Architecture](docs/ui.md)
+- [Hardware & Display Guide (ST7789 vs ILI9341)](docs/hardware.md)
+- [Troubleshooting Guide](docs/troubleshooting.md)
+- [Release Notes](docs/releases/)
 
 ---
 
-## 📄 Licencja
+## Release History
 
-Projekt udostępniany jest na warunkach licencji [MIT](LICENSE).
-Wykorzystane biblioteki zewnętrzne oraz licencje komponentów runtime opisano w pliku `THIRD-PARTY-NOTICES.txt`.
+- **[Release 1.3.0](docs/releases/1.3.0.md)** (Current) - Browser-based Web Serial installer, system tray media and volume controls, Windows 11 DWM immersive dark mode, modern color picker, multi-port USB fault tolerance, and PDH PC hardware metrics.
+- **[Release 1.2.0](docs/releases/1.2.0.md)** - Centered tile button icons and labels, 21-icon visual picker gallery, URL icon decoding to RGB565A8, and Windows Inno Setup installer.
+- **[Release 1.1.0](docs/releases/1.1.0.md)** - MicroSD cache for album art, 100 ms timeline interpolation, and dock navigation bar with persistent clock.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+Third-party component notices and licenses are documented in `THIRD-PARTY-NOTICES.txt`.
