@@ -49,15 +49,29 @@ CYD-DECK is designed for the **ESP32-2432S028R** board with the **ST7789** displ
 
 Choose the method that best fits your setup:
 
-### Option 1: Direct Flashing via `esptool.py` (Recommended, No Repository Clone Needed)
+### Option 1: Online Browser Web Installer (ESP Web Tools - Recommended)
 
-If you only want to flash the board without cloning or building the project source code:
+Flash your board directly from your browser without installing Python, PlatformIO, or extra tools:
 
-1. Download the prebuilt firmware binary from the [v1.3.0 Release](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0):
+1. Open the [CYD-DECK Web Installer](https://blankeuuu.github.io/cyd-deck/web-installer/) in **Google Chrome**, **Microsoft Edge**, or **Brave** on desktop.
+2. Connect your CYD board to your computer using a micro-USB cable (ensure your cable supports data transfer, not charge-only).
+3. Close the Windows Agent or any serial terminal/monitor using the port.
+4. Click **Install Firmware** and select your board's serial port (e.g. `CH340` or `CP2102`).
+5. Confirm installation. The process takes ~30 seconds, after which the device automatically reboots into the CYD-DECK interface.
+
+> *Offline / Local alternative*: You can also run the web installer locally without an internet connection by running `.\scripts\launch-web-flasher.ps1` from PowerShell inside the repository folder.
+
+---
+
+### Option 2: Direct Command Line Flashing via `esptool.py`
+
+If you prefer command-line tools:
+
+1. Download the prebuilt firmware binary from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0):
    - **First-time install on a new board**: Download `firmware-ST7789-1.3.0-full.bin` (flashed at offset `0x0`).
    - **Upgrading an existing CYD-DECK**: Download `firmware-ST7789-1.3.0.bin` (flashed at offset `0x10000`, preserves Wi-Fi credentials and pairing).
-2. Connect your CYD board to your computer using a micro-USB cable (verify that your cable supports data transfer, not charge-only).
-3. Install `esptool` (if not already installed):
+2. Connect your CYD board to your computer using a micro-USB data cable.
+3. Install `esptool` via Python (if not already installed):
    ```bash
    pip install esptool
    ```
@@ -71,27 +85,6 @@ If you only want to flash the board without cloning or building the project sour
      esptool.py --chip esp32 --port COM5 --baud 460800 write_flash -z 0x10000 firmware-ST7789-1.3.0.bin
      ```
    *(Replace `COM5` with your actual serial port name, e.g., `/dev/ttyUSB0` on Linux).*
-
----
-
-### Option 2: Browser Web Installer (Web Serial)
-
-If you prefer a graphical in-browser installer:
-
-1. Clone or download this repository:
-   ```bash
-   git clone https://github.com/Blankeuuu/cyd-deck.git
-   cd cyd-deck
-   ```
-2. Connect your CYD board to your computer via micro-USB.
-3. Open a terminal (PowerShell on Windows) inside the repository folder and run the launcher script:
-   ```powershell
-   .\scripts\launch-web-flasher.ps1
-   ```
-   - **Script location**: [`scripts/launch-web-flasher.ps1`](scripts/launch-web-flasher.ps1)
-   - **What it does**: Starts a lightweight local web server on port 8080 and automatically opens `http://localhost:8080/` in your default browser.
-4. In your browser (Google Chrome, Microsoft Edge, or Brave), click **Install CYD-DECK**, select your board's COM port in the browser prompt, and click **Connect**.
-5. Select **Install CYD-DECK** to write the firmware. The process takes approximately 30 to 45 seconds, after which the device automatically reboots into the CYD-DECK interface.
 
 ---
 

@@ -1,0 +1,16 @@
+{
+  "name": "CYD-DECK",
+  "version": "1.3.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        {
+          "path": "firmware/firmware-ST7789-1.3.0-full.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

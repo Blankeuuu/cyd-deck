@@ -13,7 +13,10 @@ if (-not (Test-Path -LiteralPath $python)) {
     $python = 'python'
 }
 
-$webRoot = Join-Path $repoRoot 'installer\web'
+$webRoot = Join-Path $repoRoot 'web-installer'
+if (-not (Test-Path -LiteralPath $webRoot)) {
+    $webRoot = Join-Path $repoRoot 'installer\web'
+}
 if (-not (Test-Path -LiteralPath $webRoot)) {
     throw "Web installer directory not found: $webRoot"
 }
