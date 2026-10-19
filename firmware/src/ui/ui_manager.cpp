@@ -951,7 +951,9 @@ void closeTouchTest(lv_event_t*) {
 void buildInfoPage() {
   if (settingsDetailsOpen) {
     settingsControl("Back", 8, 4, 64, 44, settingsDetailsClicked);
-    makeLabel(pages[3], "Device status", 84, 14, 224, 24, kText, 20);
+    makeLabel(pages[3], "Device status", 78, 14, 120, 24, kText, 20);
+    settingsControl("Wi-Fi setup", 204, 4, 108, 44, enqueue,
+        reinterpret_cast<void*>(static_cast<intptr_t>(IntentType::OpenSetupPortal)));
     infoFw = deviceDetail("Firmware", 52);
     infoPc = deviceDetail("PC link", 72);
     infoWifi = deviceDetail("Wi-Fi", 92);

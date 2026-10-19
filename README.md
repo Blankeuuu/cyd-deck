@@ -88,6 +88,20 @@ If you prefer command-line tools:
 
 ---
 
+### First Boot & Onboarding
+
+1. **Touch Calibration**: On first power-up, tap each of the 5 calibration targets displayed on the screen and release.
+2. **Connection Selection**:
+   - **USB Cable (Recommended)**: Tap to use the dock directly over USB-Serial cable without Wi-Fi. When connecting a new device for the first time, approve the pairing dialog once in the Windows Agent.
+   - **Wi-Fi Network**: Tap to launch the SoftAP configuration portal (`CYD-Deck-Setup`). Connect with your phone or PC, open `http://192.168.4.1/`, and submit your Wi-Fi SSID and password (no setup password required during initial onboarding).
+   - *Cancel / Switch to USB*: If you decide not to configure Wi-Fi, tap **Use USB instead (No Wi-Fi)** at the bottom of the portal screen to switch to USB mode; this immediately disables Wi-Fi radio and cancels any pending network attempts.
+3. **Changing Connection Later**: You can switch between Wi-Fi and USB anytime directly from the device without performing a factory reset:
+   - Navigate to **Settings (Gear) > Device > Connection & status > Wi-Fi setup** to open the portal.
+   - Tap **Use USB instead (No Wi-Fi)** on the portal screen to switch back to USB mode, turning off the Wi-Fi radio while preserving your saved Wi-Fi credentials for later use.
+   - When accessing the portal over your home LAN after onboarding, the device setup password is required for security.
+
+---
+
 ## Windows Agent Installation
 
 The Windows Agent runs as a background companion service with a tray icon and a desktop management window. It requires Windows 10 (version 1809+) or Windows 11 (x64).

@@ -10,16 +10,36 @@ constexpr uint8_t kDefaultBrightness = 86;
 constexpr uint8_t kMinBrightness = 10;
 constexpr uint8_t kMaxBrightness = 100;
 
+enum class ConnectionChoice : uint8_t {
+  Unset = 0,
+  Usb = 1,
+  Wifi = 2,
+};
+
+enum class SetupPortalMode : uint8_t {
+  FirstSetup = 0,
+  LanSettings = 1,
+};
+
 struct BootState {
-  constexpr BootState(bool calibration, bool provisioning)
-      : calibrationValid(calibration), provisioningComplete(provisioning) {}
+  constexpr BootState(bool calibration, bool provisioning,
+                      ConnectionChoice choice = ConnectionChoice::Unset)
+      : calibrationValid(calibration),
+        provisioningComplete(provisioning),
+        connectionChoice(choice) {}
 
   bool calibrationValid = false;
   bool provisioningComplete = false;
+  ConnectionChoice connectionChoice = ConnectionChoice::Unset;
 };
 
 inline bool needsCalibration(const BootState& state) {
   return !state.calibrationValid;
+}
+
+inline bool needsConnectionChoice(const BootState& state) {
+  return state.calibrationValid && !state.provisioningComplete &&
+         state.connectionChoice == ConnectionChoice::Unset;
 }
 
 inline bool needsProvisioning(const BootState& state) {
@@ -28,6 +48,82 @@ inline bool needsProvisioning(const BootState& state) {
 
 inline bool canStartApp(const BootState& state) {
   return state.calibrationValid && state.provisioningComplete;
+}
+
+inline bool isUsbChoice(const BootState& state) {
+  return state.connectionChoice == ConnectionChoice::Usb;
+}
+
+inline bool isWifiChoice(const BootState& state) {
+  return state.connectionChoice == ConnectionChoice::Wifi;
+}
+
+inline bool isSetupAuthRequired(SetupPortalMode mode) {
+  return mode == SetupPortalMode::LanSettings;
+}
+
+inline SetupPortalMode resolveSetupPortalMode(bool isProvisioningBoot, bool isSoftApInterface) {
+  if (isProvisioningBoot && isSoftApInterface) {
+    return SetupPortalMode::FirstSetup;
+  }
+  return SetupPortalMode::LanSettings;
+}
+
+inline bool shouldRequireSetupAuth(bool isProvisioningBoot, bool isSoftApInterface) {
+  return resolveSetupPortalMode(isProvisioningBoot, isSoftApInterface) == SetupPortalMode::LanSettings;
+}
+
+inline ConnectionChoice resolveInitialConnectionChoice(bool done, uint8_t rawConn, bool hasSsid) {
+  if (rawConn == static_cast<uint8_t>(ConnectionChoice::Usb)) {
+    return ConnectionChoice::Usb;
+  }
+  if (rawConn == static_cast<uint8_t>(ConnectionChoice::Wifi)) {
+    return ConnectionChoice::Wifi;
+  }
+  if (done) {
+    return hasSsid ? ConnectionChoice::Wifi : ConnectionChoice::Usb;
+  }
+  return ConnectionChoice::Unset;
+}
+
+inline bool shouldStartStation(ConnectionChoice choice, bool hasSsid) {
+  return choice != ConnectionChoice::Usb && hasSsid;
+}
+
+inline bool shouldRunWebConfigServer(ConnectionChoice choice, bool hasSsid) {
+  return choice != ConnectionChoice::Usb && hasSsid;
+}
+
+inline bool shouldRunOta(ConnectionChoice choice, bool wifiConnected) {
+  return choice != ConnectionChoice::Usb && wifiConnected;
+}
+
+inline bool validateSetupAuth(SetupPortalMode mode, const char* providedKey,
+                             const char* expectedSecret) {
+  if (mode == SetupPortalMode::FirstSetup) {
+    return true;
+  }
+  if (!providedKey || !expectedSecret || expectedSecret[0] == '\0') {
+    return false;
+  }
+  return std::strcmp(providedKey, expectedSecret) == 0;
+}
+
+inline bool formatDisplayPassword(const char* input, char* output, size_t maxLen) {
+  if (!output || maxLen == 0) return false;
+  output[0] = '\0';
+  if (!input) return false;
+  const size_t len = std::strlen(input);
+  if (len == 16 && maxLen >= 18) {
+    std::memcpy(output, input, 8);
+    output[8] = '\n';
+    std::memcpy(output + 9, input + 8, 8);
+    output[17] = '\0';
+    return true;
+  }
+  if (len >= maxLen) return false;
+  std::memcpy(output, input, len + 1);
+  return true;
 }
 
 inline uint8_t clampBrightness(int value) {

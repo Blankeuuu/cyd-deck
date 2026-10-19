@@ -35,10 +35,11 @@
 namespace {
 using namespace streamdeck;
 
-enum class BootMode : uint8_t { Calibration, Provisioning, App };
+enum class BootMode : uint8_t { Calibration, Choice, Provisioning, App };
 
 struct SetupSettings {
   bool done = false;
+  onboarding::ConnectionChoice connectionChoice = onboarding::ConnectionChoice::Unset;
   String deviceName;
   String apSsid;
   String setupPassword;
@@ -122,6 +123,13 @@ void startWebConfigServer(bool provisioningMode);
 void servicePendingSetupResult();
 void sendHttp(WiFiClient& client, int status, const char* statusText,
               const char* contentType, const String& body);
+void startChoiceScreen();
+void buildChoiceUi();
+void chooseUsbMode();
+void chooseWifiMode();
+void startAppUi();
+void startSetupPortal();
+void stopSetupPortal();
 
 void appLogLine(const char* message) {
   if (kUsbProtocolEnabled && bootMode == BootMode::App) return;
@@ -257,6 +265,7 @@ void persistCalibration() {
 void loadSetupSettings() {
   prefs.begin("setup", false);
   setupSettings.done = prefs.getBool("done", false);
+  const uint8_t rawConn = prefs.getUChar("conn", 0);
   setupSettings.deviceName = prefs.getString("name", "");
   setupSettings.apSsid = prefs.getString("apssid", "");
   setupSettings.setupPassword = prefs.getString("secret", "");
@@ -265,6 +274,12 @@ void loadSetupSettings() {
   setupSettings.agentIp = prefs.getString("agentip", "");
   setupSettings.brightness = onboarding::clampBrightness(
       prefs.getUChar("bright", onboarding::kDefaultBrightness));
+
+  setupSettings.connectionChoice = onboarding::resolveInitialConnectionChoice(
+      setupSettings.done, rawConn, setupSettings.wifiSsid.length() > 0);
+  if (rawConn == 0 && setupSettings.done) {
+    prefs.putUChar("conn", static_cast<uint8_t>(setupSettings.connectionChoice));
+  }
 
   if (!onboarding::validDeviceName(setupSettings.deviceName.c_str())) {
     setupSettings.deviceName = makeDefaultDeviceName();
@@ -397,14 +412,41 @@ void persistSuccessfulSetup() {
   prefs.putString("ssid", pendingSetup.ssid);
   prefs.putString("pass", pendingSetup.password);
   prefs.putBool("done", true);
+  prefs.putUChar("conn", static_cast<uint8_t>(onboarding::ConnectionChoice::Wifi));
   prefs.end();
 
   setupSettings.done = true;
+  setupSettings.connectionChoice = onboarding::ConnectionChoice::Wifi;
   setupSettings.deviceName = pendingSetup.deviceName;
   setupSettings.brightness = pendingSetup.brightness;
   setupSettings.agentIp = pendingSetup.agentIp;
   setupSettings.wifiSsid = pendingSetup.ssid;
   setupSettings.wifiPassword = pendingSetup.password;
+}
+
+void chooseUsbMode() {
+  pendingSetup.active = false;
+  setupStatusLabel = nullptr;
+  setupQrNeedsDraw = false;
+  stopSetupPortal();
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_OFF);
+  stationConnectStarted = false;
+
+  prefs.begin("setup", false);
+  prefs.putBool("done", true);
+  prefs.putUChar("conn", static_cast<uint8_t>(onboarding::ConnectionChoice::Usb));
+  prefs.end();
+
+  setupSettings.done = true;
+  setupSettings.connectionChoice = onboarding::ConnectionChoice::Usb;
+  appLogLine("[SETUP] USB mode selected; Wi-Fi disabled");
+  startAppUi();
+}
+
+void chooseWifiMode() {
+  setupSettings.connectionChoice = onboarding::ConnectionChoice::Wifi;
+  startSetupPortal();
 }
 
 void restorePreviousNetwork() {
@@ -439,7 +481,7 @@ String setupQrPayload() {
 void drawSetupQr() {
   if (bootMode != BootMode::Provisioning || !setupPortalActive) return;
   const String payload = setupQrPayload();
-  display.qrcode(payload.c_str(), 175, 28, 120, 6, true);
+  display.qrcode(payload.c_str(), 175, 16, 120, 6, true);
   setupQrNeedsDraw = false;
 }
 
@@ -448,10 +490,15 @@ void startAppUi() {
   bootMode = BootMode::App;
   calibrating = false;
   setupUiBuilt = false;
-  if (!setupPortalActive && setupSettings.wifiSsid.length() > 0) {
+  setupStatusLabel = nullptr;
+  setupQrNeedsDraw = false;
+  if (!setupPortalActive && onboarding::shouldRunWebConfigServer(
+          setupSettings.connectionChoice, setupSettings.wifiSsid.length() > 0)) {
     startWebConfigServer(false);
   }
   if (!appUiStarted) {
+    setupStatusLabel = nullptr;
+    setupQrNeedsDraw = false;
     lv_obj_clean(lv_scr_act());
     uiBegin(state, intents);
     appUiStarted = true;
@@ -592,7 +639,7 @@ void factoryResetDevice() {
 
 void serviceOtaUpdate() {
   if (bootMode != BootMode::App || otaConfigured || !setupSettings.done ||
-      WiFi.status() != WL_CONNECTED) {
+      !onboarding::shouldRunOta(setupSettings.connectionChoice, WiFi.status() == WL_CONNECTED)) {
     if (otaUpdate.started()) otaUpdate.loop();
     return;
   }
@@ -625,7 +672,10 @@ void startWebConfigServer(bool provisioningMode) {
 }
 
 void startStationIfConfigured() {
-  if (stationConnectStarted || setupSettings.wifiSsid.length() == 0) return;
+  if (stationConnectStarted || !onboarding::shouldStartStation(
+          setupSettings.connectionChoice, setupSettings.wifiSsid.length() > 0)) {
+    return;
+  }
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
@@ -635,11 +685,13 @@ void startStationIfConfigured() {
       setupSettings.deviceName.c_str());
 }
 
-String buildSetupPage(const char* message) {
+String buildSetupPage(const char* message, bool lanMode = false) {
   String html;
   html.reserve(5000);
   html += F("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>");
-  html += F("<title>CYD Stream Deck setup</title><style>body{font-family:system-ui;margin:24px;background:#101216;color:#f3f5f7}label{display:block;margin-top:14px}.card{max-width:460px;margin:auto}.hint{color:#a3abb7}input{width:100%;box-sizing:border-box;padding:10px;margin-top:5px;border-radius:8px;border:1px solid #555;background:#1c2026;color:#fff}button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:8px;background:#7eafe3;color:#101216;font-weight:700}</style></head><body><main class='card'>");
+  html += F("<title>CYD Stream Deck ");
+  html += lanMode ? F("Settings") : F("Setup");
+  html += F("</title><style>body{font-family:system-ui;margin:24px;background:#101216;color:#f3f5f7}label{display:block;margin-top:14px}.card{max-width:460px;margin:auto}.hint{color:#a3abb7}input{width:100%;box-sizing:border-box;padding:10px;margin-top:5px;border-radius:8px;border:1px solid #555;background:#1c2026;color:#fff}button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:8px;background:#7eafe3;color:#101216;font-weight:700}</style></head><body><main class='card'>");
   html += F("<h1>CYD Stream Deck</h1>");
   if (message && message[0]) {
     html += F("<p class='hint'>");
@@ -651,8 +703,12 @@ String buildSetupPage(const char* message) {
     html += F("</p>");
   }
   html += F("<form method='post' action='/save'>");
-  html += F("<label>Setup password<input name='key' type='password' required></label>");
-  html += F("<label>Wi-Fi SSID<input name='ssid' maxlength='32' required></label>");
+  if (lanMode) {
+    html += F("<label>Setup password<input name='key' type='password' required></label>");
+  }
+  html += F("<label>Wi-Fi SSID<input name='ssid' maxlength='32' value='");
+  html += htmlEscape(setupSettings.wifiSsid);
+  html += F("' required></label>");
   html += F("<label>Wi-Fi password<input name='pass' type='password' maxlength='63'></label>");
   html += F("<label>Device name<input name='name' maxlength='31' value='");
   html += htmlEscape(setupSettings.deviceName);
@@ -664,7 +720,11 @@ String buildSetupPage(const char* message) {
   html += htmlEscape(setupSettings.agentIp);
   html += F("'></label>");
   html += F("<button type='submit'>Save and connect</button></form>");
-  html += F("<p class='hint'>Wi-Fi settings are saved only after this device connects successfully.</p>");
+  if (lanMode) {
+    html += F("<p class='hint'>Changes are verified and saved. Setup password is required for LAN security.</p>");
+  } else {
+    html += F("<p class='hint'>Wi-Fi settings are saved only after this device connects successfully.</p>");
+  }
   html += F("</main></body></html>");
   return html;
 }
@@ -733,7 +793,7 @@ void sendRedirect(WiFiClient& client) {
   client.println();
 }
 
-void handleSetupSave(WiFiClient& client, const String& body) {
+void handleSetupSave(WiFiClient& client, const String& body, bool isLanMode) {
   const String key = formValue(body, "key");
   const String ssid = formValue(body, "ssid");
   const String pass = formValue(body, "pass");
@@ -741,9 +801,12 @@ void handleSetupSave(WiFiClient& client, const String& body) {
   const String agentIp = formValue(body, "agentip");
   const int brightness = formValue(body, "bright").toInt();
 
-  if (key != setupSettings.setupPassword) {
-    sendHttp(client, 403, "Forbidden", "text/html",
-        buildSetupPage("Wrong setup password."));
+  const onboarding::SetupPortalMode portalMode = isLanMode
+      ? onboarding::SetupPortalMode::LanSettings
+      : onboarding::SetupPortalMode::FirstSetup;
+  if (!onboarding::validateSetupAuth(portalMode, key.c_str(), setupSettings.setupPassword.c_str())) {
+    sendHttp(client, 401, "Unauthorized", "text/html",
+        buildSetupPage("Authentication required: wrong setup password.", isLanMode));
     return;
   }
   if (!onboarding::validSsid(ssid.c_str()) ||
@@ -751,12 +814,12 @@ void handleSetupSave(WiFiClient& client, const String& body) {
       !onboarding::validDeviceName(name.c_str()) ||
       !onboarding::validIpv4OrEmpty(agentIp.c_str())) {
     sendHttp(client, 400, "Bad Request", "text/html",
-        buildSetupPage("Check SSID, password length, device name, and agent IP."));
+        buildSetupPage("Check SSID, password length, device name, and agent IP.", isLanMode));
     return;
   }
 
   pendingSetup.active = true;
-  pendingSetup.fromAppMode = bootMode == BootMode::App;
+  pendingSetup.fromAppMode = (bootMode == BootMode::App);
   pendingSetup.ssid = ssid;
   pendingSetup.password = pass;
   pendingSetup.deviceName = name;
@@ -775,7 +838,7 @@ void handleSetupSave(WiFiClient& client, const String& body) {
   WiFi.begin(pendingSetup.ssid.c_str(), pendingSetup.password.c_str());
   setSetupStatus("Testing Wi-Fi credentials...");
   sendHttp(client, 202, "Accepted", "text/html",
-      buildSetupPage("Testing Wi-Fi credentials. Refresh this page for the result."));
+      buildSetupPage("Testing Wi-Fi credentials. Refresh this page for the result.", isLanMode));
   appLogLine("[SETUP] Wi-Fi credentials received; testing connection");
 }
 
@@ -814,14 +877,21 @@ void serviceSetupHttp() {
   const int bodyAt = request.indexOf("\r\n\r\n");
   const String body = bodyAt >= 0 ? request.substring(bodyAt + 4) : "";
 
+  const bool isSoftAp = (client.localIP() == WiFi.softAPIP());
+  const bool isLanMode = onboarding::shouldRequireSetupAuth(
+      bootMode == BootMode::Provisioning, isSoftAp);
   if (firstLine.startsWith("GET / ") || firstLine.startsWith("GET /?")) {
-    sendHttp(client, 200, "OK", "text/html", buildSetupPage(""));
+    sendHttp(client, 200, "OK", "text/html", buildSetupPage("", isLanMode));
   } else if (firstLine.startsWith("POST /save ")) {
-    handleSetupSave(client, body);
+    handleSetupSave(client, body, isLanMode);
   } else {
     sendRedirect(client);
   }
   client.stop();
+}
+
+void onSetupUseUsbClicked(lv_event_t*) {
+  chooseUsbMode();
 }
 
 void buildSetupUi() {
@@ -832,29 +902,112 @@ void buildSetupUi() {
   lv_obj_set_style_bg_color(screen, lv_color_hex(kSetupBg), 0);
   lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
 
-  makeLabel(screen, "FIRST SETUP", 12, 8, 142, 22, kSetupMuted,
+  makeLabel(screen, "WI-FI SETUP", 12, 6, 150, 18, kSetupMuted,
       &lv_font_montserrat_14);
-  makeLabel(screen, setupSettings.apSsid.c_str(), 12, 30, 142, 26, kSetupText,
+  makeLabel(screen, setupSettings.apSsid.c_str(), 12, 24, 150, 20, kSetupText,
       &lv_font_montserrat_16);
-  makeLabel(screen, "Password", 12, 62, 142, 18, kSetupMuted,
+  makeLabel(screen, "AP Password", 12, 44, 150, 16, kSetupMuted,
       &lv_font_montserrat_14);
-  makeLabel(screen, setupSettings.setupPassword.c_str(), 12, 82, 142, 24,
-      kSetupAccent, &lv_font_montserrat_16);
-  makeLabel(screen, "Open 192.168.4.1", 12, 114, 142, 20, kSetupMuted,
+
+  char dispPass[24]{};
+  onboarding::formatDisplayPassword(setupSettings.setupPassword.c_str(), dispPass, sizeof(dispPass));
+  lv_obj_t* lblPass = makeLabel(screen, dispPass, 12, 60, 150, 36,
+      kSetupAccent, &lv_font_montserrat_14);
+  lv_label_set_long_mode(lblPass, LV_LABEL_LONG_WRAP);
+
+  makeLabel(screen, "Open 192.168.4.1", 12, 98, 150, 16, kSetupMuted,
       &lv_font_montserrat_14);
-  setupStatusLabel = makeLabel(screen, "Scan QR or join AP", 12, 201, 296, 22,
+  setupStatusLabel = makeLabel(screen, "Scan QR or join AP", 12, 116, 150, 18,
       kSetupText, &lv_font_montserrat_14);
 
   lv_obj_t* panel = lv_obj_create(screen);
-  setBounds(panel, 169, 20, 132, 132);
+  setBounds(panel, 169, 10, 132, 132);
   lv_obj_set_style_bg_color(panel, lv_color_hex(kSetupPanel), 0);
   lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(panel, 0, 0);
   lv_obj_set_style_radius(panel, 8, 0);
   setupQrNeedsDraw = true;
 
-  makeLabel(screen, "Portal is protected by the setup password.", 12, 166, 296,
-      20, kSetupMuted, &lv_font_montserrat_14);
+  makeLabel(screen, "Enter target Wi-Fi SSID & password in portal.", 12, 148, 296,
+      18, kSetupMuted, &lv_font_montserrat_14);
+
+  lv_obj_t* btnUsbFallback = lv_btn_create(screen);
+  setBounds(btnUsbFallback, 12, 172, 296, 44);
+  lv_obj_set_style_bg_color(btnUsbFallback, lv_color_hex(kSetupPanel), 0);
+  lv_obj_set_style_bg_opa(btnUsbFallback, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(btnUsbFallback, lv_color_hex(kSetupAccent), 0);
+  lv_obj_set_style_border_width(btnUsbFallback, 1, 0);
+  lv_obj_set_style_radius(btnUsbFallback, 8, 0);
+  lv_obj_add_event_cb(btnUsbFallback, onSetupUseUsbClicked, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* btnLbl = lv_label_create(btnUsbFallback);
+  lv_label_set_text(btnLbl, "Use USB instead (No Wi-Fi)");
+  lv_obj_set_style_text_color(btnLbl, lv_color_hex(kSetupText), 0);
+  lv_obj_set_style_text_font(btnLbl, &lv_font_montserrat_14, 0);
+  lv_obj_center(btnLbl);
+}
+
+void onUsbChoiceClicked(lv_event_t*) {
+  chooseUsbMode();
+}
+
+void onWifiChoiceClicked(lv_event_t*) {
+  chooseWifiMode();
+}
+
+void buildChoiceUi() {
+  setupUiBuilt = true;
+  lv_obj_t* screen = lv_scr_act();
+  lv_obj_clean(screen);
+  setBounds(screen, 0, 0, board::screenWidth, board::screenHeight);
+  lv_obj_set_style_bg_color(screen, lv_color_hex(kSetupBg), 0);
+  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+
+  makeLabel(screen, "FIRST SETUP", 16, 8, 288, 18, kSetupMuted,
+      &lv_font_montserrat_14);
+  makeLabel(screen, "Choose connection mode:", 16, 28, 288, 22, kSetupText,
+      &lv_font_montserrat_16);
+
+  lv_obj_t* btnUsb = lv_btn_create(screen);
+  setBounds(btnUsb, 16, 56, 288, 64);
+  lv_obj_set_style_bg_color(btnUsb, lv_color_hex(kSetupPanel), 0);
+  lv_obj_set_style_bg_opa(btnUsb, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(btnUsb, lv_color_hex(kSetupAccent), 0);
+  lv_obj_set_style_border_width(btnUsb, 2, 0);
+  lv_obj_set_style_radius(btnUsb, 10, 0);
+  lv_obj_add_event_cb(btnUsb, onUsbChoiceClicked, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* lblUsb = lv_label_create(btnUsb);
+  lv_label_set_text(lblUsb, "USB Cable (Recommended)\nNo Wi-Fi. Approve in Windows Agent.");
+  setBounds(lblUsb, 12, 12, 264, 40);
+  lv_obj_set_style_text_color(lblUsb, lv_color_hex(kSetupText), 0);
+  lv_obj_set_style_text_font(lblUsb, &lv_font_montserrat_14, 0);
+
+  lv_obj_t* btnWifi = lv_btn_create(screen);
+  setBounds(btnWifi, 16, 130, 288, 64);
+  lv_obj_set_style_bg_color(btnWifi, lv_color_hex(kSetupPanel), 0);
+  lv_obj_set_style_bg_opa(btnWifi, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(btnWifi, lv_color_hex(0x30363D), 0);
+  lv_obj_set_style_border_width(btnWifi, 1, 0);
+  lv_obj_set_style_radius(btnWifi, 10, 0);
+  lv_obj_add_event_cb(btnWifi, onWifiChoiceClicked, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* lblWifi = lv_label_create(btnWifi);
+  lv_label_set_text(lblWifi, "Wi-Fi Network\nOpen SoftAP portal to configure network.");
+  setBounds(lblWifi, 12, 12, 264, 40);
+  lv_obj_set_style_text_color(lblWifi, lv_color_hex(kSetupText), 0);
+  lv_obj_set_style_text_font(lblWifi, &lv_font_montserrat_14, 0);
+
+  makeLabel(screen, "You can change this anytime on the device.", 16, 204, 288,
+      18, kSetupMuted, &lv_font_montserrat_14);
+}
+
+void startChoiceScreen() {
+  bootMode = BootMode::Choice;
+  appUiStarted = false;
+  setupUiBuilt = false;
+  buildChoiceUi();
+  appLogLine("[SETUP] connection mode choice screen displayed");
 }
 
 void startSetupPortal() {
@@ -897,14 +1050,18 @@ void beginCalibration() {
   calibrating = true;
   calibrationStep = 0;
   calibrationArmed = false;
+  appUiStarted = false;
   calibrationScreen();
   appLogLine("[APP] tap each calibration target and release");
 }
 
 void afterCalibrationComplete() {
   calibrating = false;
-  const onboarding::BootState bootState{calibration.valid, setupSettings.done};
-  if (onboarding::needsProvisioning(bootState)) {
+  const onboarding::BootState bootState{
+      calibration.valid, setupSettings.done, setupSettings.connectionChoice};
+  if (onboarding::needsConnectionChoice(bootState)) {
+    startChoiceScreen();
+  } else if (onboarding::needsProvisioning(bootState)) {
     startSetupPortal();
   } else {
     startStationIfConfigured();
@@ -960,36 +1117,38 @@ void readTouch(lv_indev_t*, lv_indev_data_t* data) {
     return;
   }
 
-  if (bootMode != BootMode::App || !calibration.valid) {
+  if (!calibration.valid) {
     data->state = LV_INDEV_STATE_RELEASED;
     data->point.x = 0;
     data->point.y = 0;
     return;
   }
 
-  if (isDown && (displayOff || displayDimmed) && state.appearance.wakeOnTouch) {
-    markUserInput();
-    consumeWakeTouch = true;
-    down = true;
-    data->state = LV_INDEV_STATE_RELEASED;
-    data->point.x = -1;
-    data->point.y = -1;
-    return;
-  }
-
-  if (consumeWakeTouch) {
-    if (!isDown) {
-      consumeWakeTouch = false;
-      down = false;
+  if (bootMode == BootMode::App) {
+    if (isDown && (displayOff || displayDimmed) && state.appearance.wakeOnTouch) {
+      markUserInput();
+      consumeWakeTouch = true;
+      down = true;
+      data->state = LV_INDEV_STATE_RELEASED;
+      data->point.x = -1;
+      data->point.y = -1;
+      return;
     }
-    data->state = LV_INDEV_STATE_RELEASED;
-    data->point.x = -1;
-    data->point.y = -1;
-    return;
+
+    if (consumeWakeTouch) {
+      if (!isDown) {
+        consumeWakeTouch = false;
+        down = false;
+      }
+      data->state = LV_INDEV_STATE_RELEASED;
+      data->point.x = -1;
+      data->point.y = -1;
+      return;
+    }
   }
 
   if (isDown) {
-    if (!down) markUserInput();
+    if (!down && bootMode == BootMode::App) markUserInput();
     touchcal::Point pt = touchcal::map(calibration, {
         static_cast<float>(sample.x),
         static_cast<float>(sample.y)
@@ -997,7 +1156,9 @@ void readTouch(lv_indev_t*, lv_indev_data_t* data) {
     pt = touchcal::rotate180(pt, board::screenWidth, board::screenHeight);
     const int x = constrain(static_cast<int>(pt.x), 0, board::screenWidth - 1);
     const int y = constrain(static_cast<int>(pt.y), 0, board::screenHeight - 1);
-    uiReportTouch(x, y);
+    if (bootMode == BootMode::App) {
+      uiReportTouch(x, y);
+    }
     lastX = x;
     lastY = y;
     data->state = LV_INDEV_STATE_PRESSED;
@@ -1029,6 +1190,9 @@ void handleIntent(const Intent& intent) {
       break;
     case IntentType::FactoryReset:
       factoryResetDevice();
+      break;
+    case IntentType::OpenSetupPortal:
+      startSetupPortal();
       break;
     case IntentType::SettingsUpdated:
       persistAppearanceSettings();
@@ -1208,11 +1372,15 @@ void appBegin() {
 #if defined(WOKWI_SIMULATOR)
   calibration.valid = true;
   setupSettings.done = true;
+  setupSettings.connectionChoice = onboarding::ConnectionChoice::Usb;
   appLogLine("[WOKWI] booting app preview; touch and onboarding are not simulated");
 #endif
-  const onboarding::BootState bootState{calibration.valid, setupSettings.done};
+  const onboarding::BootState bootState{
+      calibration.valid, setupSettings.done, setupSettings.connectionChoice};
   if (onboarding::needsCalibration(bootState)) {
     beginCalibration();
+  } else if (onboarding::needsConnectionChoice(bootState)) {
+    startChoiceScreen();
   } else if (onboarding::needsProvisioning(bootState)) {
     startSetupPortal();
   } else {

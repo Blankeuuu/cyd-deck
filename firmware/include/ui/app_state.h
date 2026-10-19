@@ -13,7 +13,7 @@ namespace streamdeck {
 constexpr std::size_t kMaxShortcutIdLength = 64;
 constexpr uint8_t kPageCount = 4;
 enum class Page : uint8_t { Media = 0, Shortcuts = 1, Pc = 2, Info = 3, Home = 4 };
-enum class IntentType : uint8_t { Previous, TogglePlayback, Next, SetVolume, RunShortcut, Recalibrate, RestartDevice, FactoryReset, SettingsUpdated, RefreshUi, ShortcutsUpdated, ToggleMute, TestTouch, SetBrightness };
+enum class IntentType : uint8_t { Previous, TogglePlayback, Next, SetVolume, RunShortcut, Recalibrate, RestartDevice, FactoryReset, SettingsUpdated, RefreshUi, ShortcutsUpdated, ToggleMute, TestTouch, SetBrightness, OpenSetupPortal };
 struct Intent { IntentType type; int16_t value; constexpr Intent(IntentType t = IntentType::Previous, int16_t v = 0) : type(t), value(v) {} };
 struct MediaState { char title[48] = "No track"; char artist[48] = "Waiting for PC"; char album[48] = ""; char coverId[kCoverIdLength + 1] = ""; CoverFetchState cover; uint32_t positionMs = 0; uint32_t durationMs = 0; bool playing = false; uint32_t timelineAtMs = 0; bool timelineAnchored = false; };
 inline uint32_t mediaPositionAt(const MediaState& media, uint32_t nowMs) {
