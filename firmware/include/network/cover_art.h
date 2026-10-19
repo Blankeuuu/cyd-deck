@@ -43,6 +43,23 @@ inline bool makeCoverRequestPath(const char* coverId, char* out, std::size_t out
   return written > 0 && static_cast<std::size_t>(written) < outSize;
 }
 
+// Late chunks/completions must not change a newer request or reopen a finished one.
+inline bool acceptsCoverTransfer(const CoverFetchState& state, const char* coverId) {
+  return state.status == CoverStatus::Pending && isValidCoverId(coverId) &&
+      std::strcmp(state.requestedId, coverId) == 0;
+}
+
+// SdStorage::appendCoverTemp owns the byte counter. Validate the response bounds
+// before writing and require exactly one increment after a successful append.
+template <typename Append>
+inline bool appendCountedCoverChunk(std::size_t& received, std::size_t total,
+                                    std::size_t length, Append append) {
+  if (total == 0 || total > kMaxCoverBytes || length == 0 ||
+      received > total || length > total - received) return false;
+  const std::size_t expected = received + length;
+  return append() && received == expected;
+}
+
 inline uint16_t swapRgb565Bytes(uint16_t value) {
   return static_cast<uint16_t>((value >> 8) | (value << 8));
 }

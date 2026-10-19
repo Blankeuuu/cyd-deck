@@ -4,6 +4,21 @@
 
 namespace streamdeck::protocol {
 
+// Compare elapsed time, not absolute millis() deadlines (which wrap at ~49.7 days).
+class RetryTimer {
+ public:
+  bool ready(uint32_t nowMs) const { return nowMs - startedAtMs_ >= delayMs_; }
+  void schedule(uint32_t nowMs, uint32_t delayMs) {
+    startedAtMs_ = nowMs;
+    delayMs_ = delayMs;
+  }
+  void reset() { delayMs_ = 0; }
+
+ private:
+  uint32_t startedAtMs_ = 0;
+  uint32_t delayMs_ = 0;
+};
+
 enum class AgentEndpointSource {
   None,
   Manual,

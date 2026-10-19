@@ -11,6 +11,7 @@
 #include "network/agent_discovery.h"
 #include "network/agent_protocol.h"
 #include "network/cover_art.h"
+#include "network/pc_metrics.h"
 #include "network/usb_agent_protocol.h"
 #include "storage/sd_paths.h"
 
@@ -254,8 +255,8 @@ class AgentClient::Impl {
     }
     if (wifiSuspended_) {
       wifiSuspended_ = false;
-      nextAttemptAt_ = 0;
-      nextMdnsAt_ = 0;
+      connectRetry_.reset();
+      mdnsRetry_.reset();
       backoffMs_ = kInitialBackoffMs;
     }
 
@@ -266,7 +267,7 @@ class AgentClient::Impl {
       publishConnectionState();
       maybeUsbHeartbeat();
       maybeSendUsbDeviceInfo();
-      nextAttemptAt_ = millis() + kInitialBackoffMs;
+      connectRetry_.schedule(millis(), kInitialBackoffMs);
       return;
     }
 
@@ -336,6 +337,7 @@ class AgentClient::Impl {
     const bool wifiOnline = connected_ && authorized_;
     const bool agentOnline = wifiOnline || usbAuthorized_;
     state_->connection.agentConnected = agentOnline;
+    if (!agentOnline) state_->system.pcStatsReceived = false;
     state_->connection.online = agentOnline;
     copyText(state_->connection.agentHost, sizeof(state_->connection.agentHost),
         usbAuthorized_ ? "usb" : host_.c_str(), "");
@@ -344,7 +346,7 @@ class AgentClient::Impl {
   void maybeConnect() {
     if (connected_) return;
     const uint32_t now = millis();
-    if (now < nextAttemptAt_) return;
+    if (!connectRetry_.ready(now)) return;
 
     const AgentEndpoint endpoint = discoverEndpoint();
     if (endpoint.host.length() == 0 || endpoint.port == 0) {
@@ -365,7 +367,7 @@ class AgentClient::Impl {
       handleEvent(type, payload, length);
     });
     host_ = endpoint.host;
-    nextAttemptAt_ = now + backoffMs_;
+    connectRetry_.schedule(now, backoffMs_);
     logf("[NET] connecting to agent %s:%u%s\n",
         endpoint.host.c_str(), endpoint.port, protocol::kWebSocketPath);
   }
@@ -383,8 +385,8 @@ class AgentClient::Impl {
     const uint32_t now = millis();
     String mdnsHost;
     uint16_t mdnsPort = 0;
-    if (now >= nextMdnsAt_) {
-      nextMdnsAt_ = now + kMdnsRetryMs;
+    if (mdnsRetry_.ready(now)) {
+      mdnsRetry_.schedule(now, kMdnsRetryMs);
       if (!mdnsStarted_) {
         mdnsStarted_ = MDNS.begin(config_.deviceId.c_str());
       }
@@ -404,7 +406,7 @@ class AgentClient::Impl {
   }
 
   void scheduleRetry() {
-    nextAttemptAt_ = millis() + backoffMs_;
+    connectRetry_.schedule(millis(), backoffMs_);
     backoffMs_ = std::min<uint32_t>(backoffMs_ * 2, kMaxBackoffMs);
     if (state_) state_->connection.online = false;
     if (state_) state_->connection.agentConnected = false;
@@ -545,20 +547,13 @@ class AgentClient::Impl {
     }
     if (type == protocol::kSystemStats) {
       if (state_) {
-        state_->system.cpuPercent = clampPercent(integerField(payload, length, "cpuPercent", state_->system.cpuPercent), 0, 100);
-        state_->system.ramPercent = clampPercent(integerField(payload, length, "memoryPercent", state_->system.ramPercent), 0, 100);
-        state_->system.gpuPercent = clampPercent(integerField(payload, length, "gpuPercent", state_->system.gpuPercent), 0, 100);
-        state_->system.tempCelsius = static_cast<uint8_t>(constrain(integerField(payload, length, "tempCelsius", state_->system.tempCelsius), 0, 120));
+        protocol::applyPcMetricsJson(state_->system, payload, length, millis());
         if (hasField(payload, length, "hostDate")) copyText(state_->system.hostDate, sizeof(state_->system.hostDate), quotedField(payload, length, "hostDate").c_str(), "");
         const long hostMinutes = integerField(payload, length, "hostLocalMinutes", -1);
         if (hostMinutes >= 0 && hostMinutes < 1440) {
           state_->system.hostLocalMinutes = static_cast<int16_t>(hostMinutes);
           state_->system.hostTimeSyncedAtSec = millis() / 1000;
         }
-        const long usedBytes = integerField(payload, length, "memoryUsedBytes", -1);
-        const long totalBytes = integerField(payload, length, "memoryTotalBytes", -1);
-        if (usedBytes >= 0) state_->system.ramUsedMb = static_cast<uint32_t>(usedBytes / (1024L * 1024L));
-        if (totalBytes >= 0) state_->system.ramTotalMb = static_cast<uint32_t>(totalBytes / (1024L * 1024L));
         if (intents_) intents_->push({IntentType::RefreshUi, 0});
       }
       return;
@@ -583,6 +578,9 @@ class AgentClient::Impl {
     copyText(state_->media.album, sizeof(state_->media.album), album.c_str(), "");
     copyText(state_->media.coverId, sizeof(state_->media.coverId), coverId.c_str(), "");
     const CoverTransition transition = updateCoverFetch(state_->media.cover, state_->media.coverId, millis());
+    if (transition == CoverTransition::Requested || transition == CoverTransition::Cleared) {
+      resetUsbCoverTransfer();
+    }
     if (transition == CoverTransition::Requested) {
       const bool cached = storage_ && config_.renderCover && config_.renderCover(state_->media.coverId, *state_);
       if (cached) {
@@ -716,9 +714,10 @@ class AgentClient::Impl {
               std::min<int>(static_cast<int>(sizeof(buffer)), contentLength - static_cast<int>(received)));
           const int read = client.read(buffer, want);
           if (read <= 0) break;
-          if (!storage_->appendCoverTemp(out, buffer, static_cast<std::size_t>(read), received)) break;
-          if (!usb::accountBoundedBytes(received, static_cast<std::size_t>(contentLength),
-                  static_cast<std::size_t>(read))) break;
+          if (!appendCountedCoverChunk(received, static_cast<std::size_t>(contentLength),
+                  static_cast<std::size_t>(read), [&]() {
+                    return storage_->appendCoverTemp(out, buffer, static_cast<std::size_t>(read), received);
+                  })) break;
         }
         if (out) {
           out.flush();
@@ -891,8 +890,9 @@ class AgentClient::Impl {
   }
 
   void handleCoverChunk(const char* payload, size_t length) {
-    if (!storage_) return;
+    if (!storage_ || !state_) return;
     const String coverId = quotedField(payload, length, "coverId");
+    if (!acceptsCoverTransfer(state_->media.cover, coverId.c_str())) return;
     const long offset = integerField(payload, length, "offset", -1);
     const long total = integerField(payload, length, "total", -1);
     const String data = quotedField(payload, length, "data");
@@ -929,8 +929,9 @@ class AgentClient::Impl {
   }
 
   void handleCoverComplete(const char* payload, size_t length) {
-    if (!storage_) return;
+    if (!storage_ || !state_) return;
     const String coverId = quotedField(payload, length, "coverId");
+    if (!acceptsCoverTransfer(state_->media.cover, coverId.c_str())) return;
     if (!isValidCoverId(coverId.c_str()) || std::strcmp(usbCoverId_, coverId.c_str()) != 0 ||
         usbCoverWritten_ != usbCoverTotal_ || !usbCoverFile_) {
       if (state_) markCoverFetchComplete(state_->media.cover, state_->media.cover.requestedId, false);
@@ -1012,6 +1013,7 @@ class AgentClient::Impl {
     const uint32_t now = millis();
     if (usbAuthorized_ && lastUsbRxAt_ != 0 && now - lastUsbRxAt_ > usb::kUsbPeerTimeoutMs) {
       usbAuthorized_ = false;
+      resetUsbCoverTransfer();
       publishConnectionState();
     }
     sendUsbHelloIfDue();
@@ -1075,8 +1077,8 @@ class AgentClient::Impl {
   bool authorized_ = false;
   bool mdnsStarted_ = false;
   bool wifiSuspended_ = false;
-  uint32_t nextAttemptAt_ = 0;
-  uint32_t nextMdnsAt_ = 0;
+  protocol::RetryTimer connectRetry_;
+  protocol::RetryTimer mdnsRetry_;
   uint32_t backoffMs_ = kInitialBackoffMs;
   uint32_t lastHeartbeatAt_ = 0;
   uint32_t lastDeviceInfoAt_ = 0;

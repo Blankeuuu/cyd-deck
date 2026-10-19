@@ -5,10 +5,105 @@
 #include "network/agent_discovery.h"
 #include "network/agent_protocol.h"
 #include "network/cover_art.h"
+#include "network/pc_metrics.h"
 #include "ui/app_state.h"
 
 int main() {
   using namespace streamdeck;
+  {
+    SystemState metrics;
+    const char sample[] = R"({"protocol":1,"type":"system.stats","data":{"cpuPercent":33.6,"memoryPercent":62,"memoryUsedBytes":10737418240,"memoryTotalBytes":17179869184,"gpuPercent":91,"tempCelsius":77}})";
+    protocol::applyPcMetricsJson(metrics, sample, sizeof(sample) - 1, UINT32_MAX - 99U);
+    assert(metrics.cpuAvailable && metrics.cpuPercent == 34);
+    assert(metrics.ramAvailable && metrics.ramPercent == 62);
+    assert(metrics.ramCapacityAvailable && metrics.ramUsedMb == 10240 && metrics.ramTotalMb == 16384);
+    assert(pcMetricsFresh(metrics, true, UINT32_MAX - 99U));
+    assert(pcMetricsFresh(metrics, true, 4899));
+    assert(!pcMetricsFresh(metrics, true, 4900));
+    assert(!pcMetricsFresh(metrics, false, 0));
+    const char unavailable[] = R"({"cpuPercent":null,"memoryPercent":null,"memoryUsedBytes":null,"memoryTotalBytes":null})";
+    protocol::applyPcMetricsJson(metrics, unavailable, sizeof(unavailable) - 1, 5000);
+    assert(!metrics.cpuAvailable && !metrics.ramAvailable && !metrics.ramCapacityAvailable);
+    assert(!metrics.pcStatsReceived && !pcMetricsFresh(metrics, true, 5000));
+    const char zero[] = R"({"cpuPercent":0,"memoryPercent":0,"memoryUsedBytes":0,"memoryTotalBytes":17179869184})";
+    protocol::applyPcMetricsJson(metrics, zero, sizeof(zero) - 1, 10000);
+    assert(metrics.cpuAvailable && metrics.cpuPercent == 0 && metrics.ramAvailable && metrics.ramPercent == 0);
+    assert(metrics.ramCapacityAvailable && metrics.ramUsedMb == 0 && pcMetricsFresh(metrics, true, 10000));
+    const char invalid[] = R"({"cpuPercent":101,"memoryPercent":-1,"memoryUsedBytes":18446744073709551616,"memoryTotalBytes":17179869184})";
+    protocol::applyPcMetricsJson(metrics, invalid, sizeof(invalid) - 1, 10001);
+    assert(!metrics.pcStatsReceived && !metrics.ramCapacityAvailable);
+    const char partial[] = R"({"cpuPercent":12.4,"memoryUsedBytes":2000,"memoryTotalBytes":1000})";
+    protocol::applyPcMetricsJson(metrics, partial, sizeof(partial) - 1, 10002);
+    assert(metrics.cpuAvailable && metrics.cpuPercent == 12 && !metrics.ramAvailable && !metrics.ramCapacityAvailable);
+    uint64_t bytes = 0;
+    const char maxBytes[] = R"({"n":18446744073709551615})";
+    assert(protocol::pcBytes(maxBytes, sizeof(maxBytes) - 1, "n", bytes) && bytes == UINT64_MAX);
+    for (const char* number : {"\"42\"", "true", "0x10", "1.2", "-1"}) {
+      std::string json = std::string("{\"n\":") + number + "}";
+      assert(!protocol::pcBytes(json.c_str(), json.size(), "n", bytes));
+    }
+  }
+  {
+    protocol::RetryTimer timer;
+    assert(timer.ready(0));
+    assert(timer.ready(UINT32_MAX));
+    for (uint32_t interval : {2000U, 10000U, 30000U}) {
+      for (uint32_t start : {0U, 1000U, UINT32_MAX - 999U, UINT32_MAX - interval + 1U}) {
+        timer.schedule(start, interval);
+        assert(!timer.ready(start));
+        assert(!timer.ready(start + interval - 1U));
+        assert(timer.ready(start + interval));
+        assert(timer.ready(start + interval + 1U));
+        timer.reset();
+        assert(timer.ready(start));
+      }
+    }
+  }
+  {
+    // Model appendCoverTemp's reference counter while streaming an odd-sized JPEG.
+    std::size_t received = 0;
+    std::size_t fileBytes = 0;
+    for (std::size_t chunk : {512U, 512U, 1U}) {
+      assert(appendCountedCoverChunk(received, 1025, chunk, [&]() {
+        fileBytes += chunk;
+        received += chunk;
+        return true;
+      }));
+      assert(received == fileBytes);
+    }
+    assert(received == 1025);
+    bool called = false;
+    auto unexpectedWrite = [&]() { called = true; return true; };
+    assert(!appendCountedCoverChunk(received, 1025, 1, unexpectedWrite));
+    assert(!appendCountedCoverChunk(received, 1025, 0, unexpectedWrite));
+    assert(!appendCountedCoverChunk(received, 1000, 1, unexpectedWrite));
+    assert(!appendCountedCoverChunk(received, kMaxCoverBytes + 1, 1, unexpectedWrite));
+    assert(!called);
+    received = 0;
+    assert(!appendCountedCoverChunk(received, 1, 1, []() { return false; }));
+    assert(received == 0);
+  }
+  {
+    const char* first = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const char* second = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    CoverFetchState transfer;
+    assert(!acceptsCoverTransfer(transfer, first));
+    updateCoverFetch(transfer, first, 100);
+    assert(acceptsCoverTransfer(transfer, first));
+    updateCoverFetch(transfer, second, 200);
+    assert(!acceptsCoverTransfer(transfer, first));
+    assert(!acceptsCoverTransfer(transfer, nullptr));
+    assert(!acceptsCoverTransfer(transfer, "invalid"));
+    assert(acceptsCoverTransfer(transfer, second));
+    assert(!expirePendingCover(transfer, 15199));
+    assert(expirePendingCover(transfer, 15200));
+    assert(!acceptsCoverTransfer(transfer, second));
+    updateCoverFetch(transfer, first, 16000);
+    markCoverFetchComplete(transfer, first, true);
+    assert(!acceptsCoverTransfer(transfer, first));
+    updateCoverFetch(transfer, "", 17000);
+    assert(!acceptsCoverTransfer(transfer, first));
+  }
   {
   char iconData[2305]; std::memset(iconData, '_', 2304); iconData[2304] = 0;
   uint8_t pixels[1728]{};

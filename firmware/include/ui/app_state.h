@@ -31,14 +31,21 @@ struct SystemState {
   uint32_t largestBlock = 0;
   uint8_t cpuPercent = 0;
   uint8_t ramPercent = 0;
-  uint8_t gpuPercent = 0;
-  uint8_t tempCelsius = 0;
+  bool cpuAvailable = false;
+  bool ramAvailable = false;
+  bool ramCapacityAvailable = false;
+  bool pcStatsReceived = false;
+  uint32_t pcStatsAtMs = 0;
   uint32_t ramUsedMb = 0;
   uint32_t ramTotalMb = 0;
   char hostDate[40] = "";
   int16_t hostLocalMinutes = -1;
   uint32_t hostTimeSyncedAtSec = 0;
 };
+constexpr uint32_t kPcStatsFreshMs = 5000;
+inline bool pcMetricsFresh(const SystemState& state, bool connected, uint32_t nowMs) {
+  return connected && state.pcStatsReceived && nowMs - state.pcStatsAtMs < kPcStatsFreshMs;
+}
 struct StorageState { bool mounted = false; bool ready = false; uint32_t totalMb = 0; uint32_t freeMb = 0; char status[32] = "not started"; };
 struct DeviceInfoState { char firmwareVersion[16] = "1.2.0"; uint32_t uptimeSeconds = 0; };
 struct ConnectionState {

@@ -86,6 +86,23 @@ int main() {
   assertInsideParent(lv_test_root());
   streamdeck::uiSetPage(streamdeck::Page::Media);
   assert(lv_test_indev.long_press_time == 3000);
+  assert(mediaProgress->indicator_color == state.appearance.accent);
+  const uint32_t originalAccent = state.appearance.accent;
+  for (int theme = 0; theme < 2; ++theme) {
+    state.appearance.theme = theme;
+    state.appearance.accent = theme ? 0xB43B76 : 0x6CB89C;
+    streamdeck::uiRefresh(state);
+    assert(mediaProgress->indicator_color == state.appearance.accent);
+    assert(mediaProgress->indicator_color == mediaVolumeSlider->indicator_color);
+    assert(playButtonLabel->text_color == contrastingText(state.appearance.accent));
+    assert(mediaProgress->bg_color == (theme ? kLightMutedButton : kButton));
+    streamdeck::uiSetPage(streamdeck::Page::Home);
+    streamdeck::uiSetPage(streamdeck::Page::Media);
+    assert(mediaProgress->indicator_color == state.appearance.accent);
+  }
+  state.appearance.theme = 0;
+  state.appearance.accent = originalAccent;
+  streamdeck::uiRefresh(state);
 
   const lv_obj_t* screen = lv_test_root();
   assert(screen->x == 0);
@@ -213,8 +230,8 @@ int main() {
   }
   assert(coverPanel->border_width == 0);
   assert(findLabel(lv_test_root(), "Now playing")->text_color == 0x101216);
-  assert(findLabel(lv_test_root(), "Factory Reset?")->text_color == 0x101216);
-  assert(lv_obj_get_child(findButtonByText(lv_test_root(), LV_SYMBOL_PAUSE), 0)->text_color == 0x101216);
+  assert(findLabel(lv_test_root(), "Factory reset?")->text_color == 0x101216);
+  assert(playButtonLabel->text_color == contrastingText(state.appearance.accent));
   state.appearance.theme = 0;
   streamdeck::normalizeAppearance(state.appearance);
   streamdeck::uiRefresh(state);
@@ -223,11 +240,20 @@ int main() {
   assert(findLabel(lv_test_root(), "Now playing")->text_color == 0xF7F8FA);
   streamdeck::uiSetPage(streamdeck::Page::Info);
   streamdeck::uiRefresh(state);
-  assert(findLabel(lv_test_root(), "FW 1.2.0  |  Calibration: Needed") != nullptr);
-  assert(findLabel(lv_test_root(), "Wi-Fi  LabWiFi  -53 dBm") != nullptr);
-  assert(findLabel(lv_test_root(), "IP      192.168.50.205") != nullptr);
-  assert(findLabel(lv_test_root(), "Agent: Connected  |  192.168.50.190") != nullptr);
-  assert(findLabel(lv_test_root(), "WIFI") != nullptr);
+  assert(findLabel(pages[3], "Settings") != nullptr);
+  assert(brightnessSlider != nullptr);
+  assert(findButtonByText(pages[3], "Factory reset") == nullptr);
+  assert(findButtonByText(pages[3], "Restart") == nullptr);
+  lv_test_send_event(findButtonByText(pages[3], "Device"), LV_EVENT_CLICKED);
+  lv_test_send_event(findButtonByText(pages[3], "Connection & status"), LV_EVENT_CLICKED);
+  assert(findLabel(pages[3], "Device status") != nullptr);
+  assert(infoFw->text == "1.2.0");
+  assert(infoWifi->text == "LabWiFi");
+  assert(infoIp->text == "192.168.50.205");
+  assert(infoPc->text == "Wi-Fi connected");
+  assert(infoUptime != nullptr && otaStatus != nullptr);
+  lv_test_send_event(findButtonByText(pages[3], "Back"), LV_EVENT_CLICKED);
+  lv_test_send_event(findButtonByText(pages[3], "Display"), LV_EVENT_CLICKED);
   state.appearance.pageOrder[0] = streamdeck::Page::Media;
   state.appearance.pageOrder[1] = streamdeck::Page::Info;
   state.appearance.pageOrder[2] = streamdeck::Page::Shortcuts;
@@ -295,23 +321,49 @@ int main() {
   assert(findButtonByText(lv_test_root(), "Delete B") == nullptr);
   assert(findButtonByText(lv_test_root(), "No shortcut") != nullptr);
 
-  // Verify persistent Windows corner clock and 2x2 watchOS PC complications
+  // PC shows only fresh measurements from Windows, never CYD heap or guessed sensors.
   state.system.hostLocalMinutes = 14 * 60 + 37;
   state.system.hostTimeSyncedAtSec = state.device.uptimeSeconds;
   state.system.cpuPercent = 34;
   state.system.ramPercent = 62;
-  state.system.gpuPercent = 18;
-  state.system.tempCelsius = 54;
+  state.system.cpuAvailable = state.system.ramAvailable = state.system.ramCapacityAvailable = true;
+  state.system.pcStatsReceived = true;
+  state.system.pcStatsAtMs = 0;
+  state.system.ramUsedMb = 10240;
+  state.system.ramTotalMb = 16384;
+  state.connection.agentConnected = true;
   streamdeck::uiSetPage(streamdeck::Page::Pc);
   assert(navLabels[0]->text == "14:37");
-  assert(findLabel(lv_test_root(), "CPU") != nullptr);
-  assert(findLabel(lv_test_root(), "RAM") != nullptr);
-  assert(findLabel(lv_test_root(), "GPU") != nullptr);
-  assert(findLabel(lv_test_root(), "TEMP") != nullptr);
+  assert(findLabel(pages[2], "Windows PC") != nullptr);
+  assert(findLabel(pages[2], "CPU usage") != nullptr);
+  assert(findLabel(pages[2], "Memory (RAM)") != nullptr);
+  assert(findLabel(pages[2], "Source: Windows Agent") != nullptr);
+  assert(findLabel(pages[2], "GPU") == nullptr);
+  assert(findLabel(pages[2], "TEMP") == nullptr);
+  assert(otaStatus == nullptr); // Device OTA diagnostics belong to Settings, not PC.
   assert(findLabel(lv_test_root(), "34%") != nullptr);
   assert(findLabel(lv_test_root(), "62%") != nullptr);
-  assert(findLabel(lv_test_root(), "18%") != nullptr);
-  assert(findLabel(lv_test_root(), "54 C") != nullptr);
+  assert(pcMetricDetails[1]->text == "10.0 / 16.0 GB used");
+  for (auto* bar : pcMetricBars) assert(bar->indicator_color == state.appearance.accent);
+  lv_test_tick = 4999;
+  streamdeck::uiRefresh(state);
+  assert(pcConnection->text == "Live");
+  lv_test_tick = 5000;
+  streamdeck::uiRefresh(state);
+  assert(pcConnection->text == "Stale" && pcMetricValues[0]->text == "--" && pcMetricBars[0]->value == 0);
+  state.connection.agentConnected = false;
+  streamdeck::uiRefresh(state);
+  assert(pcConnection->text == "Offline" && pcMetricValues[1]->text == "--");
+  lv_test_tick = 0;
+  state.connection.agentConnected = true;
+  state.system.pcStatsReceived = false;
+  streamdeck::uiRefresh(state);
+  assert(pcConnection->text == "Waiting" && pcMetricValues[0]->text == "--");
+  state.system.pcStatsReceived = true;
+  state.system.cpuPercent = 0;
+  state.system.ramAvailable = false;
+  streamdeck::uiRefresh(state);
+  assert(pcMetricValues[0]->text == "0%" && pcMetricValues[1]->text == "--");
   assert(streamdeck::sanitizeCydBackground(0xB8F224, 0) != 0xB8F224);
 
   lv_obj_t* plus = findButtonByText(lv_test_root(), "+");
@@ -336,28 +388,106 @@ int main() {
   assertVolumeIntent(intents, 0);
 
   streamdeck::uiSetPage(streamdeck::Page::Info);
+  assert(brightnessSlider->h + 2 * brightnessSlider->ext_click_area >= 44);
+  assert(brightnessSlider->x - brightnessSlider->ext_click_area >= 0);
+  assert(brightnessSlider->x + brightnessSlider->w + brightnessSlider->ext_click_area <= 320);
+  lv_slider_set_value(brightnessSlider, 73, LV_ANIM_OFF);
+  brightnessSlider->state |= LV_STATE_PRESSED;
+  lv_test_send_event(brightnessSlider, LV_EVENT_VALUE_CHANGED);
+  streamdeck::Intent intent;
+  assert(intents.pop(intent) && intent.type == streamdeck::IntentType::SetBrightness && intent.value == 73);
+  assert(brightnessPercent->text == "73%");
+  state.appearance.brightness = 20;
+  streamdeck::uiRefresh(state);
+  assert(lv_slider_get_value(brightnessSlider) == 73);
+  assert(brightnessPercent->text == "73%");
+  brightnessSlider->state &= ~LV_STATE_PRESSED;
+  state.ui.localBrightness = 73;
+  lv_test_send_event(findButtonByText(pages[3], "25%"), LV_EVENT_CLICKED);
+  assert(intents.pop(intent) && intent.type == streamdeck::IntentType::SetBrightness && intent.value == 25);
+  assert(brightnessPercent->text == "25%" && lv_slider_get_value(brightnessSlider) == 25);
+  state.ui.localBrightness = 25; // app.cpp applies the queued intent.
+  streamdeck::uiRefresh(state);
+  assert(brightnessPresets[0]->bg_color == state.appearance.accent);
+  const int settingsBackgroundWrites = lv_test_bg_writes;
+  streamdeck::uiRefresh(state);
+  assert(lv_test_bg_writes == settingsBackgroundWrites);
+  state.ui.localBrightness = 0; // A new Windows brightness revision clears the override.
+  state.appearance.brightness = 60;
+  streamdeck::uiRefresh(state);
+  assert(brightnessPercent->text == "60%");
+  assert(lv_slider_get_value(brightnessSlider) == 60);
+
+  lv_test_send_event(findButtonByText(pages[3], "Touch"), LV_EVENT_CLICKED);
+  assert(brightnessSlider == nullptr);
+  lv_test_send_event(findButtonByText(pages[3], "Test touch"), LV_EVENT_CLICKED);
+  assert(intents.pop(intent) && intent.type == streamdeck::IntentType::TestTouch);
+  lv_test_send_event(findButtonByText(pages[3], "Calibrate"), LV_EVENT_CLICKED);
+  assert(intents.pop(intent) && intent.type == streamdeck::IntentType::Recalibrate);
+  state.ui.calibrationValid = true;
+  streamdeck::uiRefresh(state);
+  assert(touchCalibrationStatus->text == "Calibration ready");
+
+  lv_test_send_event(findButtonByText(pages[3], "Device"), LV_EVENT_CLICKED);
   lv_obj_t* restart = findButtonByText(lv_test_root(), "Restart");
-  lv_obj_t* factoryReset = findButtonByText(lv_test_root(), "Reset (hold)");
+  lv_obj_t* factoryReset = findButtonByText(lv_test_root(), "Factory reset");
   lv_obj_t* setupKey = findButtonByText(lv_test_root(), "Setup key");
   assert(restart != nullptr);
   assert(factoryReset != nullptr);
   assert(setupKey == nullptr);
 
   lv_test_send_event(restart, LV_EVENT_CLICKED);
-  streamdeck::Intent intent;
+  assert(!intents.pop(intent));
+  assert(!lv_obj_has_flag(resetDialog, LV_OBJ_FLAG_HIDDEN));
+  assert(resetDialogTitle->text == "Restart device?");
+  lv_test_send_event(findButtonByText(resetDialog, "Cancel"), LV_EVENT_CLICKED);
+  assert(lv_obj_has_flag(resetDialog, LV_OBJ_FLAG_HIDDEN));
+  assert(!intents.pop(intent));
+  lv_test_send_event(restart, LV_EVENT_CLICKED);
+  lv_test_send_event(findButtonByText(resetDialog, "Restart"), LV_EVENT_CLICKED);
   assert(intents.pop(intent));
   assert(intent.type == streamdeck::IntentType::RestartDevice);
+  assert(lv_obj_has_flag(resetDialog, LV_OBJ_FLAG_HIDDEN));
 
   lv_test_send_event(factoryReset, LV_EVENT_CLICKED);
   assert((resetDialog->flags & LV_OBJ_FLAG_HIDDEN) != 0);
 
   lv_test_send_event(factoryReset, LV_EVENT_LONG_PRESSED);
   assert((resetDialog->flags & LV_OBJ_FLAG_HIDDEN) == 0);
-  lv_obj_t* confirm = findButtonByText(lv_test_root(), "CONFIRM");
+  assert(resetDialog->w == 320 && resetDialog->h == 240);
+  assert(lv_obj_has_flag(resetDialog, LV_OBJ_FLAG_CLICKABLE));
+  assert(resetDialogTitle->text == "Factory reset?");
+  lv_obj_t* confirm = findButtonByText(resetDialog, "Reset device");
   assert(confirm != nullptr);
   lv_test_send_event(confirm, LV_EVENT_CLICKED);
   assert(intents.pop(intent));
   assert(intent.type == streamdeck::IntentType::FactoryReset);
+  assert(!intents.pop(intent));
+
+  std::size_t sectionCounts[3]{};
+  for (int cycle = 0; cycle < 20; ++cycle) {
+    state.appearance.theme = cycle % 2;
+    for (int section = 0; section < 3; ++section) {
+      lv_test_send_event(settingsTabs[section], LV_EVENT_CLICKED);
+      assertInsideParent(lv_test_root());
+      assertNoScrollbars(lv_test_root());
+      for (uint8_t i = 0; i < settingsControlCount; ++i) {
+        assert(settingsControls[i]->h >= 44 && settingsControls[i]->w >= 64);
+        assert(settingsControls[i]->y + settingsControls[i]->h <= navBar->y);
+      }
+      if (cycle == 0) sectionCounts[section] = lv_test_allocations.size();
+      else assert(lv_test_allocations.size() == sectionCounts[section]);
+    }
+    lv_test_send_event(findButtonByText(pages[3], "Connection & status"), LV_EVENT_CLICKED);
+    assertInsideParent(lv_test_root());
+    state.connection.wifiConnected = false;
+    state.connection.agentConnected = false;
+    state.storage.mounted = false;
+    streamdeck::uiRefresh(state);
+    assert(infoWifi->text == "Disconnected" && infoPc->text == "Offline" && infoSd->text == "Unavailable");
+    lv_test_send_event(findButtonByText(pages[3], "Back"), LV_EVENT_CLICKED);
+  }
+  lv_test_send_event(settingsTabs[0], LV_EVENT_CLICKED);
 
   std::size_t objectCounts[streamdeck::kPageCount + 1]{};
   for (int cycle = 0; cycle < 40; ++cycle) {

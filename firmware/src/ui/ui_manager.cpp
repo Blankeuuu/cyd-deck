@@ -52,6 +52,24 @@ uint8_t appliedTileColorScheme = 0xFF;
 uint8_t appliedShortcutsLayout = 0xFF;
 lv_obj_t* brightnessLabel = nullptr;
 lv_obj_t* brightnessSlider = nullptr;
+lv_obj_t* brightnessPercent = nullptr;
+lv_obj_t* settingsConnection = nullptr;
+lv_obj_t* touchCalibrationStatus = nullptr;
+enum class SettingsSection : uint8_t { Display, Touch, Device };
+SettingsSection settingsSection = SettingsSection::Display;
+bool settingsDetailsOpen = false;
+lv_obj_t* settingsTabs[3]{};
+lv_obj_t* brightnessPresets[3]{};
+constexpr int kBrightnessPresets[] = {25, 60, 100};
+lv_obj_t* settingsControls[8]{};
+uint8_t settingsControlCount = 0;
+lv_obj_t* factoryResetButton = nullptr;
+lv_obj_t* resetDialogPanel = nullptr;
+lv_obj_t* resetDialogTitle = nullptr;
+lv_obj_t* resetDialogDetail = nullptr;
+lv_obj_t* resetDialogConfirm = nullptr;
+lv_obj_t* resetDialogConfirmLabel = nullptr;
+IntentType pendingDeviceAction = IntentType::FactoryReset;
 lv_obj_t* touchTestPanel = nullptr;
 lv_obj_t* touchTestLabel = nullptr;
 lv_obj_t* standbyPanel = nullptr;
@@ -88,16 +106,13 @@ lv_obj_t* overlayVolumePercent = nullptr;
 lv_obj_t* shortcutButtons[6]{};
 lv_obj_t* shortcutLabels[6]{};
 lv_obj_t* shortcutIcons[6]{};
-lv_obj_t* pcMetricCards[4]{};
-lv_obj_t* pcMetricTitles[4]{};
-lv_obj_t* pcMetricValues[4]{};
-lv_obj_t* pcMetricBars[4]{};
+lv_obj_t* pcMetricCards[2]{};
+lv_obj_t* pcMetricTitles[2]{};
+lv_obj_t* pcMetricValues[2]{};
+lv_obj_t* pcMetricBars[2]{};
+lv_obj_t* pcMetricDetails[2]{};
+lv_obj_t* pcSource = nullptr;
 lv_obj_t* pcConnection = nullptr;
-lv_obj_t* pcChip = nullptr;
-lv_obj_t* pcAudio = nullptr;
-lv_obj_t* heapFree = nullptr;
-lv_obj_t* heapMin = nullptr;
-lv_obj_t* heapLargest = nullptr;
 lv_obj_t* otaStatus = nullptr;
 lv_obj_t* infoFw = nullptr;
 lv_obj_t* infoWifi = nullptr;
@@ -123,6 +138,12 @@ constexpr uint32_t kLightMutedButton = 0xE8EAED;
 constexpr int kScreenWidth = 320;
 constexpr int kScreenHeight = 240;
 constexpr uint16_t kFactoryResetLongPressMs = 3000;
+constexpr uint32_t kDangerText = 0xFF918B;
+constexpr uint32_t kLightDangerText = 0xA72323;
+
+void buildPage(Page page);
+void refreshSettings(const AppState& state);
+uint32_t contrastingText(uint32_t fill);
 
 void configureLongPressTiming() {
   for (lv_indev_t* indev = lv_indev_get_next(nullptr); indev;
@@ -254,9 +275,8 @@ void applyAppearanceStyles(const AppState& state) {
     if (touchTestPanel) lv_obj_set_style_bg_color(touchTestPanel, lv_color_hex(panel), 0);
     if (navBar) lv_obj_set_style_bg_color(navBar, lv_color_hex(panel), 0);
     lv_obj_set_style_bg_color(overlay, lv_color_hex(panel), 0);
-    lv_obj_set_style_bg_color(resetDialog, lv_color_hex(panel), 0);
+    lv_obj_set_style_bg_color(resetDialogPanel, lv_color_hex(panel), 0);
     if (mediaChip) lv_obj_set_style_bg_color(mediaChip, lv_color_hex(kButton), 0);
-    if (pcChip) lv_obj_set_style_bg_color(pcChip, lv_color_hex(kButton), 0);
     if (infoChip) lv_obj_set_style_bg_color(infoChip, lv_color_hex(kButton), 0);
     for (lv_obj_t* card : pcMetricCards) {
       if (card) lv_obj_set_style_bg_color(card, lv_color_hex(panel), 0);
@@ -266,6 +286,26 @@ void applyAppearanceStyles(const AppState& state) {
     lv_obj_set_style_bg_color(mediaVolumeSlider, lv_color_hex(state.appearance.theme == 1 ? kLightMutedButton : kButton), LV_PART_MAIN);
     lv_obj_set_style_bg_color(mediaVolumeSlider, lv_color_hex(state.appearance.accent), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(mediaVolumeSlider, lv_color_hex(state.appearance.accent), LV_PART_KNOB);
+  }
+  if (buttonsChanged && mediaProgress) {
+    lv_obj_set_style_bg_color(mediaProgress, lv_color_hex(state.appearance.theme ? kLightMutedButton : kButton), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(mediaProgress, lv_color_hex(state.appearance.accent), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(mediaProgress, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(mediaProgress, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(mediaProgress, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(mediaProgress, 2, LV_PART_INDICATOR);
+  }
+  if (buttonsChanged) {
+    for (lv_obj_t* bar : pcMetricBars) {
+      if (!bar) continue;
+      lv_obj_set_style_bg_color(bar, lv_color_hex(state.appearance.theme ? kLightMutedButton : kButton), LV_PART_MAIN);
+      lv_obj_set_style_bg_color(bar, lv_color_hex(state.appearance.accent), LV_PART_INDICATOR);
+    }
+  }
+  if (buttonsChanged && brightnessSlider) {
+    lv_obj_set_style_bg_color(brightnessSlider, lv_color_hex(state.appearance.theme ? kLightMutedButton : kButton), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(brightnessSlider, lv_color_hex(state.appearance.accent), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(brightnessSlider, lv_color_hex(state.appearance.accent), LV_PART_KNOB);
   }
   if (buttonsChanged) {
     for (uint8_t i = 0; i < buttonCount; ++i) styleButton(buttons[i]);
@@ -281,6 +321,14 @@ void applyAppearanceStyles(const AppState& state) {
       lv_obj_set_style_border_width(homePlayButton, 0, 0);
     }
     applyDynamicTextColors();
+    if (playButtonLabel)
+      lv_obj_set_style_text_color(playButtonLabel, lv_color_hex(contrastingText(state.appearance.accent)), 0);
+    for (uint8_t i = 0; i < settingsControlCount; ++i) {
+      lv_obj_set_style_radius(settingsControls[i], 10, 0);
+      lv_obj_set_style_border_width(settingsControls[i], 0, 0);
+    }
+    lv_obj_set_style_radius(resetDialogConfirm, 10, 0);
+    lv_obj_set_style_border_width(resetDialogConfirm, 0, 0);
     appliedAccent = state.appearance.accent;
     appliedTheme = state.appearance.theme;
     appliedButtonStyle = state.appearance.buttonStyle;
@@ -313,9 +361,20 @@ void enqueue(lv_event_t* e) {
       reinterpret_cast<intptr_t>(lv_event_get_user_data(e))), 0});
 }
 
-void showFactoryResetDialog(lv_event_t*) {
+void showDeviceActionDialog(IntentType action) {
+  pendingDeviceAction = action;
+  const bool reset = action == IntentType::FactoryReset;
+  setLabelText(resetDialogTitle, reset ? "Factory reset?" : "Restart device?");
+  setLabelText(resetDialogDetail, reset
+      ? "Erases Wi-Fi, pairing, calibration\nand device settings."
+      : "Your settings will be kept.\nThe device will reconnect shortly.");
+  setLabelText(resetDialogConfirmLabel, reset ? "Reset device" : "Restart");
   lv_obj_clear_flag(resetDialog, LV_OBJ_FLAG_HIDDEN);
+  if (statePtr) uiRefresh(*statePtr);
 }
+
+void showFactoryResetDialog(lv_event_t*) { showDeviceActionDialog(IntentType::FactoryReset); }
+void showRestartDialog(lv_event_t*) { showDeviceActionDialog(IntentType::RestartDevice); }
 
 void hideFactoryResetDialog(lv_event_t*) {
   lv_obj_add_flag(resetDialog, LV_OBJ_FLAG_HIDDEN);
@@ -323,7 +382,8 @@ void hideFactoryResetDialog(lv_event_t*) {
 
 void confirmFactoryReset(lv_event_t*) {
   if (!queuePtr) return;
-  queuePtr->push({IntentType::FactoryReset, 0});
+  lv_obj_add_flag(resetDialog, LV_OBJ_FLAG_HIDDEN);
+  queuePtr->push({pendingDeviceAction, 0});
 }
 
 
@@ -402,7 +462,12 @@ void navTabClicked(lv_event_t* e) {
   }
 }
 
-void settingsClicked(lv_event_t*) { uiSetPage(Page::Info); }
+void settingsClicked(lv_event_t*) {
+  settingsSection = SettingsSection::Display;
+  settingsDetailsOpen = false;
+  if (statePtr && statePtr->ui.page == Page::Info) buildPage(Page::Info);
+  uiSetPage(Page::Info);
+}
 
 void buildNavBar() {
   navBar = lv_obj_create(root);
@@ -785,56 +850,98 @@ void applyShortcutColors(const AppState& s) {
 }
 
 void buildPcPage() {
-  lv_obj_t* pcHeader = makeLabel(pages[2], "PC DOCK", 12, 7, 150, 22, kText, 20);
-  lv_obj_add_flag(pcHeader, LV_OBJ_FLAG_HIDDEN);
-  pcChip = makeChip(pages[2], "OFFLINE", 226, 7, 82, kButton);
-  lv_obj_add_flag(pcChip, LV_OBJ_FLAG_HIDDEN);
-
-  static const char* const kMetricNames[4] = {"CPU", "RAM", "GPU", "TEMP"};
-  static constexpr uint32_t kMetricColors[4] = {0x0A84FF, 0x30D158, 0xBF5AF2, 0xFF9F0A};
+  makeLabel(pages[2], "Windows PC", 12, 5, 184, 24, kText, 20);
+  pcConnection = makeLabel(pages[2], "", 202, 9, 106, 18, kMuted, 14);
+  lv_obj_set_style_text_align(pcConnection, LV_TEXT_ALIGN_RIGHT, 0);
+  static const char* const kMetricNames[] = {"CPU usage", "Memory (RAM)"};
   const uint32_t panelColor = statePtr && statePtr->appearance.theme == 1 ? kLightPanel : kPanel;
 
-  for (int i = 0; i < 4; ++i) {
-    const int x = 12 + (i % 2) * 152;
-    const int y = 12 + (i / 2) * 94;
+  for (int i = 0; i < 2; ++i) {
     pcMetricCards[i] = lv_obj_create(pages[2]);
-    setStaticBounds(pcMetricCards[i], x, y, 144, 86);
+    setStaticBounds(pcMetricCards[i], 8, 36 + i * 76, 304, 68);
     lv_obj_set_style_bg_color(pcMetricCards[i], lv_color_hex(panelColor), 0);
     lv_obj_set_style_bg_opa(pcMetricCards[i], LV_OPA_COVER, 0);
     lv_obj_set_style_radius(pcMetricCards[i], 14, 0);
-    lv_obj_set_style_border_width(pcMetricCards[i], 1, 0);
-    lv_obj_set_style_border_color(pcMetricCards[i], lv_color_hex(0x303036), 0);
+    lv_obj_set_style_border_width(pcMetricCards[i], 0, 0);
 
-    pcMetricTitles[i] = makeLabel(pcMetricCards[i], kMetricNames[i], 10, 6, 56, 16, kMuted, 14);
-    pcMetricValues[i] = makeLabel(pcMetricCards[i], "0%", 68, 4, 66, 22, kText, 20);
+    pcMetricTitles[i] = makeLabel(pcMetricCards[i], kMetricNames[i], 12, 6, 176, 22, kText, 16);
+    pcMetricValues[i] = makeLabel(pcMetricCards[i], "--", 196, 4, 96, 24, kText, 20);
     lv_obj_set_style_text_align(pcMetricValues[i], LV_TEXT_ALIGN_RIGHT, 0);
+    pcMetricDetails[i] = makeLabel(pcMetricCards[i], "", 12, 29, 280, 18, kMuted, 14);
 
     pcMetricBars[i] = lv_bar_create(pcMetricCards[i]);
-    setStaticBounds(pcMetricBars[i], 10, 64, 124, 6);
+    setStaticBounds(pcMetricBars[i], 12, 54, 280, 5);
     lv_bar_set_range(pcMetricBars[i], 0, 100);
     lv_obj_set_style_radius(pcMetricBars[i], 4, LV_PART_MAIN);
     lv_obj_set_style_radius(pcMetricBars[i], 4, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(pcMetricBars[i], lv_color_hex(0x272729), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(pcMetricBars[i], lv_color_hex(kMetricColors[i]), LV_PART_INDICATOR);
   }
+  pcSource = makeLabel(pages[2], "Source: Windows Agent", 12, 184, 296, 16, kMuted, 14);
+}
 
-  pcConnection = makeLabel(pages[2], "", 12, 184, 166, 18, kMuted, 14);
-  pcAudio = makeLabel(pages[2], "", 12, 204, 166, 18, kMuted, 14);
-  heapFree = makeLabel(pages[2], "", 12, 184, 166, 18, kMuted, 14);
-  lv_obj_add_flag(heapFree, LV_OBJ_FLAG_HIDDEN);
-  heapMin = makeLabel(pages[2], "", 12, 184, 166, 18, kMuted, 14);
-  lv_obj_add_flag(heapMin, LV_OBJ_FLAG_HIDDEN);
-  heapLargest = makeLabel(pages[2], "", 12, 184, 166, 18, kMuted, 14);
-  lv_obj_add_flag(heapLargest, LV_OBJ_FLAG_HIDDEN);
-  otaStatus = makeLabel(pages[2], "", 12, 184, 166, 18, kMuted, 14);
-  lv_obj_add_flag(otaStatus, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(pcConnection, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(pcAudio, LV_OBJ_FLAG_HIDDEN);
+int effectiveBrightness(const AppState& state) {
+  return clampPercent(state.ui.localBrightness ? state.ui.localBrightness : state.appearance.brightness, 10, 100);
+}
+
+void setControlColors(lv_obj_t* control, uint32_t background, uint32_t foreground) {
+  if (!control) return;
+  if (!lv_color_eq(lv_obj_get_style_bg_color(control, 0), lv_color_hex(background)))
+    lv_obj_set_style_bg_color(control, lv_color_hex(background), 0);
+  lv_obj_t* label = lv_obj_get_child(control, 0);
+  if (label && !lv_color_eq(lv_obj_get_style_text_color(label, 0), lv_color_hex(foreground)))
+    lv_obj_set_style_text_color(label, lv_color_hex(foreground), 0);
+}
+
+void refreshBrightness(int value) {
+  char text[8];
+  std::snprintf(text, sizeof(text), "%d%%", value);
+  setLabelText(brightnessPercent, text);
+  if (!statePtr) return;
+  const uint32_t neutral = statePtr->appearance.theme ? kLightMutedButton : kButton;
+  for (int i = 0; i < 3; ++i) {
+    const bool selected = value == kBrightnessPresets[i];
+    const uint32_t fill = selected ? statePtr->appearance.accent : neutral;
+    setControlColors(brightnessPresets[i], fill, selected ? contrastingText(fill) : textColor());
+  }
 }
 
 void brightnessChanged(lv_event_t* e) {
   const int value = lv_slider_get_value(static_cast<lv_obj_t*>(lv_event_get_target(e)));
-  queuePtr->push({IntentType::SetBrightness, static_cast<int16_t>(value)});
+  refreshBrightness(value);
+  if (queuePtr) queuePtr->push({IntentType::SetBrightness, static_cast<int16_t>(value)});
+}
+
+void brightnessPresetClicked(lv_event_t* e) {
+  const int value = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+  lv_slider_set_value(brightnessSlider, value, LV_ANIM_OFF);
+  refreshBrightness(value);
+  if (queuePtr) queuePtr->push({IntentType::SetBrightness, static_cast<int16_t>(value)});
+}
+
+void settingsSectionClicked(lv_event_t* e) {
+  settingsSection = static_cast<SettingsSection>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+  settingsDetailsOpen = false;
+  buildPage(Page::Info);
+  uiRefresh(*statePtr);
+}
+
+void settingsDetailsClicked(lv_event_t*) {
+  settingsDetailsOpen = !settingsDetailsOpen;
+  buildPage(Page::Info);
+  uiRefresh(*statePtr);
+}
+
+lv_obj_t* settingsControl(const char* text, int x, int y, int w, int h,
+                          lv_event_cb_t cb, void* data = nullptr) {
+  lv_obj_t* control = button(pages[3], text, x, y, w, h, cb, data);
+  if (settingsControlCount < 8) settingsControls[settingsControlCount++] = control;
+  return control;
+}
+
+lv_obj_t* deviceDetail(const char* title, int y) {
+  makeLabel(pages[3], title, 12, y, 82, 18, kMuted, 14);
+  lv_obj_t* value = makeLabel(pages[3], "", 104, y, 204, 18, kText, 14);
+  lv_label_set_long_mode(value, LV_LABEL_LONG_MODE_DOTS);
+  return value;
 }
 
 void closeTouchTest(lv_event_t*) {
@@ -842,47 +949,78 @@ void closeTouchTest(lv_event_t*) {
 }
 
 void buildInfoPage() {
-  lv_obj_t* infoHeader = makeLabel(pages[3], "Device", 12, 7, 110, 22, kText, 20);
-  lv_obj_add_flag(infoHeader, LV_OBJ_FLAG_HIDDEN);
-  infoChip = makeChip(pages[3], "LOCAL", 238, 7, 70, kButton);
-  lv_obj_add_flag(infoChip, LV_OBJ_FLAG_HIDDEN);
-  infoFw = makeLabel(pages[3], "", 12, 4, 296, 18, kText, 14);
-  infoWifi = makeLabel(pages[3], "", 12, 22, 296, 18, kMuted, 14);
-  infoIp = makeLabel(pages[3], "", 12, 40, 296, 18, kMuted, 14);
-  infoPc = makeLabel(pages[3], "", 12, 58, 296, 18, kMuted, 14);
-  infoAgent = nullptr;
-  infoSd = makeLabel(pages[3], "", 12, 76, 296, 18, kMuted, 14);
-  infoUptime = nullptr;
-  button(pages[3], "Calibrate touch", 12, 100, 144, 32, enqueue,
-      reinterpret_cast<void*>(static_cast<intptr_t>(IntentType::Recalibrate)));
-  button(pages[3], "Touch test", 164, 100, 144, 32, enqueue,
-      reinterpret_cast<void*>(static_cast<intptr_t>(IntentType::TestTouch)));
-  button(pages[3], "Restart", 12, 140, 144, 28, enqueue,
-      reinterpret_cast<void*>(static_cast<intptr_t>(IntentType::RestartDevice)));
-  lv_obj_t* reset = button(pages[3], "Reset (hold)", 164, 140, 144, 28, nullptr, nullptr);
-  lv_obj_add_event_cb(reset, showFactoryResetDialog, LV_EVENT_LONG_PRESSED, nullptr);
-  brightnessLabel = makeLabel(pages[3], "Brightness", 12, 176, 98, 18, kMuted, 14);
-  brightnessSlider = lv_slider_create(pages[3]);
-  setStaticBounds(brightnessSlider, 122, 184, 174, 5);
-  lv_slider_set_range(brightnessSlider, 10, 100);
-  lv_slider_set_value(brightnessSlider, statePtr->ui.localBrightness ? statePtr->ui.localBrightness : statePtr->appearance.brightness, LV_ANIM_OFF);
-  lv_obj_set_ext_click_area(brightnessSlider, 10);
-  lv_obj_add_event_cb(brightnessSlider, brightnessChanged, LV_EVENT_VALUE_CHANGED, nullptr);
+  if (settingsDetailsOpen) {
+    settingsControl("Back", 8, 4, 64, 44, settingsDetailsClicked);
+    makeLabel(pages[3], "Device status", 84, 14, 224, 24, kText, 20);
+    infoFw = deviceDetail("Firmware", 52);
+    infoPc = deviceDetail("PC link", 72);
+    infoWifi = deviceDetail("Wi-Fi", 92);
+    infoIp = deviceDetail("IP address", 112);
+    infoSd = deviceDetail("SD card", 132);
+    infoUptime = deviceDetail("Uptime", 152);
+    otaStatus = deviceDetail("Updates", 172);
+    return;
+  }
 
+  makeLabel(pages[3], "Settings", 12, 5, 150, 24, kText, 20);
+  settingsConnection = makeLabel(pages[3], "", 180, 9, 128, 18, kMuted, 14);
+  lv_obj_set_style_text_align(settingsConnection, LV_TEXT_ALIGN_RIGHT, 0);
+  const char* sections[] = {"Display", "Touch", "Device"};
+  for (int i = 0; i < 3; ++i) {
+    settingsTabs[i] = settingsControl(sections[i], 8 + i * 104, 34, 96, 44,
+        settingsSectionClicked, reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+  }
+
+  if (settingsSection == SettingsSection::Display) {
+    brightnessLabel = makeLabel(pages[3], "Brightness", 12, 86, 200, 22, kText, 16);
+    brightnessPercent = makeLabel(pages[3], "", 224, 84, 84, 24, kText, 20);
+    lv_obj_set_style_text_align(brightnessPercent, LV_TEXT_ALIGN_RIGHT, 0);
+    brightnessSlider = lv_slider_create(pages[3]);
+    setStaticBounds(brightnessSlider, 28, 124, 264, 8);
+    lv_slider_set_range(brightnessSlider, 10, 100);
+    lv_slider_set_value(brightnessSlider, effectiveBrightness(*statePtr), LV_ANIM_OFF);
+    lv_obj_set_ext_click_area(brightnessSlider, 18);
+    lv_obj_add_event_cb(brightnessSlider, brightnessChanged, LV_EVENT_VALUE_CHANGED, nullptr);
+    const char* presets[] = {"25%", "60%", "100%"};
+    for (int i = 0; i < 3; ++i)
+      brightnessPresets[i] = settingsControl(presets[i], 8 + i * 104, 154, 96, 44,
+          brightnessPresetClicked, reinterpret_cast<void*>(static_cast<intptr_t>(kBrightnessPresets[i])));
+  } else if (settingsSection == SettingsSection::Touch) {
+    touchCalibrationStatus = makeLabel(pages[3], "", 12, 84, 296, 18, kMuted, 14);
+    settingsControl("Test touch", 8, 106, 148, 44, enqueue,
+        reinterpret_cast<void*>(static_cast<intptr_t>(IntentType::TestTouch)));
+    settingsControl("Calibrate", 164, 106, 148, 44, enqueue,
+        reinterpret_cast<void*>(static_cast<intptr_t>(IntentType::Recalibrate)));
+    makeLabel(pages[3], "Test response or align five targets.", 12, 164, 296, 20, kMuted, 14);
+  } else {
+    settingsControl("Connection & status", 8, 86, 304, 44, settingsDetailsClicked);
+    makeLabel(pages[3], "Factory reset: hold for 3 seconds.", 12, 134, 296, 18, kMuted, 14);
+    settingsControl("Restart", 8, 154, 148, 44, showRestartDialog);
+    factoryResetButton = settingsControl("Factory reset", 164, 154, 148, 44, nullptr);
+    lv_obj_add_event_cb(factoryResetButton, showFactoryResetDialog, LV_EVENT_LONG_PRESSED, nullptr);
+  }
 }
 
 void buildFactoryResetDialog() {
   resetDialog = lv_obj_create(root);
-  setStaticBounds(resetDialog, 26, 34, 268, 172);
-  lv_obj_set_style_bg_color(resetDialog, lv_color_hex(kPanel), 0);
-  lv_obj_set_style_bg_opa(resetDialog, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(resetDialog, 14, 0);
+  setStaticBounds(resetDialog, 0, 0, 320, 240);
+  lv_obj_add_flag(resetDialog, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(resetDialog, lv_color_hex(0), 0);
+  lv_obj_set_style_bg_opa(resetDialog, 170, 0);
+  lv_obj_set_style_radius(resetDialog, 0, 0);
   lv_obj_set_style_border_width(resetDialog, 0, 0);
-  makeLabel(resetDialog, "Factory Reset?", 16, 14, 236, 24, kText, 20);
-  makeLabel(resetDialog, "This removes Wi-Fi, pairing,", 16, 50, 236, 18, kMuted, 14);
-  makeLabel(resetDialog, "touch calibration and settings.", 16, 70, 236, 18, kMuted, 14);
-  button(resetDialog, "CANCEL", 16, 112, 98, 40, hideFactoryResetDialog, nullptr);
-  button(resetDialog, "CONFIRM", 132, 112, 120, 40, confirmFactoryReset, nullptr);
+  resetDialogPanel = lv_obj_create(resetDialog);
+  setStaticBounds(resetDialogPanel, 20, 28, 280, 184);
+  lv_obj_set_style_bg_color(resetDialogPanel, lv_color_hex(kPanel), 0);
+  lv_obj_set_style_bg_opa(resetDialogPanel, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(resetDialogPanel, 14, 0);
+  lv_obj_set_style_border_width(resetDialogPanel, 0, 0);
+  resetDialogTitle = makeLabel(resetDialogPanel, "Factory reset?", 16, 14, 248, 24, kText, 20);
+  resetDialogDetail = makeLabel(resetDialogPanel, "", 16, 50, 248, 44, kMuted, 14);
+  lv_label_set_long_mode(resetDialogDetail, LV_LABEL_LONG_MODE_WRAP);
+  button(resetDialogPanel, "Cancel", 16, 124, 116, 44, hideFactoryResetDialog, nullptr);
+  resetDialogConfirm = button(resetDialogPanel, "Reset device", 148, 124, 116, 44,
+      confirmFactoryReset, nullptr, &resetDialogConfirmLabel);
   lv_obj_add_flag(resetDialog, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -903,6 +1041,38 @@ void buildOverlay() {
   lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
 }
 
+void refreshSettings(const AppState& state) {
+  const uint32_t neutral = state.appearance.theme ? kLightMutedButton : kButton;
+  for (uint8_t i = 0; i < settingsControlCount; ++i) {
+    bool selectionControl = false;
+    for (int slot = 0; slot < 3; ++slot)
+      selectionControl |= settingsControls[i] == settingsTabs[slot] || settingsControls[i] == brightnessPresets[slot];
+    if (!selectionControl) setControlColors(settingsControls[i], neutral,
+        settingsControls[i] == factoryResetButton ? (state.appearance.theme ? kLightDangerText : kDangerText) : textColor());
+  }
+  for (int i = 0; i < 3; ++i) {
+    const bool selected = i == static_cast<int>(settingsSection);
+    const uint32_t fill = selected ? state.appearance.accent : neutral;
+    setControlColors(settingsTabs[i], fill, selected ? contrastingText(fill) : textColor());
+  }
+  const bool settingsActive = state.ui.page == Page::Info;
+  const uint32_t gearFill = settingsActive ? state.appearance.accent : neutral;
+  setControlColors(settingsButton, gearFill, settingsActive ? contrastingText(gearFill) : textColor());
+  const uint32_t confirmFill = pendingDeviceAction == IntentType::FactoryReset ? kLightDangerText : state.appearance.accent;
+  setControlColors(resetDialogConfirm, confirmFill, contrastingText(confirmFill));
+
+  const bool usb = std::strcmp(state.connection.agentHost, "usb") == 0;
+  setLabelText(settingsConnection, state.connection.agentConnected ? (usb ? "USB online" : "Wi-Fi online") : "PC offline");
+  setLabelText(touchCalibrationStatus, state.ui.calibrationValid ? "Calibration ready" : "Calibration needed");
+  if (brightnessSlider) {
+    const bool dragging = lv_obj_has_state(brightnessSlider, LV_STATE_PRESSED);
+    const int value = dragging ? lv_slider_get_value(brightnessSlider) : effectiveBrightness(state);
+    if (!dragging && lv_slider_get_value(brightnessSlider) != value)
+      lv_slider_set_value(brightnessSlider, value, LV_ANIM_OFF);
+    refreshBrightness(value);
+  }
+}
+
 void clearPageWidgets() {
   // Shared overlays occupy the prefix; discard every reference to the deleted page.
   while (buttonCount > sharedButtonCount) buttons[--buttonCount] = nullptr;
@@ -913,6 +1083,11 @@ void clearPageWidgets() {
   for (auto& tile : homeShortcutButtons) tile = nullptr;
   for (auto& icon : homeShortcutIcons) icon = nullptr;
   brightnessLabel = brightnessSlider = nullptr;
+  brightnessPercent = settingsConnection = touchCalibrationStatus = factoryResetButton = nullptr;
+  for (auto& tab : settingsTabs) tab = nullptr;
+  for (auto& preset : brightnessPresets) preset = nullptr;
+  for (auto& control : settingsControls) control = nullptr;
+  settingsControlCount = 0;
   coverPanel = mediaTitle = mediaArtist = mediaStatus = mediaChip = mediaHint = nullptr;
   mediaTimeLeft = mediaTimeRight = coverBadge = coverStatus = coverImage = nullptr;
   prevButton = playButton = nextButton = nullptr;
@@ -920,11 +1095,11 @@ void clearPageWidgets() {
   for (auto& btn : shortcutButtons) btn = nullptr;
   for (auto& label : shortcutLabels) label = nullptr;
   for (auto& icon : shortcutIcons) icon = nullptr;
-  for (int i = 0; i < 4; ++i) {
-    pcMetricCards[i] = pcMetricTitles[i] = pcMetricValues[i] = pcMetricBars[i] = nullptr;
+  for (int i = 0; i < 2; ++i) {
+    pcMetricCards[i] = pcMetricTitles[i] = pcMetricValues[i] = pcMetricBars[i] = pcMetricDetails[i] = nullptr;
   }
   appliedShortcutsLayout = 0xFF;
-  pcConnection = pcChip = pcAudio = heapFree = heapMin = heapLargest = otaStatus = nullptr;
+  pcConnection = pcSource = otaStatus = nullptr;
   infoFw = infoWifi = infoIp = infoPc = infoAgent = infoSd = infoUptime = infoChip = nullptr;
 }
 
@@ -1018,6 +1193,7 @@ void uiRefresh(AppState& s) {
       std::strcmp(s.media.title, "Waiting for PC") != 0;
 
   applyAppearanceStyles(s);
+  refreshSettings(s);
   if (s.ui.standby && !s.connection.agentConnected) {
     char clock[8] = "--:--";
     if (s.system.hostLocalMinutes >= 0) {
@@ -1127,45 +1303,32 @@ void uiRefresh(AppState& s) {
     updateShortcutTile(s.shortcuts, i, shortcutButtons[i], shortcutLabels[i], shortcutIcons[i], false);
   applyShortcutColors(s);
 
-  setChip(pcChip, s.connection.online ? "ONLINE" : "OFFLINE",
-      s.connection.online ? kOk : kButton);
   setChip(infoChip, s.connection.wifiConnected ? "WIFI" : "LOCAL",
       s.connection.wifiConnected ? kFeedback : kButton);
 
+  const bool pcFresh = pcMetricsFresh(s.system, s.connection.agentConnected, lv_tick_get());
+  setLabelText(pcConnection, !s.connection.agentConnected ? "Offline" :
+      (pcFresh ? "Live" : (s.system.pcStatsReceived ? "Stale" : "Waiting")));
+  setLabelText(pcSource, pcFresh ? "Source: Windows Agent" :
+      (s.connection.agentConnected ? "Waiting for new PC data" : "Connect Windows Agent"));
   if (pcMetricValues[0]) {
-    std::snprintf(buffer, sizeof(buffer), "%u%%", s.system.cpuPercent);
-    setLabelText(pcMetricValues[0], buffer);
-    if (pcMetricBars[0]) lv_bar_set_value(pcMetricBars[0], s.system.cpuPercent, LV_ANIM_OFF);
-
-    std::snprintf(buffer, sizeof(buffer), "%u%%", s.system.ramPercent);
-    setLabelText(pcMetricValues[1], buffer);
-    if (pcMetricBars[1]) lv_bar_set_value(pcMetricBars[1], s.system.ramPercent, LV_ANIM_OFF);
-
-    std::snprintf(buffer, sizeof(buffer), "%u%%", s.system.gpuPercent);
-    setLabelText(pcMetricValues[2], buffer);
-    if (pcMetricBars[2]) lv_bar_set_value(pcMetricBars[2], s.system.gpuPercent, LV_ANIM_OFF);
-
-    const uint8_t tempVal = s.system.tempCelsius > 0
-        ? s.system.tempCelsius
-        : static_cast<uint8_t>(38 + (s.system.cpuPercent * 35) / 100);
-    std::snprintf(buffer, sizeof(buffer), "%u C", tempVal);
-    setLabelText(pcMetricValues[3], buffer);
-    if (pcMetricBars[3]) lv_bar_set_value(pcMetricBars[3], tempVal > 100 ? 100 : tempVal, LV_ANIM_OFF);
+    const bool available[] = {s.system.cpuAvailable, s.system.ramAvailable};
+    const unsigned values[] = {s.system.cpuPercent, s.system.ramPercent};
+    for (int i = 0; i < 2; ++i) {
+      if (pcFresh && available[i]) std::snprintf(buffer, sizeof(buffer), "%u%%", values[i]);
+      else std::snprintf(buffer, sizeof(buffer), "--");
+      setLabelText(pcMetricValues[i], buffer);
+      lv_bar_set_value(pcMetricBars[i], pcFresh && available[i] ? values[i] : 0, LV_ANIM_OFF);
+    }
+    setLabelText(pcMetricDetails[0], pcFresh && s.system.cpuAvailable ? "All processors" : "No current measurement");
+    if (pcFresh && s.system.ramAvailable && s.system.ramCapacityAvailable) {
+      const uint64_t used = static_cast<uint64_t>(s.system.ramUsedMb) * 10ULL / 1024ULL;
+      const uint64_t total = static_cast<uint64_t>(s.system.ramTotalMb) * 10ULL / 1024ULL;
+      std::snprintf(buffer, sizeof(buffer), "%llu.%llu / %llu.%llu GB used",
+          used / 10, used % 10, total / 10, total % 10);
+      setLabelText(pcMetricDetails[1], buffer);
+    } else setLabelText(pcMetricDetails[1], pcFresh && s.system.ramAvailable ? "Capacity not reported" : "No current measurement");
   }
-
-  setLabelText(pcConnection, s.connection.online ? "Agent online" : "Agent offline - actions will queue");
-  std::snprintf(buffer, sizeof(buffer), "Audio %s  volume %u%%",
-      s.audio.available ? "available" : "offline", s.audio.reportedVolume);
-  setLabelText(pcAudio, buffer);
-  std::snprintf(buffer, sizeof(buffer), "Free heap  %lu",
-      static_cast<unsigned long>(s.system.freeHeap));
-  setLabelText(heapFree, buffer);
-  std::snprintf(buffer, sizeof(buffer), "Min heap   %lu",
-      static_cast<unsigned long>(s.system.minHeap));
-  setLabelText(heapMin, buffer);
-  std::snprintf(buffer, sizeof(buffer), "Largest block %lu",
-      static_cast<unsigned long>(s.system.largestBlock));
-  setLabelText(heapLargest, buffer);
   if (s.ota.running) {
     std::snprintf(buffer, sizeof(buffer), "%s %u%%", s.ota.status, s.ota.progress);
   } else {
@@ -1173,37 +1336,31 @@ void uiRefresh(AppState& s) {
   }
   setLabelText(otaStatus, buffer);
 
-  std::snprintf(buffer, sizeof(buffer), "FW %s  |  Calibration: %s", s.device.firmwareVersion, s.ui.calibrationValid ? "OK" : "Needed");
-  setLabelText(infoFw, buffer);
+  setLabelText(infoFw, s.device.firmwareVersion);
   if (s.connection.wifiConnected) {
-    std::snprintf(buffer, sizeof(buffer), "Wi-Fi  %s  %d dBm",
-        s.connection.ssid[0] ? s.connection.ssid : "connected",
-        static_cast<int>(s.connection.rssi));
+    std::snprintf(buffer, sizeof(buffer), "%s", s.connection.ssid[0] ? s.connection.ssid : "Connected");
   } else {
-    std::snprintf(buffer, sizeof(buffer), "Wi-Fi  Disconnected");
+    std::snprintf(buffer, sizeof(buffer), "Disconnected");
   }
   setLabelText(infoWifi, buffer);
-  std::snprintf(buffer, sizeof(buffer), "IP      %s",
-      s.connection.deviceIp[0] ? s.connection.deviceIp : "Unavailable");
-  setLabelText(infoIp, buffer);
-  std::snprintf(buffer, sizeof(buffer), "Agent: %s  |  %s",
-      s.connection.agentConnected ? "Connected" : "Offline", s.connection.agentHost[0] ? s.connection.agentHost : "USB / Wi-Fi");
-  setLabelText(infoPc, buffer);
+  setLabelText(infoIp, s.connection.deviceIp[0] ? s.connection.deviceIp : "Unavailable");
+  setLabelText(infoPc, !s.connection.agentConnected ? "Offline" :
+      (std::strcmp(s.connection.agentHost, "usb") == 0 ? "USB connected" : "Wi-Fi connected"));
   std::snprintf(buffer, sizeof(buffer), "Agent   %s",
       s.connection.agentHost[0] ? s.connection.agentHost : "Unavailable");
   setLabelText(infoAgent, buffer);
   if (s.storage.mounted) {
-    std::snprintf(buffer, sizeof(buffer), "SD %s / %lu MB  |  Up %lum",
-        s.storage.ready ? "OK" : "Mounted",
-        static_cast<unsigned long>(s.storage.freeMb), static_cast<unsigned long>(s.device.uptimeSeconds / 60));
+    std::snprintf(buffer, sizeof(buffer), "%s / %lu MB free",
+        s.storage.ready ? "Ready" : "Mounted",
+        static_cast<unsigned long>(s.storage.freeMb));
   } else {
-    std::snprintf(buffer, sizeof(buffer), "SD      Unavailable");
+    std::snprintf(buffer, sizeof(buffer), "Unavailable");
   }
   setLabelText(infoSd, buffer);
   const uint32_t hours = s.device.uptimeSeconds / 3600UL;
   const uint32_t minutes = (s.device.uptimeSeconds / 60UL) % 60UL;
   const uint32_t seconds = s.device.uptimeSeconds % 60UL;
-  std::snprintf(buffer, sizeof(buffer), "Uptime  %02lu:%02lu:%02lu",
+  std::snprintf(buffer, sizeof(buffer), "%02lu:%02lu:%02lu",
       static_cast<unsigned long>(hours),
       static_cast<unsigned long>(minutes),
       static_cast<unsigned long>(seconds));
@@ -1265,6 +1422,7 @@ void uiSetPage(Page page) {
     page = Page::Info;
   }
   statePtr->ui.page = page;
+  lv_obj_add_flag(resetDialog, LV_OBJ_FLAG_HIDDEN);
   if (!pages[pageIndex(page)]) buildPage(page);
   uiRefresh(*statePtr);
 }

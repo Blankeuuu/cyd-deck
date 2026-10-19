@@ -55,6 +55,7 @@ enum {
   LV_LABEL_LONG_DOT = 0,
   LV_LABEL_LONG_MODE_CLIP = 4,
   LV_LABEL_LONG_MODE_WRAP = 5,
+  LV_LABEL_LONG_MODE_DOTS = 6,
   LV_TEXT_ALIGN_AUTO = 0,
   LV_TEXT_ALIGN_LEFT = 1,
   LV_TEXT_ALIGN_CENTER = 2,
@@ -77,7 +78,8 @@ enum {
   LV_PART_KNOB = 2,
 };
 
-inline uint32_t lv_tick_get() { return 0; }
+inline uint32_t lv_test_tick = 0;
+inline uint32_t lv_tick_get() { return lv_test_tick; }
 
 struct lv_event_t {
   void* user_data = nullptr;
@@ -114,6 +116,8 @@ struct lv_obj_t {
   uint32_t state = 0;
   const lv_font_t* font = nullptr;
   lv_color_t bg_color = 0;
+  lv_color_t indicator_color = 0;
+  lv_color_t knob_color = 0;
   lv_color_t text_color = 0;
   int event_code = 0;
   int text_set_count = 0;
@@ -146,6 +150,7 @@ inline lv_obj_t* lv_test_create(lv_obj_t* parent, lv_obj_t::Type type) {
 }
 
 inline void lv_test_reset() {
+  lv_test_tick = 0;
   for (lv_obj_t* object : lv_test_allocations) delete object;
   lv_test_allocations.clear();
   lv_test_indev = lv_indev_t{};
@@ -194,7 +199,12 @@ inline void lv_obj_set_ext_click_area(lv_obj_t* object, int area) { object->ext_
 inline lv_color_t lv_obj_get_style_bg_color(lv_obj_t* object, int) { return object->bg_color; }
 inline lv_color_t lv_obj_get_style_text_color(lv_obj_t* object, int) { return object->text_color; }
 inline bool lv_color_eq(lv_color_t a, lv_color_t b) { return a == b; }
-inline void lv_obj_set_style_bg_color(lv_obj_t* object, lv_color_t color, int part) { ++lv_test_bg_writes; if (part == 0) object->bg_color = color; }
+inline void lv_obj_set_style_bg_color(lv_obj_t* object, lv_color_t color, int part) {
+  ++lv_test_bg_writes;
+  if (part == LV_PART_MAIN) object->bg_color = color;
+  else if (part == LV_PART_INDICATOR) object->indicator_color = color;
+  else if (part == LV_PART_KNOB) object->knob_color = color;
+}
 inline void lv_obj_set_style_bg_opa(lv_obj_t*, int, int) {}
 inline void lv_obj_set_style_radius(lv_obj_t* object, int radius, int part) { if (part == 0) object->radius = radius; }
 inline void lv_obj_set_style_border_color(lv_obj_t* object, lv_color_t color, int) { object->border_color = color; }

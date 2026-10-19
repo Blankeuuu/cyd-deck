@@ -114,6 +114,20 @@ int main(void) {
   assert(ascii_width(&streamdeck_polish_14, "Waiting for PC") <= 112);
   assert(ascii_width(&streamdeck_polish_16, "Ready to play") <= 128);
   assert(ascii_width(&streamdeck_polish_14, "Offline") <= 156);
+  const char* settings_tabs[] = {"Display", "Touch", "Device"};
+  for (unsigned i = 0; i < 3; ++i)
+    assert(ascii_width(&streamdeck_polish_16, settings_tabs[i]) <= 84);
+  assert(ascii_width(&streamdeck_polish_16, "Factory reset") <= 136);
+  assert(ascii_width(&streamdeck_polish_16, "Reset device") <= 104);
+  assert(ascii_width(&streamdeck_polish_16, "Connection & status") <= 292);
+  assert(ascii_width(&streamdeck_polish_14, "Test response or align five targets.") <= 296);
+  assert(ascii_width(&streamdeck_polish_14, "Factory reset: hold for 3 seconds.") <= 296);
+  assert(ascii_width(&streamdeck_polish_14, "Erases Wi-Fi, pairing, calibration") <= 248);
+  assert(ascii_width(&streamdeck_polish_14, "The device will reconnect shortly.") <= 248);
+  assert(ascii_width(&streamdeck_polish_20, "Windows PC") <= 184);
+  assert(ascii_width(&streamdeck_polish_16, "Memory (RAM)") <= 176);
+  assert(ascii_width(&streamdeck_polish_14, "Waiting for new PC data") <= 296);
+  assert(ascii_width(&streamdeck_polish_14, "10.0 / 16.0 GB used") <= 280);
 
   assert_glyph_present_in_actual_font_data(&lv_font_montserrat_16, 0xF026); /* mute icon */
   assert_glyph_present_in_actual_font_data(&lv_font_montserrat_16, 0xF028); /* speaker icon */
