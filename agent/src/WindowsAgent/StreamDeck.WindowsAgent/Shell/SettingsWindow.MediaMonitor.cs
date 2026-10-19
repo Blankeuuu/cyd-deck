@@ -314,6 +314,9 @@ public sealed partial class SettingsWindow
         }
     }
 
+    private static readonly Lazy<string> CachedCpuName = new(() =>
+        Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString", null)?.ToString()?.Trim() ?? "Procesor Windows");
+
     private Control CreateDesktopMonitorPage()
     {
         var page = CreatePage("Monitor");
@@ -327,7 +330,7 @@ public sealed partial class SettingsWindow
             metrics.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         }
 
-        var cpuName = Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString", null)?.ToString()?.Trim() ?? "Procesor Windows";
+        var cpuName = CachedCpuName.Value;
         var views = new List<MetricView>();
         var colors = new[] { Accent, AppleGreen, ApplePurple, AppleAmber };
         for (var i = 0; i < 4; ++i) {

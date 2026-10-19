@@ -49,7 +49,7 @@ internal static class DesktopBugRegressionTests
             if (active is null) throw new InvalidOperationException("Tools menu did not open");
             active.Close(); Application.DoEvents();
             All(window).OfType<Button>().Single(b => b.Text == "Settings").PerformClick(); Application.DoEvents();
-            All(window).OfType<RadioButton>().Single(b => b.Text == (i % 2 == 0 ? "Light" : "Dark")).PerformClick();
+            All(window).OfType<RadioButton>().Single(b => b.Visible && b.Text == (i % 2 == 0 ? "Light" : "Dark")).PerformClick();
             if (!window.SaveConfigurationDraftAsync().GetAwaiter().GetResult()) throw new InvalidOperationException("Theme save failed during menu regression");
             All(window).OfType<Button>().Single(b => b.Text == "Deck Builder").PerformClick(); Application.DoEvents();
         }

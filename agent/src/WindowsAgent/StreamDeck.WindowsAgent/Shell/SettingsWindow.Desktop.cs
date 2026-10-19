@@ -23,7 +23,7 @@ public sealed partial class SettingsWindow
         var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12, 20, 12, 16), BackColor = Surface };
         var brand = new Label { Text = "CYD-DECK", Dock = DockStyle.Top, Height = 56, Font = new Font(Font.FontFamily, 17, FontStyle.Bold), ForeColor = TextPrimary };
         var nav = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(0, 8, 0, 0), Margin = Padding.Empty };
-        foreach (var name in new[] { "Shortcuts", "Media", "Monitor", "Appearance" }) {
+        foreach (var name in new[] { "Shortcuts", "Media", "Monitor", "Appearance", "Pairing" }) {
             var button = CreateNavButton(name); button.AccessibleName = DisplayPageName(name); navButtons[name] = button; nav.Controls.Add(button);
         }
         var footer = new Panel { Dock = DockStyle.Bottom, Height = 74, Margin = Padding.Empty };
@@ -58,9 +58,11 @@ public sealed partial class SettingsWindow
         var picker = new DarkComboBox { Width = 115, AccessibleName = "Deck Profile", Margin = new Padding(2, 2, 4, 0) };
         picker.Items.AddRange(profiles.Select(p => p.Name).Cast<object>().ToArray()); picker.SelectedItem = configuration.ActiveProfile;
         picker.SelectedIndexChanged += (_, _) => {
+            if (updatingProfilePicker) return;
             var current = LoadConfiguration(); var all = GetProfiles(current); var next = all.First(p => p.Name == (string)picker.SelectedItem!);
-            configurationDraft = current with { Profiles = all, ActiveProfile = next.Name, Shortcuts = next.Shortcuts }; MarkDraft(); ShowPage(currentPage);
+            configurationDraft = current with { Profiles = all, ActiveProfile = next.Name, Shortcuts = next.Shortcuts }; MarkDraft(); InvalidatePageCache(); ShowPage(currentPage);
         };
+        unifiedProfilePicker = picker;
         profile.Controls.Add(picker);
 
         foreach (var item in new[] { ("+", "Dodaj profil", false, false), ("⧉", "Duplikuj profil", true, false), ("−", "Usuń profil", false, true) }) {
@@ -85,6 +87,14 @@ public sealed partial class SettingsWindow
     private void RefreshDesktopToolbar()
     {
         var snapshot = state.Snapshot(); var connected = snapshot.HostStatus == "connected";
+        if (unifiedProfilePicker is { IsDisposed: false }) {
+            var configuration = LoadConfiguration();
+            if (!Equals(unifiedProfilePicker.SelectedItem, configuration.ActiveProfile)) {
+                updatingProfilePicker = true;
+                unifiedProfilePicker.SelectedItem = configuration.ActiveProfile;
+                updatingProfilePicker = false;
+            }
+        }
         if (unifiedFeedback is { IsDisposed: false }) {
             var synced = string.Equals(configurationFeedback, "Saved · sent to CYD", StringComparison.OrdinalIgnoreCase);
             unifiedFeedback.Text = savingConfiguration ? "Zapisywanie…"
@@ -290,8 +300,8 @@ public sealed partial class SettingsWindow
         CompactField(hardware, "", ToggleRow("Automatyczne łączenie przy starcie", server.UsbAutoConnect, v => { server = server with { UsbAutoConnect = v }; configurationDraft = (configurationDraft ?? LoadConfiguration()) with { Server = server }; }), 44);
         CompactField(hardware, "", ToggleRow("Wybudzanie dotykiem ekranu", display.WakeOnTouch, v => display.WakeOnTouch = v), 44);
 
-        CompactField(hardware, "Narzędzia", CompactButton("Urządzenie i parowanie…", () => { ShowPage("Device"); return Task.CompletedTask; }));
-        CompactField(hardware, "", CompactButton("Przywróć domyślne", () => { if (MessageBox.Show(this, "Czy na pewno chcesz przywrócić domyślne ustawienia wyglądu i sprzętu w szkicu roboczym?", "Przywracanie domyślnych", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK) { pendingAppearance = AppearanceState.Default; pendingDesktopAppearance = DesktopAppearanceState.Default; configurationDraft = (configurationDraft ?? LoadConfiguration()) with { Server = new() }; MarkDraft(); ShowPage("Appearance"); } return Task.CompletedTask; }));
+        CompactField(hardware, "Narzędzia", CompactButton("Urządzenia i parowanie…", () => { ShowPage("Pairing"); return Task.CompletedTask; }));
+        CompactField(hardware, "", CompactButton("Przywróć domyślne", () => { if (MessageBox.Show(this, "Czy na pewno chcesz przywrócić domyślne ustawienia wyglądu i sprzętu w szkicu roboczym?", "Przywracanie domyślnych", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK) { pendingAppearance = AppearanceState.Default; pendingDesktopAppearance = DesktopAppearanceState.Default; configurationDraft = (configurationDraft ?? LoadConfiguration()) with { Server = new() }; MarkDraft(); InvalidatePageCache(); ShowPage("Appearance"); } return Task.CompletedTask; }));
         FinishCard(hardware);
 
         grid.Controls.Add(windows, 0, 0); grid.Controls.Add(cyd, 1, 0); grid.Controls.Add(hardware, 2, 0); AddPageBodyControl(page, grid); return page;

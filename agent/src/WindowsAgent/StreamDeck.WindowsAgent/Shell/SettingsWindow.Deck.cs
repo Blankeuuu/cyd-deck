@@ -357,14 +357,16 @@ public sealed partial class SettingsWindow
             loadInspector();
             rebuildLibrary();
         }
+        var lastLibraryColumns = -1;
         void RebuildLibrary() {
             foreach (Control control in library.Controls.Cast<Control>().ToArray()) control.Dispose();
             library.Controls.Clear();
             var filtered = shortcuts.Where(s => s.Name.Contains(search.Text, StringComparison.OrdinalIgnoreCase) || s.Action.Type.Contains(search.Text, StringComparison.OrdinalIgnoreCase)).ToArray();
             var columns = Math.Max(2, library.ClientSize.Width / 150);
+            lastLibraryColumns = columns;
             var width = Math.Max(145, (library.ClientSize.Width - 22) / columns - 6);
             foreach (var item in filtered) {
-                var row = new Panel { Width = width, Height = 66, BackColor = SurfaceAlt, Margin = new Padding(3), AccessibleName = item.Name };
+                var row = new Panel { Width = width, Height = 66, BackColor = Surface, Margin = new Padding(3), AccessibleName = item.Name };
                 var select = new RoundedButton { Dock = DockStyle.Fill, Text = "", FlatStyle = FlatStyle.Flat, BackColor = SurfaceAlt, AccessibleName = "Edit " + item.Name };
                 select.FlatAppearance.BorderColor = item.Id == selectedId ? Accent : Border;
                 select.Paint += (_, e) => {
@@ -397,13 +399,6 @@ public sealed partial class SettingsWindow
 
                 row.Controls.Add(select);
                 row.Controls.Add(assign);
-                row.SizeChanged += (_, _) => {
-                    using var path = CreateRoundedRectPath(new Rectangle(0, 0, row.Width, row.Height), 9);
-                    var old = row.Region;
-                    row.Region = new Region(path);
-                    old?.Dispose();
-                };
-                using (var path = CreateRoundedRectPath(new Rectangle(0, 0, row.Width, row.Height), 9)) row.Region = new Region(path);
                 library.Controls.Add(row);
             }
             if (filtered.Length == 0) library.Controls.Add(new Label { Text = shortcuts.Count == 0 ? "Brak skrótów. Dodaj swój pierwszy skrót." : "Brak pasujących skrótów", AutoSize = true, ForeColor = TextMuted });
@@ -443,7 +438,10 @@ public sealed partial class SettingsWindow
         preview.UnassignSlot = slot => { slots[slot] = null; selectedSlot = slot; selectedId = null; Store(); loadInspector(); rebuildLibrary(); };
         preview.MoveSlot = (source, destination) => { (slots[source], slots[destination]) = (slots[destination], slots[source]); selectedSlot = destination; selectedId = slots[destination]; Store(); loadInspector(); rebuildLibrary(); };
         search.TextChanged += (_, _) => rebuildLibrary();
-        library.SizeChanged += (_, _) => rebuildLibrary();
+        library.SizeChanged += (_, _) => {
+            var columns = Math.Max(2, library.ClientSize.Width / 150);
+            if (columns != lastLibraryColumns) rebuildLibrary();
+        };
         desktopRefresh = RefreshPreview;
         grid.Controls.Add(left, 0, 0);
         grid.Controls.Add(inspector, 1, 0);

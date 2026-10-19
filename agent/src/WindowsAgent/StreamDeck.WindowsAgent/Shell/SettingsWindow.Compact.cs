@@ -13,6 +13,8 @@ public sealed partial class SettingsWindow
     private Button? unifiedSave;
     private Label? unifiedConnection;
     private Label? unifiedFeedback;
+    private DarkComboBox? unifiedProfilePicker;
+    private bool updatingProfilePicker;
     private string? connectedUsbPort;
     private string configurationFeedback = "Ready";
 
@@ -28,6 +30,7 @@ public sealed partial class SettingsWindow
         "Appearance" => "Settings",
         "Media" => "Media Controls",
         "Monitor" => "System Monitor",
+        "Pairing" => "Urządzenia",
         _ => page
     };
 
@@ -64,6 +67,7 @@ public sealed partial class SettingsWindow
         var desktop = LoadDesktopAppearanceConfiguration();
         var theme = ResolveEffectiveDesktopTheme(desktop.Theme);
         ApplyClientTheme(theme, desktop.Accent, ResolveDesktopWindowBackground(desktop, theme));
+        InvalidatePageCache();
         ShowPage(currentPage);
         return true;
     }
@@ -89,13 +93,20 @@ public sealed partial class SettingsWindow
         candidate = ConfigurationColorNormalizer.Normalize(candidate with { Profiles = GetProfiles(candidate) });
         if (!TrySaveConfiguration(candidate, "Configuration saved locally")) return false;
         configurationDraft = candidate;
+        var themeRebuilt = false;
         if (pendingDesktopAppearance is not null)
         {
             var theme = ResolveEffectiveDesktopTheme(pendingDesktopAppearance.Theme);
+            var previousLight = clientLightTheme;
             ApplyClientTheme(theme, pendingDesktopAppearance.Accent, ResolveDesktopWindowBackground(pendingDesktopAppearance, theme));
+            themeRebuilt = previousLight != clientLightTheme;
         }
         configurationDirty = false;
         savingConfiguration = true;
+        if (themeRebuilt)
+        {
+            ShowPage(currentPage);
+        }
         RefreshUnifiedToolbar();
         var synced = false;
         try
@@ -148,6 +159,7 @@ public sealed partial class SettingsWindow
             configurationDraft = configuration with { Profiles = profiles, ActiveProfile = name, Shortcuts = shortcuts };
         }
         configurationDirty = true;
+        InvalidatePageCache();
         ShowPage("Shortcuts");
     }
 

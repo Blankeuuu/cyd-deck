@@ -150,6 +150,9 @@ public sealed partial class SettingsWindow : Form
     private readonly AgentConfigurationStore configurationStore;
     private readonly Dictionary<string, Button> navButtons = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Label> infoValueLabels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Control> pageCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Action?> pageRefreshCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (Button? Save, Label? Connection, Label? Feedback, DarkComboBox? ProfilePicker)> pageToolbarCache = new(StringComparer.Ordinal);
     private readonly Panel contentPanel;
     private readonly System.Windows.Forms.Timer shortcutImportRefreshTimer = new() { Interval = 1000 };
     private string currentPage = "Shortcuts";
@@ -224,7 +227,7 @@ public sealed partial class SettingsWindow : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { desktopViewLifetime?.Cancel(); desktopViewLifetime?.Dispose(); desktopViewLifetime = null; desktopArtwork?.Dispose(); desktopArtwork = null; desktopToolsMenu?.Dispose(); desktopToolsMenu = null; desktopTips.Dispose(); }
+        if (disposing) { InvalidatePageCache(); desktopViewLifetime?.Cancel(); desktopViewLifetime?.Dispose(); desktopViewLifetime = null; desktopArtwork?.Dispose(); desktopArtwork = null; desktopToolsMenu?.Dispose(); desktopToolsMenu = null; desktopTips.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -332,6 +335,28 @@ public sealed partial class SettingsWindow : Form
         return button;
     }
 
+    private static bool IsCacheableDesktopPage(string page) =>
+        page is "Shortcuts" or "Appearance" or "Media" or "Monitor" or "Pairing";
+
+    internal void InvalidatePageCache()
+    {
+        foreach (var cached in pageCache.Values.ToArray())
+        {
+            if (contentPanel is { IsDisposed: false } && contentPanel.Controls.Contains(cached))
+            {
+                contentPanel.Controls.Remove(cached);
+            }
+            cached.Dispose();
+        }
+        pageCache.Clear();
+        pageRefreshCache.Clear();
+        pageToolbarCache.Clear();
+        unifiedSave = null;
+        unifiedConnection = null;
+        unifiedFeedback = null;
+        unifiedProfilePicker = null;
+    }
+
     internal void ShowPage(string page)
     {
         currentPage = page;
@@ -346,168 +371,105 @@ public sealed partial class SettingsWindow : Form
             button.Invalidate();
         }
 
-        UpdateSidebarConnectionPill();
+        desktopViewLifetime ??= new();
+
+        if (IsCacheableDesktopPage(page))
+        {
+            foreach (Control control in contentPanel.Controls.Cast<Control>().ToArray())
+            {
+                if (!pageCache.ContainsValue(control))
+                {
+                    contentPanel.Controls.Remove(control);
+                    control.Dispose();
+                }
+                else if (control.Visible && (!pageCache.TryGetValue(page, out var target) || !ReferenceEquals(control, target)))
+                {
+                    control.Visible = false;
+                }
+            }
+
+            if (pageCache.TryGetValue(page, out var cachedPage) && !cachedPage.IsDisposed)
+            {
+                pageRefreshCache.TryGetValue(page, out desktopRefresh);
+                if (pageToolbarCache.TryGetValue(page, out var toolbarRefs))
+                {
+                    unifiedSave = toolbarRefs.Save;
+                    unifiedConnection = toolbarRefs.Connection;
+                    unifiedFeedback = toolbarRefs.Feedback;
+                    unifiedProfilePicker = toolbarRefs.ProfilePicker;
+                }
+                UpdateSidebarConnectionPill();
+                if (!cachedPage.Visible) cachedPage.Visible = true;
+                cachedPage.BringToFront();
+                desktopRefresh?.Invoke();
+                if (string.Equals(page, "Pairing", StringComparison.Ordinal))
+                {
+                    refreshPairingLists?.Invoke();
+                    UpdateConnectionBadge();
+                }
+                FitDesktopRows(contentPanel);
+                UpdateShortcutImportRefreshTimer(page);
+                return;
+            }
+
+            desktopRefresh = null;
+            var created = page switch
+            {
+                "Shortcuts" => CreateDesktopDeckPage(),
+                "Appearance" => CreateDesktopSettingsPage(),
+                "Media" => CreateDesktopMediaPage(),
+                "Monitor" => CreateDesktopMonitorPage(),
+                "Pairing" => CreatePairingPage(),
+                _ => CreateDesktopDeckPage()
+            };
+
+            WrapDesktopInputs(created);
+            FitDesktopRows(created);
+            pageCache[page] = created;
+            pageRefreshCache[page] = desktopRefresh;
+            pageToolbarCache[page] = (unifiedSave, unifiedConnection, unifiedFeedback, unifiedProfilePicker);
+            contentPanel.Controls.Add(created);
+            created.BringToFront();
+            UpdateSidebarConnectionPill();
+            FitDesktopRows(contentPanel);
+            UpdateShortcutImportRefreshTimer(page);
+            return;
+        }
 
         foreach (Control control in contentPanel.Controls.Cast<Control>().ToArray())
         {
-            control.Dispose();
+            if (pageCache.ContainsValue(control))
+            {
+                if (control.Visible) control.Visible = false;
+            }
+            else
+            {
+                contentPanel.Controls.Remove(control);
+                control.Dispose();
+            }
         }
 
-        contentPanel.Controls.Clear();
         infoValueLabels.Clear();
         refreshOverviewWidgets = null;
         desktopRefresh = null;
-        desktopViewLifetime?.Cancel(); desktopViewLifetime?.Dispose(); desktopViewLifetime = new();
-        contentPanel.Controls.Add(page switch
+        var nonCached = page switch
         {
             "Overview" => CreateCompactOverviewPage(),
-            "Shortcuts" => CreateDesktopDeckPage(),
-            "Appearance" => CreateDesktopSettingsPage(),
-            "Media" => CreateDesktopMediaPage(),
-            "Monitor" => CreateDesktopMonitorPage(),
             "Device" => CreateCompactDevicePage(),
-            "Pairing" => CreatePairingPage(),
             "Updates" => CreateUpdatesPage(),
             "Logs" => CreateLogsPage(),
             _ => CreateCompactOverviewPage()
-        });
-        if (page is "Shortcuts" or "Appearance" or "Media" or "Monitor") WrapDesktopInputs(contentPanel);
+        };
+        contentPanel.Controls.Add(nonCached);
+        nonCached.BringToFront();
+        UpdateSidebarConnectionPill();
         FitDesktopRows(contentPanel);
         UpdateShortcutImportRefreshTimer(page);
     }
 
     private void UpdateSidebarConnectionPill() => RefreshUnifiedToolbar();
 
-    private Control CreatePairingPage()
-    {
-        var panel = CreatePage("Pairing");
-        var status = new Label
-        {
-            Dock = DockStyle.Bottom,
-            Height = 42,
-            ForeColor = TextMuted,
-            Text = "Loading pairing requests…",
-            Padding = new Padding(0, 10, 0, 0)
-        };
-
-        var mainLayout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 5,
-            BackColor = Background,
-            AutoScroll = false
-        };
-        mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-
-        var instructionsLabel = new Label
-        {
-            Text = "Pierwsze połączenie (zarówno przez USB, jak i Wi-Fi) wymaga jednorazowego zatwierdzenia urządzenia w Windows Agent (poniżej).\nPo zatwierdzeniu urządzenie staje się zaufane i łączy się automatycznie.",
-            ForeColor = TextMuted,
-            AutoSize = true,
-            Padding = new Padding(0, 0, 0, 12),
-            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Regular)
-        };
-
-        var pendingHeader = new Label
-        {
-            Text = "Waiting for approval",
-            AutoSize = true,
-            ForeColor = Accent,
-            Font = new Font(Font.FontFamily, 9F, FontStyle.Bold),
-            Padding = new Padding(0, 6, 0, 6)
-        };
-
-        var pendingList = CreateThemedListView();
-        pendingList.Height = 160;
-        pendingList.Dock = DockStyle.Fill;
-        pendingList.MultiSelect = false;
-        ConfigurePairingColumns(pendingList, MinimumSettingsClientWidth);
-        AttachPairingColumnResizeHandler(pendingList);
-
-        var pairedHeader = new Label
-        {
-            Text = "Trusted devices",
-            AutoSize = true,
-            ForeColor = Accent,
-            Font = new Font(Font.FontFamily, 9F, FontStyle.Bold),
-            Padding = new Padding(0, 14, 0, 6)
-        };
-
-        var pairedList = CreateThemedListView();
-        pairedList.Height = 160;
-        pairedList.Dock = DockStyle.Fill;
-        pairedList.MultiSelect = false;
-        ConfigurePairingColumns(pairedList, MinimumSettingsClientWidth);
-        AttachPairingColumnResizeHandler(pairedList);
-
-        var approveButton = CreateStyledActionButton("Approve", useAccent: true);
-        approveButton.Enabled = false;
-
-        var rejectButton = CreateNeutralButton("Reject");
-        rejectButton.Enabled = false;
-
-        var forgetPairedButton = CreateStyledActionButton("Forget paired device", useAccent: false);
-        forgetPairedButton.Enabled = false;
-
-        var refreshButton = CreateNeutralButton("Refresh");
-
-        pendingList.SelectedIndexChanged += (_, _) =>
-        {
-            var hasSelection = pendingList.SelectedItems.Count > 0;
-            approveButton.Enabled = hasSelection;
-            rejectButton.Enabled = hasSelection;
-        };
-
-        pairedList.SelectedIndexChanged += (_, _) =>
-        {
-            forgetPairedButton.Enabled = pairedList.SelectedItems.Count > 0;
-        };
-
-        approveButton.Click += async (_, _) => await PairSelectedDeviceAsync(pendingList, pairedList, status, approve: true, approveButton, rejectButton).ConfigureAwait(true);
-        rejectButton.Click += async (_, _) => await PairSelectedDeviceAsync(pendingList, pairedList, status, approve: false, approveButton, rejectButton).ConfigureAwait(true);
-        forgetPairedButton.Click += async (_, _) => await ForgetPairedDeviceAsync(pairedList, pendingList, status, forgetPairedButton).ConfigureAwait(true);
-        refreshButton.Click += async (_, _) => await RefreshPairingListAsync(pendingList, pairedList, status, approveButton, rejectButton, forgetPairedButton).ConfigureAwait(true);
-
-        var actionsBar = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            MinimumSize = new Size(0, ActionButtonHeight + ActionButtonVerticalMargin + 8),
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = true,
-            BackColor = Background,
-            Padding = new Padding(0, 0, 0, 8)
-        };
-        actionsBar.Controls.Add(approveButton);
-        actionsBar.Controls.Add(rejectButton);
-        actionsBar.Controls.Add(forgetPairedButton);
-        actionsBar.Controls.Add(refreshButton);
-
-        mainLayout.Controls.Add(instructionsLabel, 0, 0);
-        mainLayout.Controls.Add(pendingHeader, 0, 1);
-        mainLayout.Controls.Add(pendingList, 0, 2);
-        mainLayout.Controls.Add(pairedHeader, 0, 3);
-        mainLayout.Controls.Add(pairedList, 0, 4);
-
-        AddPageBodyControl(panel, mainLayout);
-        AddPageBodyControl(panel, status);
-        AddPageFooter(panel, actionsBar);
-
-        refreshPairingLists = () =>
-        {
-            if (!pendingList.IsDisposed && !pairedList.IsDisposed)
-                _ = RefreshPairingListAsync(pendingList, pairedList, status, approveButton, rejectButton, forgetPairedButton);
-        };
-        refreshPairingLists();
-        return panel;
-    }
+    private Control CreatePairingPage() => CreateDesktopPairingPage();
 
     private Control CreatePendingShortcutImportsPanel(
         IReadOnlyList<PendingShortcutImport> pendingImports,
@@ -1275,6 +1237,7 @@ public sealed partial class SettingsWindow : Form
         var resolvedBg = ResolveDesktopWindowBackground(pendingDesktopAppearance, resolvedTheme);
         ApplyClientTheme(resolvedTheme, pendingDesktopAppearance.Accent, resolvedBg);
         QueueAppearanceSave();
+        InvalidatePageCache();
         ShowPage("Appearance");
     }
 
@@ -1456,12 +1419,17 @@ public sealed partial class SettingsWindow : Form
     private void ApplyClientTheme(string theme, string? deviceAccent = null, string? deviceBackground = null)
     {
         var useLightTheme = string.Equals(theme, "light", StringComparison.OrdinalIgnoreCase);
+        var themeChanged = clientLightTheme != useLightTheme;
         clientLightTheme = useLightTheme;
         var clientAccent = ResolveClientAccent(deviceAccent);
         var clientBackground = ResolveClientBackground(theme, deviceBackground);
         SuspendLayout();
         try
         {
+            if (themeChanged && pageCache.Count > 0)
+            {
+                InvalidatePageCache();
+            }
             ApplyClientThemeColors(this, theme, clientAccent, clientBackground);
             Accent = clientAccent;
             UpdateTitleBarTheme();
@@ -2846,6 +2814,7 @@ public sealed partial class SettingsWindow : Form
             pendingAppearance = AppearanceState.FromConfiguration(configuration.Appearance ?? new());
             pendingDesktopAppearance = DesktopAppearanceState.FromConfiguration(configuration.DesktopAppearance ?? new());
             configurationDirty = true;
+            InvalidatePageCache();
             ShowPage(currentPage);
         }
         catch (AgentConfigurationException exception)
