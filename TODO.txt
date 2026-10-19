@@ -381,3 +381,16 @@ Szczegóły: docs/wiki/2026-10-15-state-sync-refactor.md. Aktualnie uruchomiony 
 - [x] Timeline lokalnie co100ms, heartbeat5s / timeout30s.
 - [x] Installer per-user i self-contained portable wraz z runtime/licencjami.
 - [x] Wersjonowanie Agent/firmware1.1.0 i instrukcja wydania docs/releases/1.1.0.md.
+
+
+## Wydanie 1.3.0 — weryfikacja i publikacja
+
+- [x] Przeglądarkowy Web Flasher oparty o Web Serial (ESP Web Tools w `installer/web/`) z manifestem i skryptem `scripts/launch-web-flasher.ps1`.
+- [x] Instalator Windows Inno Setup (`CYD-DECK-Setup-1.3.0-win-x64.exe`) z cichym `taskkill /F /IM StreamDeck.WindowsAgent.exe` w `InitializeSetup` i `InitializeUninstall` oraz czystym usuwaniem autostartu i katalogu.
+- [x] Budowa kompletnego pakietu release w `artifacts/release-v1.3.0/` wraz z sumami `SHA256SUMS.txt`, instalatorem, paczką ZIP i binariami firmware (`firmware-ST7789-1.3.0.bin`, `firmware-ST7789-1.3.0-full.bin`).
+- [x] Szybkie sterowanie odtwarzaczem i głośnością z poziomu menu kontekstowego zasobnika systemowego (Tray) oraz powiadomienia balonowe o stanie połączenia z urządzeniem.
+- [x] Naprawa rzadkiego błędu walidacji Bearer Token w `ProtocolSerializer` i `PairingApprovalService` (dopuszczenie znaków Base64URL `-` i `_` na dowolnej pozycji).
+- [x] Odświeżenie `README.md` w nowoczesnym stylu, z pełną dokumentacją instalacji, flashera www i konfiguracji.
+- [x] Przygotowanie szczegółowego changeloga wydania w standardzie Obsidian (`docs/releases/1.3.0.md`).
+- [x] Kompletny zestaw testów .NET (9 suite'ów) oraz 7 suite'ów testów natywnych firmware C++ zaliczonych (0 błędów, 0 ostrzeżeń).
+

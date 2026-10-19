@@ -1,7 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $python = Join-Path $projectRoot '.tools\pio-venv\Scripts\python.exe'
-$zig = Join-Path $projectRoot '.tools\ziglang-host\ziglang\zig.exe'
+$compilerCandidate = Join-Path $projectRoot '.tools\windows-host-compiler\ziglang\zig.exe'
+$zig = if (Test-Path -LiteralPath $compilerCandidate) { $compilerCandidate } else { Join-Path $projectRoot '.tools\ziglang-host\ziglang\zig.exe' }
 $source = Join-Path $projectRoot 'tests\affine_calibration_test.cpp'
 $executable = Join-Path $projectRoot '.tools\affine_calibration_test.exe'
 $buildLog = Join-Path $projectRoot '.tools\affine_calibration_test.build.log'

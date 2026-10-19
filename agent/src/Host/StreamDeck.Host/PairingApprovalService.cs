@@ -291,7 +291,10 @@ public sealed class PairingApprovalService : IPairingApprovalService
     private static string CreateBearerToken()
     {
         Span<byte> bytes = stackalloc byte[TokenBytes];
-        RandomNumberGenerator.Fill(bytes);
+        do
+        {
+            RandomNumberGenerator.Fill(bytes);
+        } while ((bytes[0] >> 2) >= 62);
         return Base64UrlEncode(bytes);
     }
 
@@ -355,10 +358,27 @@ public sealed class PairingApprovalService : IPairingApprovalService
             return new Dictionary<string, PairingRecord>(StringComparer.Ordinal);
         }
 
-        using var stream = File.OpenRead(path);
-        var store = JsonSerializer.Deserialize<PairingStore>(stream, JsonOptions);
-        return store?.Devices?.ToDictionary(record => record.DeviceId, StringComparer.Ordinal)
-            ?? new Dictionary<string, PairingRecord>(StringComparer.Ordinal);
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                if (stream.Length == 0)
+                {
+                    Thread.Sleep(10);
+                    continue;
+                }
+                var store = JsonSerializer.Deserialize<PairingStore>(stream, JsonOptions);
+                return store?.Devices?.ToDictionary(record => record.DeviceId, StringComparer.Ordinal)
+                    ?? new Dictionary<string, PairingRecord>(StringComparer.Ordinal);
+            }
+            catch (IOException) when (attempt < 4)
+            {
+                Thread.Sleep(10);
+            }
+        }
+
+        return new Dictionary<string, PairingRecord>(StringComparer.Ordinal);
     }
 
     private void PersistRecords()
@@ -370,8 +390,9 @@ public sealed class PairingApprovalService : IPairingApprovalService
         }
 
         var store = new PairingStore(records.Values.OrderBy(record => record.DeviceId, StringComparer.Ordinal).ToArray());
-        using var stream = File.Create(storagePath);
+        using var stream = new FileStream(storagePath, FileMode.Create, FileAccess.Write, FileShare.Read);
         JsonSerializer.Serialize(stream, store, JsonOptions);
+        stream.Flush(flushToDisk: true);
     }
 
     private void OnPairingChanged()

@@ -289,7 +289,7 @@ public static class ProtocolSerializer
         }
 
         if (data.TryGetProperty("bearerToken", out var bearerToken)
-            && (bearerToken.ValueKind != JsonValueKind.String || !IsStableToken(bearerToken.GetString())))
+            && (bearerToken.ValueKind != JsonValueKind.String || !IsBearerToken(bearerToken.GetString())))
         {
             return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "data.bearerToken must be a stable 1-64 character token.");
         }
@@ -505,6 +505,24 @@ public static class ProtocolSerializer
         return text is not null && allowedValues.Contains(text)
             ? null
             : ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, $"data.{propertyName} must be one of: {string.Join(", ", allowedValues)}.");
+    }
+
+    private static bool IsBearerToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 64)
+        {
+            return false;
+        }
+
+        foreach (var character in value)
+        {
+            if (!char.IsAsciiLetterOrDigit(character) && character is not '.' and not '_' and not '-')
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool IsStableToken(string? value)

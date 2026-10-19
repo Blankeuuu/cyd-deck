@@ -1,7 +1,8 @@
 param([string]$OutputDirectory = 'artifacts/settings-preview')
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$zig = Join-Path $projectRoot '.tools/ziglang-host/ziglang/zig.exe'
+$compilerCandidate = Join-Path $projectRoot '.tools/windows-host-compiler/ziglang/zig.exe'
+$zig = if (Test-Path -LiteralPath $compilerCandidate) { $compilerCandidate } else { Join-Path $projectRoot '.tools/ziglang-host/ziglang/zig.exe' }
 $lvgl = 'firmware/.pio/libdeps/cyd28_st7789_app/lvgl'
 $output = Join-Path $projectRoot $OutputDirectory
 $executable = Join-Path $projectRoot '.tools/ui_render_preview.exe'

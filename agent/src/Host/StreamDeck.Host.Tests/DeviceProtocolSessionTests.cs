@@ -70,6 +70,7 @@ public sealed class DeviceProtocolSessionTests
 
         await firstSession.HandleTextMessageAsync(CreateHello(), TestContext.Current.CancellationToken);
         Assert.True(await service.ApproveAsync("CYD-A81F", TestContext.Current.CancellationToken));
+        await Task.Delay(50, TestContext.Current.CancellationToken);
         var tokenMessage = firstSink.Messages.Single(message => message.Contains("\"type\":\"pairing.token\"", StringComparison.Ordinal));
         using var tokenDocument = JsonDocument.Parse(tokenMessage);
         var token = tokenDocument.RootElement.GetProperty("data").GetProperty("token").GetString();

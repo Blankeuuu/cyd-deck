@@ -247,7 +247,7 @@ int main() {
   lv_test_send_event(findButtonByText(pages[3], "Device"), LV_EVENT_CLICKED);
   lv_test_send_event(findButtonByText(pages[3], "Connection & status"), LV_EVENT_CLICKED);
   assert(findLabel(pages[3], "Device status") != nullptr);
-  assert(infoFw->text == "1.2.0");
+  assert(infoFw->text == "1.3.0");
   assert(infoWifi->text == "LabWiFi");
   assert(infoIp->text == "192.168.50.205");
   assert(infoPc->text == "Wi-Fi connected");

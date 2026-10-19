@@ -1,10 +1,35 @@
 ---
 title: CYD-DECK — bieżący handoff interfejsu urządzenia
-tags: [cyd-deck, handoff, ui, firmware, backlight]
+tags: [cyd-deck, handoff, ui, firmware, release, 1.3.0]
 aliases: [STREAMDECK_HANDOFF, CYD UI handoff]
-updated: 2026-10-17
+updated: 2026-10-19
 status: active
 ---
+
+## 2026-10-19 — Wydanie 1.3.0: Web Installer, Tray Media Controls, Color Picker & Windows Setup
+
+### Zakres i stan release'u v1.3.0
+- **Wersja systemu:** 1.3.0 podbita we wszystkich komponentach (`firmware/include/ui/app_state.h`, `StreamDeck.WindowsAgent.csproj`, `installer/windows-agent.iss`, `tests/ui_layout_test.cpp`).
+- **Przeglądarkowy instalator Web Serial (ESP Web Tools):**
+  - Katalog: `installer/web/` (`index.html`, `manifest.json`, `bootloader.bin`, `partitions.bin`, `boot_app0.bin`, `firmware-ST7789-1.3.0.bin`).
+  - Skrypt uruchomieniowy: `scripts/launch-web-flasher.ps1` (serwuje instalator lokalnie przez Python HTTP server na porcie 8080, co omija ograniczenia bezpieczeństwa Web Serial dla localhost bez konieczności konfiguracji HTTPS).
+- **Instalator Windows (Inno Setup 6):**
+  - Plik wynikowy: `artifacts/release-v1.3.0/CYD-DECK-Setup-1.3.0-win-x64.exe` (50.54 MB, SHA-256: `58E3ACF7EA97DE82B9501DB0C36C5061C5674E410AEFAF36FDD7DB7A9403CE67`).
+  - Archiwum portable: `artifacts/release-v1.3.0/StreamDeck.WindowsAgent-win-x64.zip` (70.47 MB, SHA-256: `8217ABE634D114AE88F266C692287574AE106B4B398CE2E87B98A987BEE0395D`).
+  - Czysta dezinstalacja: Wprowadzono hooki `InitializeSetup` oraz `InitializeUninstall` w Inno Setup, które bezszelestnie zabijają proces `StreamDeck.WindowsAgent.exe` (`taskkill /F /IM`), usuwają wpis autostartu w rejestrze `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` i całkowicie czyszczą pliki aplikacji bez błędów blokowania plików.
+- **Firmware ESP32 (ST7789 320x240):**
+  - Aplikacja (offset `0x10000`): `firmware-ST7789-1.3.0.bin` (SHA-256: `2EACB0410727B4C240A8AFD7ADF9082A7439BE466D10F90A6AEBF9F03505F739`).
+  - Pełny obraz scalony (offset `0x0` z bootloaderem i partycjami): `firmware-ST7789-1.3.0-full.bin` (SHA-256: `AEE510C0EF71DB4D89CB118CB410448FD3BDF64ED183EC91EE631A1BC369D808`).
+  - Plik sum kontrolnych: `artifacts/release-v1.3.0/SHA256SUMS.txt`.
+- **Poprawka stabilności autoryzacji (Bearer Token):**
+  - Wyeliminowano sporadyczny błąd odrzucania tokena parowania (`IsBearerToken` dopuszcza znaki `-` oraz `_` w standardzie Base64URL na każdej pozycji tokena; `CreateBearerToken` generuje początkowy znak alfanumeryczny).
+- **Zasobnik systemowy (Tray UX):**
+  - Bezpośrednie sterowanie multimediami (Play/Pause, Prev, Next, Mute/Unmute, poziom głośności) z menu ikony w zasobniku oraz powiadomienia balonowe o stanie połączenia z urządzeniem.
+- **Odświeżone README.md i specyfikacja:**
+  - Nowoczesne, bogate README w języku polskim z instrukcjami Web Installera, instalacji Windows i specyfikacją techniczną.
+  - Dokumentacja wydania: `docs/releases/1.3.0.md`.
+
+Poniżej historia wcześniejszych wdrożeń.
 
 ## 2026-10-17 — poprawki po manualnych testach Windows Agenta
 

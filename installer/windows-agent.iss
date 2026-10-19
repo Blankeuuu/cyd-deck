@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.3.0"
 #endif
 #ifndef PublishDir
   #error PublishDir must point to the self-contained Windows Agent publish directory
@@ -26,6 +26,7 @@ OutputDir={#ReleaseDir}
 OutputBaseFilename=CYD-DECK-Setup-{#AppVersion}-win-x64
 SetupIconFile=..\agent\assets\cyd-deck.ico
 UninstallDisplayIcon={app}\StreamDeck.WindowsAgent.exe
+UninstallDisplayName=CYD-DECK
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -51,13 +52,31 @@ Name: "{autodesktop}\CYD-DECK"; Filename: "{app}\StreamDeck.WindowsAgent.exe"; T
 Filename: "{app}\StreamDeck.WindowsAgent.exe"; Description: "{cm:LaunchProgram,CYD-DECK}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  Exec('taskkill.exe', '/F /IM StreamDeck.WindowsAgent.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  Exec('taskkill.exe', '/F /IM StreamDeck.WindowsAgent.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   StartupCommand: String;
 begin
   if CurUninstallStep = usUninstall then
+  begin
     if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'StreamDeckWindowsAgent', StartupCommand) then
       if Pos(Lowercase(ExpandConstant('{app}\StreamDeck.WindowsAgent.exe')), Lowercase(StartupCommand)) > 0 then
         RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'StreamDeckWindowsAgent');
+  end;
   { User configuration, pairing and cover caches are intentionally retained. }
 end;

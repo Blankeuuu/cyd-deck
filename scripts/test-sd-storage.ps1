@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$zig = Join-Path $projectRoot '.tools\ziglang-host\ziglang\zig.exe'
+$compilerCandidate = Join-Path $projectRoot '.tools\windows-host-compiler\ziglang\zig.exe'
+$zig = if (Test-Path -LiteralPath $compilerCandidate) { $compilerCandidate } else { Join-Path $projectRoot '.tools\ziglang-host\ziglang\zig.exe' }
 $testSource = Join-Path $projectRoot 'tests\sd_storage_paths_test.cpp'
 $pathSource = Join-Path $projectRoot 'firmware\src\storage\sd_paths.cpp'
 $executable = Join-Path $projectRoot '.tools\sd_storage_paths_test.exe'

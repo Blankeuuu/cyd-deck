@@ -1,7 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $python = Join-Path $projectRoot '.tools\pio-venv\Scripts\python.exe'
-$zig = Join-Path $projectRoot '.tools\ziglang-host\ziglang\zig.exe'
+$compilerCandidate = Join-Path $projectRoot '.tools\windows-host-compiler\ziglang\zig.exe'
+$zig = if (Test-Path -LiteralPath $compilerCandidate) { $compilerCandidate } else { Join-Path $projectRoot '.tools\ziglang-host\ziglang\zig.exe' }
 $source = Join-Path $projectRoot 'tests\ui_logic_test.cpp'
 $includeDir = Join-Path $projectRoot 'firmware\include'
 $fakeIncludeDir = Join-Path $projectRoot 'tests\fakes'
@@ -51,10 +52,14 @@ try {
             $includeArgs += $include
         }
         $buildLog = "$($test.Executable).build.log"
+        $previousEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         & $zig $test.Compiler "-std=$($test.Standard)" -Wall -Wextra @includeArgs @($test.Sources) -o $test.Executable *> $buildLog
-        if ($LASTEXITCODE -ne 0) {
+        $compileExit = $LASTEXITCODE
+        $ErrorActionPreference = $previousEap
+        if ($compileExit -ne 0) {
             Get-Content -LiteralPath $buildLog
-            $exitCode = $LASTEXITCODE
+            $exitCode = $compileExit
             break
         }
         & $test.Executable

@@ -121,6 +121,7 @@ function Get-ReleaseNoticeInventory {
         [PSCustomObject]@{ Id = "SkiaSharp"; Version = "4.153.1" }
         [PSCustomObject]@{ Id = "SkiaSharp.NativeAssets.Win32"; Version = "4.153.1" }
         [PSCustomObject]@{ Id = "System.IO.Ports"; Version = "10.0.0" }
+        [PSCustomObject]@{ Id = "System.Management"; Version = "10.0.0" }
         [PSCustomObject]@{ Id = "Microsoft.NETCore.App.Runtime.win-x64"; Version = "10.0.13" }
         [PSCustomObject]@{ Id = "Microsoft.WindowsDesktop.App.Runtime.win-x64"; Version = "10.0.13" }
         [PSCustomObject]@{ Id = "Microsoft.AspNetCore.App.Runtime.win-x64"; Version = "10.0.13" }
@@ -289,12 +290,22 @@ System.IO.Ports
 - Repository metadata in that exact artifact: https://github.com/dotnet/dotnet commit b0f34d51fccc69fd334253924abd8d6853fad7aa
 - Third-party notice file from that exact artifact is copied to THIRD-PARTY-NOTICES/System.IO.Ports-10.0.0-THIRD-PARTY-NOTICES.TXT.
 
+System.Management
+- Package: System.Management
+- Version: 10.0.0
+- Copyright: Copyright (c) Microsoft Corporation. All rights reserved.
+- Source: official NuGet package artifact System.Management 10.0.0 (.nupkg)
+- License metadata in that exact artifact: <license type="expression">MIT</license>
+- Repository metadata in that exact artifact: https://github.com/dotnet/dotnet commit b0f34d51fccc69fd334253924abd8d6853fad7aa
+- Third-party notice file from that exact artifact is copied to THIRD-PARTY-NOTICES/System.Management-10.0.0-THIRD-PARTY-NOTICES.TXT.
+
 "@ | Set-Content -LiteralPath $thirdPartyNoticesPath -Encoding UTF8
 
 Copy-RequiredNoticeFile -PackageId "SkiaSharp" -Version "4.153.1" -RelativePath "LICENSE.txt" -DestinationName "SkiaSharp-4.153.1-LICENSE.txt"
 Copy-RequiredNoticeFile -PackageId "SkiaSharp.NativeAssets.Win32" -Version "4.153.1" -RelativePath "LICENSE.txt" -DestinationName "SkiaSharp.NativeAssets.Win32-4.153.1-LICENSE.txt"
 Copy-RequiredNoticeFile -PackageId "SkiaSharp.NativeAssets.Win32" -Version "4.153.1" -RelativePath "THIRD-PARTY-NOTICES.txt" -DestinationName "SkiaSharp.NativeAssets.Win32-4.153.1-THIRD-PARTY-NOTICES.txt"
 Copy-RequiredNoticeFile -PackageId "System.IO.Ports" -Version "10.0.0" -RelativePath "THIRD-PARTY-NOTICES.TXT" -DestinationName "System.IO.Ports-10.0.0-THIRD-PARTY-NOTICES.TXT"
+Copy-RequiredNoticeFile -PackageId "System.Management" -Version "10.0.0" -RelativePath "THIRD-PARTY-NOTICES.TXT" -DestinationName "System.Management-10.0.0-THIRD-PARTY-NOTICES.TXT"
 Copy-RequiredNoticeFile -PackageId "Microsoft.NETCore.App.Runtime.win-x64" -Version "10.0.13" -RelativePath "LICENSE.TXT" -DestinationName "Microsoft.NETCore.App.Runtime.win-x64-10.0.13-LICENSE.TXT"
 Copy-RequiredNoticeFile -PackageId "Microsoft.NETCore.App.Runtime.win-x64" -Version "10.0.13" -RelativePath "THIRD-PARTY-NOTICES.TXT" -DestinationName "Microsoft.NETCore.App.Runtime.win-x64-10.0.13-THIRD-PARTY-NOTICES.TXT"
 Copy-RequiredNoticeFile -PackageId "Microsoft.AspNetCore.App.Runtime.win-x64" -Version "10.0.13" -RelativePath "LICENSE.txt" -DestinationName "Microsoft.AspNetCore.App.Runtime.win-x64-10.0.13-LICENSE.txt"
@@ -312,7 +323,6 @@ Install:
 
 Network:
 - The device LAN WebSocket listener defaults to port 8765 and path /ws.
-- The local dashboard binds only to 127.0.0.1 on an ephemeral port; do not expose or forward the dashboard.
 - This package does not create firewall rules, registry entries, services, scheduled tasks, or machine-wide state.
 
 Startup:
@@ -334,10 +344,10 @@ Package contents:
 - Release PDB symbol files are intentionally excluded from this end-user portable ZIP to avoid redistributing local diagnostic/source-path metadata; local Release build outputs may still keep PDBs for diagnostics.
 - No secrets, pairing state, configuration export, logs, cache, or user data are included.
 - THIRD-PARTY-NOTICES.txt with exact package license metadata and THIRD-PARTY-NOTICES/ files copied from the published NuGet artifacts and .NET runtime packs.
-- THIRD-PARTY-NOTICES/ with exact-version notices copied from SkiaSharp 4.153.1, SkiaSharp.NativeAssets.Win32 4.153.1, System.IO.Ports 10.0.0, and the .NET runtime packs that ship in this self-contained package.
+- THIRD-PARTY-NOTICES/ with exact-version notices copied from SkiaSharp 4.153.1, SkiaSharp.NativeAssets.Win32 4.153.1, System.IO.Ports 10.0.0, System.Management 10.0.0, and the .NET runtime packs that ship in this self-contained package.
 
 Notice inventory status:
-- The published deps manifest for the validated portable package lists SkiaSharp/4.153.1, SkiaSharp.NativeAssets.Win32/4.153.1, System.IO.Ports/10.0.0, Microsoft.NETCore.App.Runtime.win-x64/10.0.13, Microsoft.WindowsDesktop.App.Runtime.win-x64/10.0.13, Microsoft.AspNetCore.App.Runtime.win-x64/10.0.13, and Microsoft.Windows.SDK.NET.Ref/10.0.17763.57.
+- The published deps manifest for the validated portable package lists SkiaSharp/4.153.1, SkiaSharp.NativeAssets.Win32/4.153.1, System.IO.Ports/10.0.0, System.Management/10.0.0, Microsoft.NETCore.App.Runtime.win-x64/10.0.13, Microsoft.WindowsDesktop.App.Runtime.win-x64/10.0.13, Microsoft.AspNetCore.App.Runtime.win-x64/10.0.13, and Microsoft.Windows.SDK.NET.Ref/10.0.17763.57.
 - SkiaSharp and SkiaSharp.NativeAssets.Win32 4.153.1 are included because their exact pinned NuGet artifacts declare MIT and requireLicenseAcceptance=true; the Win32 package also supplies third-party notices.
 - System.IO.Ports 10.0.0 is included because the exact pinned NuGet artifact declares MIT and ships THIRD-PARTY-NOTICES.TXT.
 - Runtime-pack license and notice files are copied from the exact local NuGet package folders; packaging fails if a required file is unavailable.
