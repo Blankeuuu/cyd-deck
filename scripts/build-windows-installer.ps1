@@ -20,9 +20,9 @@ if (-not (Test-Path -LiteralPath $IsccPath -PathType Leaf)) { throw 'Install Inn
 if (-not $SkipPublish) {
     & (Join-Path $PSScriptRoot 'publish-windows-agent.ps1') -OutputDirectory $outputRoot
 }
-$publishRoot = Join-Path $outputRoot 'publish/StreamDeck.WindowsAgent'
-if (-not (Test-Path -LiteralPath (Join-Path $publishRoot 'StreamDeck.WindowsAgent.exe'))) { throw 'Published Agent executable is missing.' }
-$actualVersion = (Get-Item -LiteralPath (Join-Path $publishRoot 'StreamDeck.WindowsAgent.exe')).VersionInfo.ProductVersion.Split('+')[0]
+$publishRoot = Join-Path $outputRoot 'publish/CYD-DECK'
+if (-not (Test-Path -LiteralPath (Join-Path $publishRoot 'CYD-DECK.exe'))) { throw 'Published Agent executable is missing.' }
+$actualVersion = (Get-Item -LiteralPath (Join-Path $publishRoot 'CYD-DECK.exe')).VersionInfo.ProductVersion.Split('+')[0]
 if ($actualVersion -ne $Version) { throw "Published version $actualVersion does not match installer version $Version." }
 & $IsccPath '/Qp' "/DAppVersion=$Version" "/DPublishDir=$publishRoot" "/DReleaseDir=$outputRoot" (Join-Path $repo 'installer/windows-agent.iss')
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }

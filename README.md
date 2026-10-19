@@ -115,9 +115,9 @@ The Windows Agent runs as a background companion service with a tray icon and a 
 
 ### Option 2: Portable Package
 
-1. Download **`StreamDeck.WindowsAgent-win-x64.zip`** from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0).
+1. Download **`CYD-DECK-win-x64.zip`** from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0).
 2. Extract the archive into any directory.
-3. Launch `StreamDeck.WindowsAgent.exe`.
+3. Launch `CYD-DECK.exe`.
 
 ---
 

@@ -9,10 +9,18 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Version>1.3.0</Version>
     <ApplicationIcon>../../../assets/cyd-deck.ico</ApplicationIcon>
-    <AssemblyName>StreamDeck.WindowsAgent</AssemblyName>
+    <AssemblyName>CYD-DECK</AssemblyName>
     <RootNamespace>StreamDeck.WindowsAgent</RootNamespace>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
+
+    <Product>CYD-DECK</Product>
+    <AssemblyTitle>CYD-DECK</AssemblyTitle>
+    <Description>CYD-DECK Windows Agent</Description>
+    <Company>Blankeuuu</Company>
+    <Copyright>Copyright © Blankeuuu</Copyright>
+    <FileVersion>1.3.0</FileVersion>
+    <AssemblyVersion>1.3.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,6 +29,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="StreamDeck.WindowsAgent.Tests" />
+    <InternalsVisibleTo Include="StreamDeck.WindowsAgent.BrandingTests" />
   </ItemGroup>
 
   <ItemGroup>

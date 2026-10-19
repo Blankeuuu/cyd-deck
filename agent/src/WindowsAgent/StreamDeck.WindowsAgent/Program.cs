@@ -10,6 +10,7 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        AppIdentity.ConfigureProcessExplicitAppUserModelId();
         AgentDiagnosticLog.Write($"Main start args={string.Join(' ', Environment.GetCommandLineArgs().Skip(1))}");
 
         using var singleInstance = SingleInstanceGuard.Acquire();
@@ -35,6 +36,9 @@ internal static class Program
 
         using (services)
         {
+            var startup = services.GetRequiredService<WindowsStartupService>();
+            startup.MigrateLegacyStartupIfPresent();
+
             Application.Run(services.GetRequiredService<WindowsAgentApplicationContext>());
         }
     }

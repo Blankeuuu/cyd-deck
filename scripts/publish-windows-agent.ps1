@@ -77,8 +77,8 @@ if ([string]::Equals($outputRootNormalized, $repositoryRoot, $pathComparison) -o
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 
 $publishRoot = Join-Path $outputRoot "publish"
-$publishDirectory = Join-Path $publishRoot "StreamDeck.WindowsAgent"
-$zipPath = Join-Path $outputRoot "StreamDeck.WindowsAgent-$RuntimeIdentifier.zip"
+$publishDirectory = Join-Path $publishRoot "CYD-DECK"
+$zipPath = Join-Path $outputRoot "CYD-DECK-$RuntimeIdentifier.zip"
 $instructionsPath = Join-Path $publishDirectory "DEPLOYMENT.txt"
 $thirdPartyNoticesPath = Join-Path $publishDirectory "THIRD-PARTY-NOTICES.txt"
 $thirdPartyNoticesDirectory = Join-Path $publishDirectory "THIRD-PARTY-NOTICES"
@@ -169,7 +169,8 @@ function Assert-ReleaseNoticeInventoryMatchesDeps {
                 continue
             }
 
-            if ($libraryName.StartsWith("StreamDeck.", [System.StringComparison]::OrdinalIgnoreCase)) {
+            if ($libraryName.StartsWith("StreamDeck.", [System.StringComparison]::OrdinalIgnoreCase) -or
+                $libraryName.StartsWith("CYD-DECK", [System.StringComparison]::OrdinalIgnoreCase)) {
                 continue
             }
 
@@ -229,7 +230,7 @@ if (Test-Path -LiteralPath $zipPath) {
 }
 
 if (-not $SkipQualityGate) {
-    & $DotNetPath build $projectPath --configuration $Configuration --runtime $RuntimeIdentifier --self-contained true
+    & $DotNetPath build $projectPath --configuration $Configuration --runtime $RuntimeIdentifier --self-contained true -m:1
     if ($LASTEXITCODE -ne 0) {
         throw "Prepublish quality gate failed: dotnet build exited with code $LASTEXITCODE."
     }
@@ -240,7 +241,8 @@ if (-not $SkipQualityGate) {
     --runtime $RuntimeIdentifier `
     --self-contained true `
     --output $publishDirectory `
-    -p:PublishSingleFile=false
+    -p:PublishSingleFile=false `
+    -m:1
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish exited with code $LASTEXITCODE."
 }
@@ -248,16 +250,16 @@ if ($LASTEXITCODE -ne 0) {
 Remove-PublishSymbols -Directory $publishDirectory
 Assert-NoPublishSymbols -Directory $publishDirectory
 
-$exePath = Join-Path $publishDirectory "StreamDeck.WindowsAgent.exe"
+$exePath = Join-Path $publishDirectory "CYD-DECK.exe"
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "Publish completed but expected executable is missing: $exePath"
 }
 
-$depsManifestPath = Join-Path $publishDirectory "StreamDeck.WindowsAgent.deps.json"
+$depsManifestPath = Join-Path $publishDirectory "CYD-DECK.deps.json"
 Assert-ReleaseNoticeInventoryMatchesDeps -DepsManifestPath $depsManifestPath
 
 @"
-Third-party notices for StreamDeck Windows Agent portable package
+Third-party notices for CYD-DECK Windows Agent portable package
 
 Status:
 - This file accompanies exact-version package and runtime notices copied from the artifacts listed in the published deps manifest.
@@ -313,12 +315,12 @@ Copy-RequiredNoticeFile -PackageId "Microsoft.AspNetCore.App.Runtime.win-x64" -V
 Copy-RequiredNoticeFile -PackageId "Microsoft.WindowsDesktop.App.Runtime.win-x64" -Version "10.0.13" -RelativePath "LICENSE" -DestinationName "Microsoft.WindowsDesktop.App.Runtime.win-x64-10.0.13-LICENSE"
 
 @"
-StreamDeck Windows Agent portable deployment
+CYD-DECK Windows Agent portable deployment
 
 Install:
 1. Extract this ZIP to a stable per-user writable directory, for example:
-   %LOCALAPPDATA%\Programs\StreamDeckWindowsAgent
-2. Run StreamDeck.WindowsAgent.exe from that directory.
+   %LOCALAPPDATA%\Programs\CYD-DECK
+2. Run CYD-DECK.exe from that directory.
 3. On first use, keep the PC and device on the same private LAN, allow the agent executable/port in Windows Firewall when prompted or by a narrow manual allow rule, then approve pairing in the agent UI.
 
 Network:
@@ -332,7 +334,7 @@ Update and rollback:
 1. Exit the agent from the tray menu.
 2. Keep a copy of the previous extracted directory.
 3. Extract the new ZIP to the same stable install directory, replacing application files only.
-4. Restart StreamDeck.WindowsAgent.exe.
+4. Restart CYD-DECK.exe.
 5. To roll back, exit the agent and restore the previous extracted directory.
 
 Uninstall and data retention:
@@ -340,7 +342,7 @@ Uninstall and data retention:
 - User configuration, logs, pairing records, and cache are stored outside this ZIP under the user's local application data. Delete %LOCALAPPDATA%\StreamDeckAgent only if you intentionally want to remove retained data and pairing state.
 
 Package contents:
-- Self-contained win-x64 publish output for StreamDeck.WindowsAgent.
+- Self-contained win-x64 publish output for CYD-DECK.
 - Release PDB symbol files are intentionally excluded from this end-user portable ZIP to avoid redistributing local diagnostic/source-path metadata; local Release build outputs may still keep PDBs for diagnostics.
 - No secrets, pairing state, configuration export, logs, cache, or user data are included.
 - THIRD-PARTY-NOTICES.txt with exact package license metadata and THIRD-PARTY-NOTICES/ files copied from the published NuGet artifacts and .NET runtime packs.

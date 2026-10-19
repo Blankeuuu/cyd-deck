@@ -1,10 +1,13 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$agentExe = Join-Path $projectRoot 'artifacts\icon-agent\StreamDeck.WindowsAgent.exe'
+$agentExe = Join-Path $projectRoot 'artifacts\icon-agent\CYD-DECK.exe'
+if (-not (Test-Path $agentExe)) {
+    $agentExe = Join-Path $projectRoot 'artifacts\icon-agent\StreamDeck.WindowsAgent.exe'
+}
 $agentDir = Join-Path $projectRoot 'artifacts\icon-agent'
 if (-not (Test-Path $agentExe)) { throw "Agent executable missing at $agentExe" }
 
-$taskName = "LaunchStreamDeckAgent"
+$taskName = "LaunchCYDDeckAgent"
 $action = New-ScheduledTaskAction -Execute $agentExe -WorkingDirectory $agentDir
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited

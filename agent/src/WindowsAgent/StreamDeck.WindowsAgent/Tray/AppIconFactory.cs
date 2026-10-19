@@ -5,27 +5,13 @@ namespace StreamDeck.WindowsAgent.Tray;
 
 internal static class AppIconFactory
 {
+    internal static readonly Color BackgroundColor = Color.FromArgb(255, 0x16, 0x16, 0x16);
+    internal static readonly Color PrimaryTileColor = Color.FromArgb(255, 0xDD, 0x31, 0x27);
+    internal static readonly Color AccentTileColor = Color.FromArgb(255, 0x4E, 0xAB, 0x41);
+
     public static Icon CreateIcon()
     {
-        using var bitmap = new Bitmap(32, 32);
-        using var graphics = Graphics.FromImage(bitmap);
-        graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.Clear(Color.Transparent);
-
-        using var background = new LinearGradientBrush(
-            new Rectangle(0, 0, 32, 32),
-            Color.FromArgb(255, 34, 39, 52),
-            Color.FromArgb(255, 12, 15, 22),
-            LinearGradientMode.ForwardDiagonal);
-        graphics.FillRoundedRectangle(background, new RectangleF(1.5f, 1.5f, 29f, 29f), 7f);
-
-        using var accent = new SolidBrush(Color.FromArgb(255, 212, 59, 72));
-        graphics.FillRoundedRectangle(accent, new RectangleF(7f, 7f, 8f, 8f), 2f);
-        graphics.FillRoundedRectangle(accent, new RectangleF(17f, 7f, 8f, 8f), 2f);
-        graphics.FillRoundedRectangle(accent, new RectangleF(7f, 17f, 8f, 8f), 2f);
-
-        using var muted = new SolidBrush(Color.FromArgb(255, 74, 222, 128));
-        graphics.FillRoundedRectangle(muted, new RectangleF(17f, 17f, 8f, 8f), 2f);
+        using var bitmap = CreateBitmap(32);
 
         var handle = bitmap.GetHicon();
         try
@@ -37,6 +23,41 @@ internal static class AppIconFactory
         {
             DestroyIcon(handle);
         }
+    }
+
+    internal static Bitmap CreateBitmap(int size = 32)
+    {
+        var bitmap = new Bitmap(size, size);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.SmoothingMode = SmoothingMode.HighQuality;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        graphics.CompositingQuality = CompositingQuality.HighQuality;
+        graphics.Clear(Color.Transparent);
+
+        var pad = size * (1f / 32f);
+        var bodySize = size - (2f * pad);
+        var scale = bodySize / 200f;
+
+        using var background = new SolidBrush(BackgroundColor);
+        graphics.FillRoundedRectangle(
+            background,
+            new RectangleF(pad, pad, bodySize, bodySize),
+            25f * scale);
+
+        var tileSize = 60f * scale;
+        var tileRadius = 12f * scale;
+        var p1 = pad + (37f * scale);
+        var p2 = pad + (103f * scale);
+
+        using var primary = new SolidBrush(PrimaryTileColor);
+        graphics.FillRoundedRectangle(primary, new RectangleF(p1, p1, tileSize, tileSize), tileRadius);
+        graphics.FillRoundedRectangle(primary, new RectangleF(p2, p1, tileSize, tileSize), tileRadius);
+        graphics.FillRoundedRectangle(primary, new RectangleF(p1, p2, tileSize, tileSize), tileRadius);
+
+        using var accent = new SolidBrush(AccentTileColor);
+        graphics.FillRoundedRectangle(accent, new RectangleF(p2, p2, tileSize, tileSize), tileRadius);
+
+        return bitmap;
     }
 
     [DllImport("user32.dll", SetLastError = true)]
