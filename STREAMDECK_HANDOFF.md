@@ -1,10 +1,25 @@
 ---
 title: CYD-DECK — bieżący handoff interfejsu urządzenia
-tags: [cyd-deck, handoff, ui, firmware, release, 1.3.0]
+tags: [cyd-deck, handoff, ui, firmware, release, 1.4.0]
 aliases: [STREAMDECK_HANDOFF, CYD UI handoff]
-updated: 2026-10-19
+updated: 2026-10-20
 status: active
 ---
+
+## 2026-10-20 — Wydanie 1.4.0: Onboarding USB/Wi-Fi, widok Urządzenia, buforowanie nawigacji i tożsamość CYD-DECK
+
+### Zakres i stan release'u v1.4.0
+- **Wersja systemu:** 1.4.0 podbita we wszystkich komponentach (`firmware/include/ui/app_state.h`, `StreamDeck.WindowsAgent.csproj`, `installer/windows-agent.iss`, `scripts/build-windows-installer.ps1`, `scripts/launch-web-flasher.ps1`, `tests/ui_layout_test.cpp`).
+- **Firmware CYD (ESP32 / LVGL 9.3):**
+  - Wybór trybu transportu podczas pierwszego uruchomienia (USB-only vs Wi-Fi + USB) zapisywany w NVS (`connectionMode`), z możliwością ponownego wywołania portalu Wi-Fi z poziomu *Settings > Device > Connection & status > Wi-Fi setup* lub przełączenia z powrotem na USB bez utraty zapisanych poświadczeń Wi-Fi.
+- **Windows Agent — widok Urządzenia (Devices & Pairing) i parowanie:**
+  - Dedykowany widok boczny **Urządzenia** z trzema kartami inspirowanymi Apple HIG (*Prośby o parowanie*, *Aktywne połączenia*, *Sparowane urządzenia*).
+  - Natychmiastowa reaktywność okna dialogowego i baneru parowania USB/Wi-Fi oraz trwały zapis ręcznie wybranego portu COM.
+- **Wydajność UI Windows Agenta:**
+  - *Page View Cache* w `SettingsWindow` (ciepłe przełączanie `ShowPage` z medianą p50 7–23 ms, poniżej budżetu 50 ms), eliminacja alokacji GDI `Region` na każdy wiersz, usunięcie podwójnych wywołań `RebuildLibrary` oraz buforowanie nazwy CPU z rejestru.
+- **Tożsamość produktu i branding CYD-DECK:**
+  - Ujednolicony plik wykonywalny `CYD-DECK.exe`, jawny identyfikator `Blankeuuu.CYD-DECK` (AUMID), bezpieczna migracja autostartu `StreamDeckWindowsAgent` -> `CYD-DECK` zachowująca argumenty CLI oraz oficjalne zasoby ikon (`agent/assets/cyd-deck.svg`, `cyd-deck.png`, wieloramkowy `cyd-deck.ico`).
+- **Dokumentacja wydania:** `docs/releases/1.4.0.md`.
 
 ## 2026-10-19 — Wydanie 1.3.0: Web Installer, Tray Media Controls, Color Picker & Windows Setup
 

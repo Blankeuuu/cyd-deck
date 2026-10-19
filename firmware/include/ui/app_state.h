@@ -47,7 +47,7 @@ inline bool pcMetricsFresh(const SystemState& state, bool connected, uint32_t no
   return connected && state.pcStatsReceived && nowMs - state.pcStatsAtMs < kPcStatsFreshMs;
 }
 struct StorageState { bool mounted = false; bool ready = false; uint32_t totalMb = 0; uint32_t freeMb = 0; char status[32] = "not started"; };
-struct DeviceInfoState { char firmwareVersion[16] = "1.3.0"; uint32_t uptimeSeconds = 0; };
+struct DeviceInfoState { char firmwareVersion[16] = "1.4.0"; uint32_t uptimeSeconds = 0; };
 struct ConnectionState {
   bool online = false;
   bool wifiConnected = false;

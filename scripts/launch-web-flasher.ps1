@@ -38,7 +38,7 @@ if (-not $pythonInstalled) {
     Write-Host "Please install Python or use 'esptool' directly to flash the firmware." -ForegroundColor Yellow
     Write-Host "Direct flashing command:" -ForegroundColor Cyan
     Write-Host "  pip install esptool"
-    Write-Host "  esptool.py --chip esp32 --port <PORT> --baud 460800 write_flash -z 0x0 installer\web\firmware-ST7789-1.3.0.bin"
+    Write-Host "  esptool.py --chip esp32 --port <PORT> --baud 460800 write_flash -z 0x0 installer\web\firmware-ST7789-1.4.0.bin"
     exit 1
 }
 

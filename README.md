@@ -3,15 +3,15 @@
 <div align="center">
 
 ![Platform](https://img.shields.io/badge/Platform-ESP32--2432S028R-blue?style=flat-square)
-[![Firmware](https://img.shields.io/badge/Firmware-v1.3.0-success?style=flat-square)](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0)
-[![Windows Agent](https://img.shields.io/badge/Windows%20Agent-.NET%2010%20x64-512bd4?style=flat-square)](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0)
+[![Firmware](https://img.shields.io/badge/Firmware-v1.4.0-success?style=flat-square)](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.4.0)
+[![Windows Agent](https://img.shields.io/badge/Windows%20Agent-.NET%2010%20x64-512bd4?style=flat-square)](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.4.0)
 ![UI](https://img.shields.io/badge/Graphics-LVGL%209.3-orange?style=flat-square)
 [![Web Flasher](https://img.shields.io/badge/Web%20Flasher-Online-teal?style=flat-square)](https://blankeuuu.github.io/cyd-deck/web-installer/)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
 **A touchscreen desktop dock powered by ESP32 ("Cheap Yellow Display") and a companion Windows agent.**
 
-[Web Installer (Browser)](https://blankeuuu.github.io/cyd-deck/web-installer/) • [Windows Setup](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0) • [Overview](#overview) • [Features](#features) • [Installation Guide](#firmware-installation-cyd-esp32) • [Documentation](#documentation) • [License](#license)
+[Web Installer (Browser)](https://blankeuuu.github.io/cyd-deck/web-installer/) • [Windows Setup](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.4.0) • [Overview](#overview) • [Features](#features) • [Installation Guide](#firmware-installation-cyd-esp32) • [Documentation](#documentation) • [License](#license)
 
 </div>
 
@@ -67,9 +67,9 @@ Flash your board directly from your browser without installing Python, PlatformI
 
 If you prefer command-line tools:
 
-1. Download the prebuilt firmware binary from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0):
-   - **First-time install on a new board**: Download `firmware-ST7789-1.3.0-full.bin` (flashed at offset `0x0`).
-   - **Upgrading an existing CYD-DECK**: Download `firmware-ST7789-1.3.0.bin` (flashed at offset `0x10000`, preserves Wi-Fi credentials and pairing).
+1. Download the prebuilt firmware binary from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.4.0):
+   - **First-time install on a new board**: Download `firmware-ST7789-1.4.0-full.bin` (flashed at offset `0x0`).
+   - **Upgrading an existing CYD-DECK**: Download `firmware-ST7789-1.4.0.bin` (flashed at offset `0x10000`, preserves Wi-Fi credentials and pairing).
 2. Connect your CYD board to your computer using a micro-USB data cable.
 3. Install `esptool` via Python (if not already installed):
    ```bash
@@ -78,11 +78,11 @@ If you prefer command-line tools:
 4. Flash the board:
    - **First-time installation (merged full image at offset 0x0)**:
      ```bash
-     esptool.py --chip esp32 --port COM5 --baud 460800 write_flash -z 0x0 firmware-ST7789-1.3.0-full.bin
+     esptool.py --chip esp32 --port COM5 --baud 460800 write_flash -z 0x0 firmware-ST7789-1.4.0-full.bin
      ```
    - **Upgrade existing device (application image at offset 0x10000)**:
      ```bash
-     esptool.py --chip esp32 --port COM5 --baud 460800 write_flash -z 0x10000 firmware-ST7789-1.3.0.bin
+     esptool.py --chip esp32 --port COM5 --baud 460800 write_flash -z 0x10000 firmware-ST7789-1.4.0.bin
      ```
    *(Replace `COM5` with your actual serial port name, e.g., `/dev/ttyUSB0` on Linux).*
 
@@ -108,14 +108,14 @@ The Windows Agent runs as a background companion service with a tray icon and a 
 
 ### Option 1: Windows Setup Installer (Recommended)
 
-1. Download **`CYD-DECK-Setup-1.3.0-win-x64.exe`** from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0).
+1. Download **`CYD-DECK-Setup-1.4.0-win-x64.exe`** from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.4.0).
 2. Run the installer. It installs the application for the current user into `%LOCALAPPDATA%\Programs\CYD-DECK` without requiring administrator privileges.
 3. The installer bundles the .NET 10 runtime, SkiaSharp graphics engine, and creates Start Menu and optional Desktop shortcuts.
 4. **Clean Uninstallation**: To uninstall, open Windows *Settings > Apps > Installed apps* and click **Uninstall**. The uninstaller automatically terminates any running background tray instance, removes autostart entries, and deletes all program files cleanly without file-in-use errors.
 
 ### Option 2: Portable Package
 
-1. Download **`CYD-DECK-win-x64.zip`** from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0).
+1. Download **`CYD-DECK-win-x64.zip`** from [GitHub Releases](https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.4.0).
 2. Extract the archive into any directory.
 3. Launch `CYD-DECK.exe`.
 
@@ -162,7 +162,8 @@ dotnet run --project agent/src/WindowsAgent/StreamDeck.WindowsAgent.Tests/Stream
 
 ## Release History
 
-- **[Release 1.3.0](docs/releases/1.3.0.md)** (Current) - Browser-based Web Serial installer, system tray media and volume controls, Windows 11 DWM immersive dark mode, modern color picker, multi-port USB fault tolerance, and PDH PC hardware metrics.
+- **[Release 1.4.0](docs/releases/1.4.0.md)** (Current) - On-device USB/Wi-Fi onboarding transport choice, dedicated Devices & Pairing sidebar view, SettingsWindow Page View Cache (< 50 ms navigation), and unified `CYD-DECK.exe` product identity & branding.
+- **[Release 1.3.0](docs/releases/1.3.0.md)** - Browser-based Web Serial installer, system tray media and volume controls, Windows 11 DWM immersive dark mode, modern color picker, multi-port USB fault tolerance, and PDH PC hardware metrics.
 - **[Release 1.2.0](docs/releases/1.2.0.md)** - Centered tile button icons and labels, 21-icon visual picker gallery, URL icon decoding to RGB565A8, and Windows Inno Setup installer.
 - **[Release 1.1.0](docs/releases/1.1.0.md)** - MicroSD cache for album art, 100 ms timeline interpolation, and dock navigation bar with persistent clock.
 

@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.3.0"
+  #define AppVersion "1.4.0"
 #endif
 #ifndef PublishDir
   #error PublishDir must point to the self-contained Windows Agent publish directory
