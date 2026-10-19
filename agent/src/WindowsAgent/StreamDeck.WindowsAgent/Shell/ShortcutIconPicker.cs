@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace StreamDeck.WindowsAgent.Shell;
 
 internal sealed class ShortcutIconPicker : Form
@@ -6,6 +8,18 @@ internal sealed class ShortcutIconPicker : Form
     internal string? IconData { get; private set; }
     internal string? IconUrl { get; private set; }
     private readonly CancellationTokenSource lifetime = new();
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        var dark = SettingsWindow.IsClientLightTheme ? 0 : 1;
+        _ = DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+        var corners = 2;
+        _ = DwmSetWindowAttribute(Handle, 33, ref corners, sizeof(int));
+    }
 
     internal ShortcutIconPicker(string key, string? data, string? sourceUrl)
     {
@@ -18,8 +32,13 @@ internal sealed class ShortcutIconPicker : Form
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
         MinimizeBox = false;
-        BackColor = Color.FromArgb(18, 20, 25);
-        ForeColor = Color.FromArgb(238, 241, 245);
+
+        var isLight = SettingsWindow.IsClientLightTheme;
+        BackColor = isLight ? Color.FromArgb(246, 247, 249) : Color.FromArgb(18, 20, 25);
+        ForeColor = isLight ? Color.FromArgb(29, 32, 37) : Color.FromArgb(238, 241, 245);
+        var itemBg = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(28, 32, 40);
+        var itemBorder = isLight ? Color.FromArgb(210, 214, 220) : Color.FromArgb(42, 46, 56);
+        var accent = SettingsWindow.CurrentAccent;
         Font = new Font("Segoe UI", 9F);
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1, RowCount = 6 };
@@ -31,7 +50,7 @@ internal sealed class ShortcutIconPicker : Form
             Text = "Built-in icons",
             Dock = DockStyle.Fill,
             Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-            ForeColor = Color.FromArgb(215, 222, 232),
+            ForeColor = isLight ? Color.FromArgb(40, 44, 52) : Color.FromArgb(215, 222, 232),
             TextAlign = ContentAlignment.MiddleLeft
         };
         layout.Controls.Add(builtInLabel, 0, 0);
@@ -48,7 +67,7 @@ internal sealed class ShortcutIconPicker : Form
             Dock = DockStyle.Fill,
             Text = "Select an icon, or load an image from a URL.",
             TextAlign = ContentAlignment.MiddleLeft,
-            ForeColor = Color.FromArgb(180, 188, 200)
+            ForeColor = isLight ? Color.FromArgb(93, 101, 112) : Color.FromArgb(180, 188, 200)
         };
 
         var selectedButtons = new List<Button>();
@@ -61,14 +80,14 @@ internal sealed class ShortcutIconPicker : Form
                 Text = item.Key,
                 TextAlign = ContentAlignment.BottomCenter,
                 FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(28, 32, 40),
+                BackColor = itemBg,
                 ForeColor = ForeColor,
                 Font = new Font("Segoe UI", 8F),
                 Padding = new Padding(0, 0, 0, 4),
                 AccessibleName = item.Key
             };
             button.FlatAppearance.BorderSize = isInitiallySelected ? 2 : 1;
-            button.FlatAppearance.BorderColor = isInitiallySelected ? Color.FromArgb(82, 153, 224) : Color.FromArgb(42, 46, 56);
+            button.FlatAppearance.BorderColor = isInitiallySelected ? accent : itemBorder;
             button.Paint += (_, e) => ShortcutIconCatalog.Draw(e.Graphics, item.Key, null, new Rectangle((button.Width - 24) / 2, 5, 24, 24), ForeColor);
             button.Click += (_, _) =>
             {
@@ -79,7 +98,7 @@ internal sealed class ShortcutIconPicker : Form
                 {
                     var isCurrent = other == button;
                     other.FlatAppearance.BorderSize = isCurrent ? 2 : 1;
-                    other.FlatAppearance.BorderColor = isCurrent ? Color.FromArgb(82, 153, 224) : Color.FromArgb(42, 46, 56);
+                    other.FlatAppearance.BorderColor = isCurrent ? accent : itemBorder;
                 }
                 status.Text = item.Key;
                 preview.Invalidate();
@@ -94,7 +113,7 @@ internal sealed class ShortcutIconPicker : Form
             Text = "Image URL",
             Dock = DockStyle.Fill,
             Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-            ForeColor = Color.FromArgb(215, 222, 232),
+            ForeColor = isLight ? Color.FromArgb(40, 44, 52) : Color.FromArgb(215, 222, 232),
             TextAlign = ContentAlignment.MiddleLeft
         };
         layout.Controls.Add(imageUrlLabel, 0, 2);
@@ -109,7 +128,7 @@ internal sealed class ShortcutIconPicker : Form
             Text = sourceUrl ?? "",
             PlaceholderText = "https://…/icon.png",
             MaxLength = 2048,
-            BackColor = Color.FromArgb(28, 32, 40),
+            BackColor = itemBg,
             ForeColor = ForeColor,
             BorderStyle = BorderStyle.FixedSingle,
             AccessibleName = "Image URL"
@@ -120,12 +139,12 @@ internal sealed class ShortcutIconPicker : Form
             Text = "Load preview",
             Dock = DockStyle.Fill,
             FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(39, 43, 52),
-            ForeColor = Color.White,
+            BackColor = itemBg,
+            ForeColor = ForeColor,
             AccessibleName = "Load preview"
         };
         load.FlatAppearance.BorderSize = 1;
-        load.FlatAppearance.BorderColor = Color.FromArgb(58, 64, 76);
+        load.FlatAppearance.BorderColor = itemBorder;
 
         var use = new Button
         {
@@ -134,7 +153,7 @@ internal sealed class ShortcutIconPicker : Form
             Height = 34,
             DialogResult = DialogResult.OK,
             FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(82, 153, 224),
+            BackColor = accent,
             ForeColor = Color.White,
             AccessibleName = "Use icon"
         };
@@ -198,12 +217,12 @@ internal sealed class ShortcutIconPicker : Form
             Height = 34,
             DialogResult = DialogResult.Cancel,
             FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(39, 43, 52),
-            ForeColor = Color.White,
+            BackColor = itemBg,
+            ForeColor = ForeColor,
             AccessibleName = "Cancel"
         };
         cancel.FlatAppearance.BorderSize = 1;
-        cancel.FlatAppearance.BorderColor = Color.FromArgb(58, 64, 76);
+        cancel.FlatAppearance.BorderColor = itemBorder;
 
         actions.Controls.Add(use);
         actions.Controls.Add(cancel);

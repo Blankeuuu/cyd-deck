@@ -29,7 +29,6 @@ internal static class Program
             .AddSingleton<IPairingApprovalService>(provider => provider.GetRequiredService<PairingApprovalService>())
             .AddSingleton<WindowsStartupService>()
             .AddSingleton<WindowsAgentRuntime>()
-            .AddSingleton<LocalDashboardServer>()
             .AddSingleton(singleInstance)
             .AddSingleton<WindowsAgentApplicationContext>()
             .BuildServiceProvider(validateScopes: true);

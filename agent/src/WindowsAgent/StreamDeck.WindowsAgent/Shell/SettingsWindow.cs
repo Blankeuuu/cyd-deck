@@ -39,7 +39,7 @@ public sealed partial class SettingsWindow : Form
     private static readonly Color DeviceDefaultBackground = Color.FromArgb(16, 18, 22);
     private static readonly Padding WindowContentPadding = new(20, 12, 20, 16);
     private const int NavigationWidth = 210;
-    private const int NavigationButtonWidth = 172;
+    private const int NavigationButtonWidth = 180;
     private const int NavigationButtonHeight = 42;
     private const int PageTitleHeight = 60;
     private const int ActionButtonHeight = 36;
@@ -66,6 +66,13 @@ public sealed partial class SettingsWindow : Form
     internal const string DeviceColorPreviewTagForTests = DeviceColorPreviewTag;
     internal const string DeviceColorPickerTagForTests = DeviceColorPickerTag;
     private static bool clientLightTheme;
+    internal static bool IsClientLightTheme => clientLightTheme;
+    internal static Color CurrentSurface => Surface;
+    internal static Color CurrentSurfaceAlt => SurfaceAlt;
+    internal static Color CurrentTextPrimary => TextPrimary;
+    internal static Color CurrentTextMuted => TextMuted;
+    internal static Color CurrentBorder => Border;
+    internal static Color CurrentAccent => Accent;
     private static Color Background => clientLightTheme ? LightBackground : DarkBackground;
     private static Color Surface => clientLightTheme ? LightSurface : DarkSurface;
     private static Color SurfaceAlt => clientLightTheme ? LightSurfaceAlt : DarkSurfaceAlt;
@@ -132,7 +139,6 @@ public sealed partial class SettingsWindow : Form
 
     private readonly AgentState state;
     private readonly WindowsAgentRuntime runtime;
-    private readonly LocalDashboardServer dashboard;
     private readonly WindowsStartupService startup;
     private readonly IPairingApprovalService pairing;
     private readonly AgentConfigurationStore configurationStore;
@@ -155,7 +161,6 @@ public sealed partial class SettingsWindow : Form
     public SettingsWindow(
         AgentState state,
         WindowsAgentRuntime runtime,
-        LocalDashboardServer dashboard,
         WindowsStartupService startup,
         IPairingApprovalService pairing,
         Icon shellIcon,
@@ -163,7 +168,6 @@ public sealed partial class SettingsWindow : Form
     {
         this.state = state;
         this.runtime = runtime;
-        this.dashboard = dashboard;
         this.startup = startup;
         this.pairing = pairing;
         configurationStore = configurationOverride ?? AgentConfigurationStoreFactory.CreateForCurrentUser();
@@ -287,18 +291,23 @@ public sealed partial class SettingsWindow : Form
             using var clearBrush = new SolidBrush(Surface);
             e.Graphics.FillRectangle(clearBrush, button.ClientRectangle);
 
-            var pillRect = new Rectangle(1, 2, button.Width - 3, button.Height - 5);
+            var pillRect = new Rectangle(2, 2, button.Width - 4, button.Height - 4);
             using var pillPath = CreateRoundedRectPath(pillRect, 9);
             using var pillBrush = new SolidBrush(bg);
             e.Graphics.FillPath(pillBrush, pillPath);
 
             if (selected)
             {
-                using var borderPen = new Pen(Color.FromArgb(110, Accent), 1f);
+                using var borderPen = new Pen(Color.FromArgb(140, Accent), 1.2f);
                 e.Graphics.DrawPath(borderPen, pillPath);
                 using var indicatorBrush = new SolidBrush(Accent);
-                using var indicatorPath = CreateRoundedRectPath(new Rectangle(5, 11, 3, button.Height - 22), 2);
+                using var indicatorPath = CreateRoundedRectPath(new Rectangle(6, 11, 3, button.Height - 22), 2);
                 e.Graphics.FillPath(indicatorBrush, indicatorPath);
+            }
+            else if (button.Focused)
+            {
+                using var focusPen = new Pen(Color.FromArgb(90, Accent), 1f);
+                e.Graphics.DrawPath(focusPen, pillPath);
             }
 
             var iconColor = selected ? Accent : TextMuted;
@@ -317,7 +326,7 @@ public sealed partial class SettingsWindow : Form
         return button;
     }
 
-    private void ShowPage(string page)
+    internal void ShowPage(string page)
     {
         currentPage = page;
         foreach (var (name, button) in navButtons)
@@ -798,15 +807,14 @@ public sealed partial class SettingsWindow : Form
         var choose = panel.Controls.OfType<Button>().First();
         choose.Click += (_, _) =>
         {
-            using var dialog = new ColorDialog { Color = swatch.BackColor, FullOpen = true };
-            if (dialog.ShowDialog(this) != DialogResult.OK)
+            var currentHex = IsHexColor(valueLabel.Text) ? valueLabel.Text : ToHexColor(swatch.BackColor);
+            if (!ModernColorPickerDialog.ShowColorPicker(this, currentHex, out var value))
             {
                 return;
             }
 
-            var value = ToHexColor(dialog.Color);
             valueLabel.Text = value;
-            swatch.BackColor = dialog.Color;
+            swatch.BackColor = ColorTranslator.FromHtml(value);
             update(value);
             QueueAppearanceSave();
         };
@@ -3534,8 +3542,7 @@ public sealed partial class SettingsWindow : Form
                 ["Remote endpoint"] = snapshot.RemoteAddress ?? "Unavailable",
                 ["Agent service"] = AgentStatusFormatter.ToUserStatus(snapshot.HostStatus),
                 ["Last seen"] = AgentStatusFormatter.FormatLastSeen(snapshot),
-                ["Agent port"] = snapshot.HostPort.ToString(),
-                ["Dashboard port"] = snapshot.DashboardPort == 0 ? "Unavailable" : snapshot.DashboardPort.ToString()
+                ["Agent port"] = snapshot.HostPort.ToString()
             };
         }
 

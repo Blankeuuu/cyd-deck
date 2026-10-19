@@ -30,25 +30,33 @@ public sealed class SerialPortUsbDuplexStream : IUsbDuplexStream
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            if (!serialPort.IsOpen) return 0;
-            var available = serialPort.BytesToRead;
-            if (available > 0)
+            try
             {
-                var array = ArrayPool<byte>.Shared.Rent(buffer.Length);
-                try
+                if (!serialPort.IsOpen) return 0;
+                var available = serialPort.BytesToRead;
+                if (available > 0)
                 {
-                    var toRead = Math.Min(buffer.Length, available);
-                    var count = serialPort.Read(array, 0, toRead);
-                    if (count > 0)
+                    var array = ArrayPool<byte>.Shared.Rent(buffer.Length);
+                    try
                     {
-                        new ReadOnlySpan<byte>(array, 0, count).CopyTo(buffer.Span);
-                        return count;
+                        var toRead = Math.Min(buffer.Length, available);
+                        var count = serialPort.Read(array, 0, toRead);
+                        if (count > 0)
+                        {
+                            new ReadOnlySpan<byte>(array, 0, count).CopyTo(buffer.Span);
+                            return count;
+                        }
+                    }
+                    finally
+                    {
+                        ArrayPool<byte>.Shared.Return(array);
                     }
                 }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(array);
-                }
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                AgentDiagnosticLog.Write($"USB serial read disconnected: {ex.Message}");
+                return 0;
             }
 
             await Task.Delay(10, cancellationToken).ConfigureAwait(false);
@@ -63,7 +71,16 @@ public sealed class SerialPortUsbDuplexStream : IUsbDuplexStream
         cancellationToken.ThrowIfCancellationRequested();
         if (buffer.Length == 0) return;
         var array = buffer.ToArray();
-        serialPort.Write(array, 0, array.Length);
+        try
+        {
+            if (!serialPort.IsOpen) throw new IOException("USB serial port is closed.");
+            serialPort.Write(array, 0, array.Length);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            AgentDiagnosticLog.Write($"USB serial write failed: {ex.Message}");
+            throw new IOException($"USB serial write failed on {serialPort.PortName}: {ex.Message}", ex);
+        }
         await Task.CompletedTask;
     }
 

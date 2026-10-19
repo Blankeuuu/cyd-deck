@@ -204,7 +204,7 @@ Nie implementuj ponownie ukończonych zmian. Sprawdź aktualny kod, historię zm
 - [ ] `!!!!` Dodaj przechwytywanie kombinacji klawiszy zamiast wyłącznie ręcznego wpisywania tekstu.
 - [ ] `!!!` Pokazuj przechwyconą kombinację w czytelnej postaci.
 - [ ] `!!!` Dodaj walidację kombinacji i komunikaty dla skrótów zarezerwowanych przez system.
-- [ ] `!!` Dodaj łatwy sposób wyczyszczenia kombinacji.
+- [x] `!!` Dodaj łatwy sposób wyczyszczenia kombinacji. (ZWERYFIKOWANO TESTEM: dodano przycisk Clear oraz metodę ClearHotkey w ShortcutEditorDialog).
 
 ## Open URL
 

@@ -39,10 +39,10 @@ internal static class DesktopBugRegressionTests
     {
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         Directory.CreateDirectory("artifacts/ui-review"); var store = new AgentConfigurationStore(Path.GetFullPath("artifacts/ui-review/menu-regression.json")); store.Save(AgentConfiguration.CreateDefault());
-        var state = new AgentState(); var pairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/menu-pairing.json")); var runtime = new WindowsAgentRuntime(state, pairing, new AgentOptions(true), listenPortOverride: 0); var dashboard = new LocalDashboardServer(state);
-        using var icon = AppIconFactory.CreateIcon(); using var window = new SettingsWindow(state, runtime, dashboard, new WindowsStartupService(new AgentOptions(true)), pairing, icon, store);
+        var state = new AgentState(); var pairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/menu-pairing.json")); var runtime = new WindowsAgentRuntime(state, pairing, new AgentOptions(true), listenPortOverride: 0);
+        using var icon = AppIconFactory.CreateIcon(); using var window = new SettingsWindow(state, runtime, new WindowsStartupService(new AgentOptions(true)), pairing, icon, store);
         window.StartPosition = FormStartPosition.Manual; window.Location = new Point(-2500, -2500); window.ShowInTaskbar = false; window.Show(); Application.DoEvents();
-        var tools = All(window).OfType<Button>().Single(b => b.Text == "Device & Tools");
+        var tools = All(window).OfType<Button>().Single(b => b.AccessibleName == "Device & Tools" || b.Text is "Device & Tools" or "Urządzenie i narzędzia");
         for (var i = 0; i < 8; ++i) {
             tools.PerformClick(); Application.DoEvents(); ContextMenuStrip? active = null;
             EnumThreadWindows(GetCurrentThreadId(), (handle, _) => { if (Control.FromHandle(handle) is ContextMenuStrip menu && menu.Visible) active = menu; return true; }, IntPtr.Zero);
@@ -53,7 +53,7 @@ internal static class DesktopBugRegressionTests
             if (!window.SaveConfigurationDraftAsync().GetAwaiter().GetResult()) throw new InvalidOperationException("Theme save failed during menu regression");
             All(window).OfType<Button>().Single(b => b.Text == "Deck Builder").PerformClick(); Application.DoEvents();
         }
-        window.CloseForExit(); SynchronizationContext.SetSynchronizationContext(null); runtime.DisposeAsync().AsTask().GetAwaiter().GetResult(); dashboard.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        window.CloseForExit(); SynchronizationContext.SetSynchronizationContext(null); runtime.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
     private static IEnumerable<Control> All(Control root) { foreach (Control child in root.Controls) { yield return child; foreach (var item in All(child)) yield return item; } }
 }

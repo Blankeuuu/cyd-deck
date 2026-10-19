@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using StreamDeck.Shortcuts;
 
 namespace StreamDeck.WindowsAgent.Shell;
@@ -34,6 +35,7 @@ internal sealed class ShortcutEditorDialog : Form
     private readonly ComboBox builtInActionCombo = new();
     private readonly Label hintLabel = new();
     private readonly Button browseButton = new();
+    private readonly Button clearHotkeyButton = new();
     private readonly TableLayoutPanel actionPanel = new();
     private readonly Panel previewBadge = new();
     private readonly Label previewBadgeLabel = new();
@@ -41,8 +43,26 @@ internal sealed class ShortcutEditorDialog : Form
     private string? loadedActionType;
     private string? loadedTileColor;
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        var dark = SettingsWindow.IsClientLightTheme ? 0 : 1;
+        _ = DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+        var corners = 2;
+        _ = DwmSetWindowAttribute(Handle, 33, ref corners, sizeof(int));
+    }
+
     public ShortcutEditorDialog(ShortcutDefinition? shortcut = null)
     {
+        var isLight = SettingsWindow.IsClientLightTheme;
+        BackColor = isLight ? Color.FromArgb(246, 247, 249) : Color.FromArgb(18, 20, 25);
+        ForeColor = isLight ? Color.FromArgb(29, 32, 37) : Color.FromArgb(238, 241, 245);
+        var inputBg = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(28, 32, 40);
+        var inputBorder = isLight ? Color.FromArgb(210, 214, 220) : Color.FromArgb(42, 46, 56);
+
         Text = shortcut is null ? "Add shortcut" : "Edit shortcut";
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -51,46 +71,78 @@ internal sealed class ShortcutEditorDialog : Form
         Width = DialogWidth;
         Height = DialogHeight;
         MinimumSize = new Size(DialogWidth, DialogHeight);
-        BackColor = Color.FromArgb(18, 20, 25);
-        ForeColor = Color.FromArgb(238, 241, 245);
         Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
         AccessibleName = Text;
         AccessibleDescription = "Configure an Agent-side shortcut action. Choose a built-in icon or import an image URL for the CYD display.";
 
         typeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         typeCombo.AccessibleName = "Shortcut action";
+        typeCombo.BackColor = inputBg;
+        typeCombo.ForeColor = ForeColor;
+        typeCombo.FlatStyle = FlatStyle.Flat;
         typeCombo.Items.AddRange(GetActionChoices().Cast<object>().ToArray());
         typeCombo.SelectedIndexChanged += (_, _) => ApplySelectedActionChoice();
+
         builtInActionCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         builtInActionCombo.AccessibleName = "Built-in action";
+        builtInActionCombo.BackColor = inputBg;
+        builtInActionCombo.ForeColor = ForeColor;
+        builtInActionCombo.FlatStyle = FlatStyle.Flat;
         builtInActionCombo.Items.AddRange(GetBuiltInActionChoices().Cast<object>().ToArray());
+
         displayModeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         displayModeCombo.AccessibleName = "Shortcut display mode";
+        displayModeCombo.BackColor = inputBg;
+        displayModeCombo.ForeColor = ForeColor;
+        displayModeCombo.FlatStyle = FlatStyle.Flat;
         displayModeCombo.Items.AddRange(GetDisplayModeChoices().Cast<object>().ToArray());
         displayModeCombo.SelectedIndexChanged += (_, _) => UpdatePreview();
 
         chooseIconButton.Text = "Choose icon…";
         chooseIconButton.AccessibleName = "Choose shortcut icon";
+        chooseIconButton.BackColor = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(39, 43, 52);
+        chooseIconButton.ForeColor = ForeColor;
+        chooseIconButton.FlatStyle = FlatStyle.Flat;
+        chooseIconButton.FlatAppearance.BorderColor = inputBorder;
         chooseIconButton.Click += (_, _) => {
             using var picker = new ShortcutIconPicker(iconText.Text, loadedIconData, loadedIconUrl);
             if (picker.ShowDialog(this) != DialogResult.OK) return;
             loadedIconData = picker.IconData; loadedIconUrl = picker.IconUrl; iconText.Text = picker.IconKey; UpdatePreview();
         };
-        iconText.ReadOnly = true;
 
         idText.ReadOnly = true;
         idText.TabStop = false;
         idText.AccessibleName = "Shortcut ID";
         idText.PlaceholderText = "e.g. shortcut-browser";
+        idText.BackColor = inputBg;
+        idText.ForeColor = ForeColor;
+        idText.BorderStyle = BorderStyle.FixedSingle;
+
         nameText.AccessibleName = "Shortcut name";
         nameText.PlaceholderText = "e.g. Browser, Terminal, Lock PC";
+        nameText.BackColor = inputBg;
+        nameText.ForeColor = ForeColor;
+        nameText.BorderStyle = BorderStyle.FixedSingle;
         nameText.TextChanged += (_, _) => UpdatePreview();
+
+        iconText.ReadOnly = true;
         iconText.AccessibleName = "Shortcut icon";
         iconText.PlaceholderText = "e.g. browser, app, audio";
+        iconText.BackColor = inputBg;
+        iconText.ForeColor = ForeColor;
+        iconText.BorderStyle = BorderStyle.FixedSingle;
         iconText.TextChanged += (_, _) => UpdatePreview();
+
         targetText.AccessibleName = "Shortcut target";
+        targetText.BackColor = inputBg;
+        targetText.ForeColor = ForeColor;
+        targetText.BorderStyle = BorderStyle.FixedSingle;
+
         argumentsText.AccessibleName = "Shortcut arguments";
         argumentsText.PlaceholderText = "e.g. --profile Default";
+        argumentsText.BackColor = inputBg;
+        argumentsText.ForeColor = ForeColor;
+        argumentsText.BorderStyle = BorderStyle.FixedSingle;
 
         targetText.KeyDown += (s, e) =>
         {
@@ -110,24 +162,39 @@ internal sealed class ShortcutEditorDialog : Form
 
         browseButton.Text = "Browse…";
         browseButton.AccessibleName = "Browse for shortcut target";
+        browseButton.BackColor = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(39, 43, 52);
+        browseButton.ForeColor = ForeColor;
+        browseButton.FlatStyle = FlatStyle.Flat;
+        browseButton.FlatAppearance.BorderColor = inputBorder;
         browseButton.Click += (_, _) => BrowseForActionTarget();
 
-        previewBadge.BackColor = Color.FromArgb(30, 34, 42);
+        clearHotkeyButton.Text = "Clear";
+        clearHotkeyButton.AccessibleName = "Clear hotkey combination";
+        clearHotkeyButton.BackColor = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(39, 43, 52);
+        clearHotkeyButton.ForeColor = ForeColor;
+        clearHotkeyButton.FlatStyle = FlatStyle.Flat;
+        clearHotkeyButton.FlatAppearance.BorderColor = inputBorder;
+        clearHotkeyButton.Click += (_, _) => ClearHotkey();
+
+        previewBadge.BackColor = isLight ? Color.FromArgb(255, 255, 255) : Color.FromArgb(30, 34, 42);
         previewBadge.BorderStyle = BorderStyle.FixedSingle;
         previewBadge.Dock = DockStyle.Fill;
         previewBadgeLabel.Dock = DockStyle.Fill;
         previewBadgeLabel.TextAlign = ContentAlignment.MiddleCenter;
         previewBadgeLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        previewBadgeLabel.ForeColor = Color.FromArgb(82, 153, 224);
+        previewBadgeLabel.ForeColor = isLight ? Color.FromArgb(40, 100, 180) : Color.FromArgb(82, 153, 224);
         previewBadge.Paint += (_, e) => {
             var mode = NormalizeDisplayModeChoice(displayModeCombo.SelectedItem?.ToString());
             if (mode != ShortcutDisplayModes.Label) ShortcutIconCatalog.Draw(e.Graphics, iconText.Text, loadedIconData, new Rectangle(mode == ShortcutDisplayModes.Icon ? (previewBadge.Width - 24) / 2 : 8, (previewBadge.Height - 24) / 2, 24, 24), ForeColor);
             if (mode != ShortcutDisplayModes.Icon) TextRenderer.DrawText(e.Graphics, nameText.Text.Length == 0 ? "Shortcut" : nameText.Text, Font, new Rectangle(mode == ShortcutDisplayModes.Both ? 40 : 4, 0, previewBadge.Width - (mode == ShortcutDisplayModes.Both ? 44 : 8), previewBadge.Height), ForeColor, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         };
 
-
         testActionButton.Text = "Test action";
         testActionButton.AccessibleName = "Test shortcut action";
+        testActionButton.BackColor = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(39, 43, 52);
+        testActionButton.ForeColor = isLight ? Color.FromArgb(29, 32, 37) : Color.White;
+        testActionButton.FlatStyle = FlatStyle.Flat;
+        testActionButton.FlatAppearance.BorderColor = inputBorder;
         testActionButton.Click += (_, _) => TestCurrentAction();
 
         Controls.Add(BuildLayout());
@@ -243,7 +310,13 @@ internal sealed class ShortcutEditorDialog : Form
         root.Controls.Add(control, 1, row);
     }
 
-    private static Label CreateFieldLabel(string text) => new() { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.FromArgb(177, 184, 195) };
+    private static Label CreateFieldLabel(string text) => new()
+    {
+        Text = text,
+        Dock = DockStyle.Fill,
+        TextAlign = ContentAlignment.MiddleLeft,
+        ForeColor = SettingsWindow.IsClientLightTheme ? Color.FromArgb(93, 101, 112) : Color.FromArgb(177, 184, 195)
+    };
 
     private static Button CreateDialogButton(string text, DialogResult result, bool isDefault) => new()
     {
@@ -252,8 +325,8 @@ internal sealed class ShortcutEditorDialog : Form
         Width = PrimaryButtonWidth,
         Height = PrimaryButtonHeight,
         Margin = new Padding(8, 0, 0, 0),
-        BackColor = isDefault ? Color.FromArgb(82, 153, 224) : Color.FromArgb(39, 43, 52),
-        ForeColor = Color.White,
+        BackColor = isDefault ? SettingsWindow.CurrentAccent : (SettingsWindow.IsClientLightTheme ? Color.FromArgb(236, 238, 242) : Color.FromArgb(39, 43, 52)),
+        ForeColor = isDefault ? Color.White : (SettingsWindow.IsClientLightTheme ? Color.FromArgb(29, 32, 37) : Color.White),
         FlatStyle = FlatStyle.Flat,
         AccessibleName = text
     };
@@ -325,7 +398,7 @@ internal sealed class ShortcutEditorDialog : Form
                 break;
             case ShortcutActionTypes.Hotkey:
                 targetText.PlaceholderText = "e.g. Ctrl+Shift+R or Win+L (press keys)";
-                AddTextActionRow("Keys", targetText);
+                AddHotkeyActionRow("Keys");
                 argumentsText.Text = string.Empty;
                 break;
             case ShortcutActionTypes.Script:
@@ -349,6 +422,12 @@ internal sealed class ShortcutEditorDialog : Form
     private void UpdatePreview()
     {
         previewBadge.Invalidate();
+    }
+
+    internal void ClearHotkey()
+    {
+        targetText.Text = string.Empty;
+        UpdatePreview();
     }
 
     private async void TestCurrentAction()
@@ -408,6 +487,20 @@ internal sealed class ShortcutEditorDialog : Form
         browseButton.Dock = DockStyle.Fill;
         browseButton.Margin = new Padding(0, 4, 0, 4);
         panel.Controls.Add(browseButton, 1, 0);
+        AddActionControlRow(label, panel);
+    }
+
+    private void AddHotkeyActionRow(string label)
+    {
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
+        targetText.Dock = DockStyle.Fill;
+        targetText.Margin = new Padding(0, 4, 6, 4);
+        panel.Controls.Add(targetText, 0, 0);
+        clearHotkeyButton.Dock = DockStyle.Fill;
+        clearHotkeyButton.Margin = new Padding(0, 4, 0, 4);
+        panel.Controls.Add(clearHotkeyButton, 1, 0);
         AddActionControlRow(label, panel);
     }
 

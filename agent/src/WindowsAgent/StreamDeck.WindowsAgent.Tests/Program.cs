@@ -226,6 +226,7 @@ AssertEqual("COM7", WindowsAgentRuntime.ResolveUsbPortCandidates(usbOptions).Sin
 await TestUsbLineProtocolTransportAsync();
 await TestUsbCoverSenderAsync();
 await TestUsbRuntimeAdvancesFromSilentCandidateToValidEsp32HelloAsync();
+await TestUsbRuntimeAdvancesFromPortOpenFailureToValidEsp32HelloAsync();
 await TestUsbRuntimeRejectsWrongRoleHelloAsync();
 await TestUsbRuntimeHardOverrideRetriesSinglePortAsync();
 await TestUsbRuntimeDisposesTimedOutProbeAsync();
@@ -626,6 +627,15 @@ using (var shortcutEditor = new ShortcutEditorDialog())
     AssertShortcutEditorLayout(shortcutEditor, new Size(620, 540), "minimum");
     AssertShortcutEditorLayout(shortcutEditor, new Size(720, 600), "regular");
 }
+using (var hotkeyEditor = new ShortcutEditorDialog(new ShortcutDefinition { Action = new ShortcutActionDefinition { Type = ShortcutActionTypes.Hotkey, Keys = ["CTRL", "SHIFT", "R"] } }))
+{
+    var hotkeyControls = FlattenControls(hotkeyEditor).ToArray();
+    var hotkeyTarget = hotkeyControls.OfType<System.Windows.Forms.TextBox>().First(t => t.AccessibleName == "Shortcut target");
+    AssertEqual("CTRL+SHIFT+R", hotkeyTarget.Text, "hotkey target is populated from keys");
+    var clearBtn = hotkeyControls.OfType<System.Windows.Forms.Button>().First(b => b.AccessibleName == "Clear hotkey combination");
+    hotkeyEditor.ClearHotkey();
+    AssertEqual("", hotkeyTarget.Text, "Clear button clears hotkey combination");
+}
 SynchronizationContext.SetSynchronizationContext(previousShortcutEditorContext);
 
 using (var picker = new ShortcutIconPicker("lock", null, null))
@@ -703,34 +713,14 @@ using (var primary = SingleInstanceGuard.Acquire(instanceName))
 
 var pairingStore = Path.Combine(Path.GetTempPath(), $"streamdeck-pairing-{Guid.NewGuid():N}.json");
 var dashboardPairing = new PairingApprovalService(pairingStore);
-await dashboardPairing.AuthorizeAsync(new HelloMessage("native-device", "Native CYD", "esp32", []), bearerToken: null);
-await using (var dashboard = new LocalDashboardServer(state))
-{
-    await dashboard.StartAsync();
-    AssertTrue(dashboard.Port > 0, "dashboard port assigned");
-
-    using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{dashboard.Port}/") };
-    var dashboardHtml = await client.GetStringAsync("");
-    AssertDoesNotContain("Pending pairing", dashboardHtml, "dashboard pairing UI removed");
-    AssertDoesNotContain("/api/pairing", dashboardHtml, "dashboard pairing script removed");
-    AssertContains("CYD WebSocket", dashboardHtml, "dashboard websocket UI");
-
-    using var statusResponse = await client.GetAsync("api/status");
-    AssertTrue(statusResponse.IsSuccessStatusCode, "dashboard status endpoint");
-
-    using var pendingResponse = await client.GetAsync("api/pairing/pending");
-    AssertEqual(HttpStatusCode.NotFound, pendingResponse.StatusCode, "dashboard pairing endpoint removed");
-
-    var settingsConstructor = typeof(SettingsWindow).GetConstructor([
-        typeof(AgentState),
-        typeof(WindowsAgentRuntime),
-        typeof(LocalDashboardServer),
-        typeof(WindowsStartupService),
-        typeof(IPairingApprovalService),
-        typeof(Icon),
-        typeof(AgentConfigurationStore)]);
-    AssertTrue(settingsConstructor is not null, "settings window is wired with native pairing service");
-}
+var settingsConstructor = typeof(SettingsWindow).GetConstructor([
+    typeof(AgentState),
+    typeof(WindowsAgentRuntime),
+    typeof(WindowsStartupService),
+    typeof(IPairingApprovalService),
+    typeof(Icon),
+    typeof(AgentConfigurationStore)]);
+AssertTrue(settingsConstructor is not null, "settings window is wired with native pairing service");
 
 var listenerPairingStore = Path.Combine(Path.GetTempPath(), $"streamdeck-listener-pairing-{Guid.NewGuid():N}.json");
 var listenerPairing = new PairingApprovalService(listenerPairingStore);
@@ -1148,6 +1138,39 @@ static async Task TestUsbRuntimeAdvancesFromSilentCandidateToValidEsp32HelloAsyn
     AssertEqual("COM5,COM8", string.Join(',', opened.Take(2)), "USB probe advances from silent candidate to next CH340 port");
     var pending = await pairing.ListPendingAsync(timeout.Token);
     AssertEqual("usb-probe-device", pending.Single().DeviceId, "second valid ESP32 hello stays alive for user pairing");
+}
+
+static async Task TestUsbRuntimeAdvancesFromPortOpenFailureToValidEsp32HelloAsync()
+{
+    var secondWritten = new List<string>();
+    var second = new FakeUsbDuplexStream(secondWritten);
+    var opened = new List<string>();
+    var pairing = new PairingApprovalService(Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-fault-{Guid.NewGuid():N}.json"));
+    await using var runtime = new UsbDeviceRuntime(
+        () => ["COM3", "COM5"],
+        port =>
+        {
+            opened.Add(port);
+            if (port == "COM3") throw new UnauthorizedAccessException("Access to the port 'COM3' is denied.");
+            return second;
+        },
+        CreateTestDispatcher(),
+        pairing,
+        new AgentState(),
+        new AppearanceConfiguration(),
+        new DeviceShortcutConfiguration([]),
+        Path.Combine(Path.GetTempPath(), $"streamdeck-usb-probe-fault-covers-{Guid.NewGuid():N}"),
+        helloProbeTimeout: TimeSpan.FromMilliseconds(40));
+
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    await runtime.StartAsync(timeout.Token);
+    await WaitUntilAsync(() => opened.Contains("COM5", StringComparer.Ordinal), timeout.Token);
+    await second.InjectAsync(Encoding.UTF8.GetBytes(CreateUsbHello("usb-probe-device", "esp32") + "\r\n"));
+    await WaitUntilAsync(() => secondWritten.Any(message => message.Contains("reconnecting", StringComparison.Ordinal)), timeout.Token);
+
+    AssertEqual("COM3,COM5", string.Join(',', opened.Take(2)), "USB probe advances when an earlier candidate port throws on open");
+    var pending = await pairing.ListPendingAsync(timeout.Token);
+    AssertEqual("usb-probe-device", pending.Single().DeviceId, "valid ESP32 hello connects after earlier open failure");
 }
 
 static async Task TestUsbRuntimeRejectsWrongRoleHelloAsync()

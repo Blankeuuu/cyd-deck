@@ -105,16 +105,27 @@ public sealed class UsbDeviceRuntime(
                 if (candidates.Count == 0) throw new UsbPortUnavailableException();
                 foreach (var port in candidates)
                 {
-                    await using var stream = portStreamFactory(port);
-                    var probeResult = await ProbeHelloFrameAsync(stream, cancellationToken).ConfigureAwait(false);
-                    if (probeResult is null) continue;
+                    try
+                    {
+                        await using var stream = portStreamFactory(port);
+                        var probeResult = await ProbeHelloFrameAsync(stream, cancellationToken).ConfigureAwait(false);
+                        if (probeResult is null) continue;
 
-                    var effectiveStream = probeResult.Leftover.Length > 0
-                        ? new PrefixedUsbDuplexStream(stream, probeResult.Leftover)
-                        : stream;
+                        var effectiveStream = probeResult.Leftover.Length > 0
+                            ? new PrefixedUsbDuplexStream(stream, probeResult.Leftover)
+                            : stream;
 
-                    await RunConnectedStreamAsync(effectiveStream, probeResult.Hello, connectedSink => sink = connectedSink, cancellationToken).ConfigureAwait(false);
-                    break;
+                        await RunConnectedStreamAsync(effectiveStream, probeResult.Hello, connectedSink => sink = connectedSink, cancellationToken).ConfigureAwait(false);
+                        break;
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        AgentDiagnosticLog.Write($"USB port {port} probe failed: {ex.Message} ({ex.GetType().Name})");
+                    }
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

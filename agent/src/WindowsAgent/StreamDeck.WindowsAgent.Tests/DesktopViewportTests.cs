@@ -37,8 +37,8 @@ internal static class DesktopViewportTests
         for (var i = 0; i < 34; ++i) state.UpdateSystemMetrics(new SystemMetrics { TimestampUtc = DateTimeOffset.UtcNow, CpuUsagePercent = 20 + i % 10, RamUsedBytes = 23UL * 1024 * 1024 * 1024, RamTotalBytes = 32UL * 1024 * 1024 * 1024, GpuUsagePercent = 18 + i % 5, CpuTemperatureCelsius = 54 + i % 7, Uptime = TimeSpan.FromDays(16) });
         Check(state.Snapshot().SystemTelemetry?.CpuHistory.Count == 30, "Telemetry holds 30 samples");
         var pairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/desktop-pairing.json"));
-        var runtime = new WindowsAgentRuntime(state, pairing, new AgentOptions(true), listenPortOverride: 0); var dashboard = new LocalDashboardServer(state);
-        using var icon = AppIconFactory.CreateIcon(); using var window = new SettingsWindow(state, runtime, dashboard, new WindowsStartupService(new AgentOptions(true)), pairing, icon, fixture);
+        var runtime = new WindowsAgentRuntime(state, pairing, new AgentOptions(true), listenPortOverride: 0);
+        using var icon = AppIconFactory.CreateIcon(); using var window = new SettingsWindow(state, runtime, new WindowsStartupService(new AgentOptions(true)), pairing, icon, fixture);
         window.ShowInTaskbar = false; window.StartPosition = FormStartPosition.Manual; window.Location = new Point(-2500, -2500); window.Show();
         void Navigate(string name) { All(window).OfType<Button>().Single(b => b.AccessibleName == name && b.Text == name).PerformClick(); Application.DoEvents(); }
         foreach (var size in new[] { new Size(1200, 780), new Size(1280, 800) }) {
@@ -61,15 +61,17 @@ internal static class DesktopViewportTests
             }
         }
         Navigate("Media Controls");
-        var volume = All(window).OfType<TrackBar>().Single(t => t.AccessibleName == "System volume"); volume.Value = 32;
+        var volume = All(window).Single(t => t.AccessibleName == "System volume");
+        if (volume is TrackBar tb) tb.Value = 32;
+        else if (volume is SettingsWindow.DarkSlider ds) ds.Value = 32;
         for (var i = 0; i < 12; ++i) { Application.DoEvents(); Thread.Sleep(20); }
         Check(state.Snapshot().CurrentAudio?.VolumePercent == 32, "Volume slider updates the shared audio state");
-        All(window).OfType<Button>().Single(b => b.Text == "Mute").PerformClick(); Application.DoEvents(); Check(state.Snapshot().CurrentAudio?.IsMuted == true, "Mute updates the shared audio state");
+        All(window).OfType<Button>().Single(b => b.AccessibleName == "Mute" || b.Text is "Mute" or "Wycisz").PerformClick(); Application.DoEvents(); Check(state.Snapshot().CurrentAudio?.IsMuted == true, "Mute updates the shared audio state");
         Navigate("Deck Builder");
         var preview = All(window).OfType<DesktopCanvas>().Single(); var library = All(window).OfType<FlowLayoutPanel>().Single(c => c.AccessibleName == "Shortcut Library Scroll"); Check(library.VerticalScroll.Visible, "Large library uses internal scroll");
         preview.UnassignSlot!(0); Application.DoEvents(); Check(preview.Slots[0] is null, "Unassign clears slot"); Check(fixture.LoadOrDefault().Shortcuts!.Count == 24, "Unassign never deletes saved library");
         All(window).OfType<Button>().Single(b => b.AccessibleName == "Assign Spotify").PerformClick(); Application.DoEvents(); Check(preview.Slots[0]?.Id == "desktop-0", "Assign reuses selected empty slot");
-        var defaultColor = All(window).OfType<Button>().Single(b => b.Text == "Default");
+        var defaultColor = All(window).OfType<Button>().Single(b => b.AccessibleName == "Default" || b.Text is "Default" or "Domyślny");
         Check(defaultColor.Width >= TextRenderer.MeasureText(defaultColor.Text, defaultColor.Font, Size.Empty, TextFormatFlags.NoPadding).Width + 16, "Default caption fits");
         All(window).OfType<Button>().Single(b => b.AccessibleName == "Cobalt").PerformClick(); defaultColor.PerformClick();
         var titleInput = All(window).OfType<TextBox>().Single(t => t.AccessibleName == "Title"); var iconButton = All(window).OfType<Button>().Single(b => b.AccessibleName == "Icon");
@@ -84,7 +86,7 @@ internal static class DesktopViewportTests
         Navigate("Settings"); All(window).OfType<RadioButton>().Single(b => b.Text == "Light").PerformClick();
         Check(window.SaveConfigurationDraftAsync().GetAwaiter().GetResult(), "Light theme save");
         foreach (var viewName in new[] { "Deck Builder", "Settings", "Media Controls", "System Monitor" }) { Navigate(viewName); Application.DoEvents(); using var render = new Bitmap(window.Width, window.Height); window.DrawToBitmap(render, new Rectangle(Point.Empty, window.Size)); render.Save($"artifacts/ui-review/desktop-{viewName.Replace(' ', '-')}-light.png"); }
-        window.CloseForExit(); SynchronizationContext.SetSynchronizationContext(null); runtime.DisposeAsync().AsTask().GetAwaiter().GetResult(); dashboard.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        window.CloseForExit(); SynchronizationContext.SetSynchronizationContext(null); runtime.DisposeAsync().AsTask().GetAwaiter().GetResult();
         Console.WriteLine("PASS Desktop viewport: four views, two sizes, internal library scroll, draft, slots, telemetry, renders");
     }
     private sealed class Thumbnail(byte[] bytes) : IMediaThumbnailReference { public ValueTask<Stream?> OpenReadAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult<Stream?>(new MemoryStream(bytes)); }

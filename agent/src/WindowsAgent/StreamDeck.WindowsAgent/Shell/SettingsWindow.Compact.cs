@@ -249,8 +249,12 @@ public sealed partial class SettingsWindow
         }
         var custom = CompactButton("…", () =>
         {
-            using var picker = new ColorDialog { Color = ColorTranslator.FromHtml(selectedColor), FullOpen = true };
-            if (picker.ShowDialog(this) == DialogResult.OK) { selectedColor = $"#{picker.Color.R:X2}{picker.Color.G:X2}{picker.Color.B:X2}"; update(selectedColor); QueueAppearanceSave(); }
+            if (ModernColorPickerDialog.ShowColorPicker(this, selectedColor, out var picked))
+            {
+                selectedColor = picked;
+                update(selectedColor);
+                QueueAppearanceSave();
+            }
             return Task.CompletedTask;
         });
         custom.AccessibleName = "Custom color";
