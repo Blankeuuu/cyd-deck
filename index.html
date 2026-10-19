@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CYD-DECK — Przeglądarkowy Instalator Firmware (Web Installer)</title>
-  <meta name="description" content="Zainstaluj lub zaktualizuj firmware CYD-DECK bezpośrednio z przeglądarki za pomocą Web Serial i ESP Web Tools.">
+  <title>CYD-DECK - Firmware Web Installer</title>
+  <meta name="description" content="Install or update CYD-DECK firmware directly from your browser using Web Serial and ESP Web Tools.">
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
   <style>
     :root {
@@ -182,37 +182,37 @@
 </head>
 <body>
   <div class="container">
-    <div class="badge">Wersja 1.3.0 · Web Serial API</div>
+    <div class="badge">Version 1.3.0 · Web Serial API</div>
     <h1>CYD-DECK Web Installer</h1>
-    <p class="subtitle">Zainstaluj lub zaktualizuj firmware docka ESP32 bezpośrednio z przeglądarki</p>
+    <p class="subtitle">Install or update your ESP32 dock firmware directly from the browser</p>
 
     <div id="not-supported" class="unsupported">
-      Twoja przeglądarka nie obsługuje interfejsu Web Serial. Użyj <strong>Google Chrome</strong>, <strong>Microsoft Edge</strong> lub <strong>Brave</strong> na komputerze PC.
+      Your browser does not support the Web Serial API. Please use <strong>Google Chrome</strong>, <strong>Microsoft Edge</strong>, or <strong>Brave</strong> on a desktop PC.
     </div>
 
     <div class="install-box">
-      <div class="install-title">ESP32-2432S028R (CYD) · ST7789 320×240</div>
-      <div class="install-meta">Firmware 1.3.0 · LVGL 9.3 · Zegar HH:mm · Szybki transport USB</div>
+      <div class="install-title">ESP32-2432S028R (CYD) · ST7789 320x240</div>
+      <div class="install-meta">Firmware 1.3.0 · LVGL 9.3 · HH:mm Dock Clock · USB Transport</div>
       <esp-web-install-button manifest="manifest.json">
         <button slot="activate" style="background:#5299e0; color:#fff; border:none; padding:12px 28px; border-radius:8px; font-weight:600; font-size:1rem; cursor:pointer;">
-          ⚡ Zainstaluj CYD-DECK
+          Install CYD-DECK
         </button>
       </esp-web-install-button>
     </div>
 
     <div class="steps">
-      <h3>Instrukcja instalacji krok po kroku:</h3>
+      <h3>Installation Steps:</h3>
       <ol>
-        <li>Podłącz płytkę <strong>CYD ESP32-2432S028R</strong> do komputera za pomocą przewodu USB (upewnij się, że kabel przesyła dane).</li>
-        <li>Kliknij przycisk <strong>⚡ Zainstaluj CYD-DECK</strong> powyżej.</li>
-        <li>W wyskakującym oknie przeglądarki wybierz port szeregowy płytki (np. <em>USB-SERIAL CH340</em> lub <em>CP2102</em>) i kliknij <em>Połącz (Connect)</em>.</li>
-        <li>Wybierz <strong>Install CYD-DECK</strong> (aktualizacja zachowująca Wi-Fi i parowanie) lub opcję wyczyszczenia pamięci flash przy pierwszym uruchomieniu.</li>
-        <li>Poczekaj na zakończenie procesu (ok. 30–45 sekund). Płytka automatycznie uruchomi się ponownie z nowym interfejsem!</li>
+        <li>Connect your <strong>CYD ESP32-2432S028R</strong> board to your computer via micro-USB (ensure the cable supports data, not power only).</li>
+        <li>Click the <strong>Install CYD-DECK</strong> button above.</li>
+        <li>In the browser dialog, select your board's serial port (e.g. <em>USB-SERIAL CH340</em> or <em>CP2102</em>) and click <em>Connect</em>.</li>
+        <li>Select <strong>Install CYD-DECK</strong> to flash the firmware.</li>
+        <li>Wait for the process to complete (~30 to 45 seconds). The board will automatically reboot into the CYD-DECK interface.</li>
       </ol>
     </div>
 
     <div class="note">
-      Wymagany Windows Agent? Pobierz <a href="../../artifacts/release-v1.3.0/CYD-DECK-Setup-1.3.0-win-x64.exe">Instalator Windows CYD-DECK 1.3.0</a> lub sprawdź <a href="https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0" target="_blank">Wydanie GitHub</a>.
+      Looking for the Windows companion app? Download the <a href="https://github.com/Blankeuuu/cyd-deck/releases/tag/v1.3.0" target="_blank">Windows Agent 1.3.0 Installer</a> from GitHub Releases.
     </div>
   </div>
 
