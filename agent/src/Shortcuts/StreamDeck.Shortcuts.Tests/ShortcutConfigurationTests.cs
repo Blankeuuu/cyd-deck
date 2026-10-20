@@ -172,6 +172,94 @@ public sealed class ShortcutConfigurationTests
             calls);
     }
 
+    [Theory]
+    [InlineData("Zażółć gęślą jaźń — Łódź, Śląsk")]
+    [InlineData("Głośność")]
+    [InlineData("Przeglądarka")]
+    [InlineData("Wyłącz komputer")]
+    [InlineData("Żółw")]
+    [InlineData("Ścieżka")]
+    [InlineData("Łódź")]
+    [InlineData("Action 123 (Test) + [More] - ok")]
+    public void PolishAndUnicodeShortcutNamesAreValidAndPreservedInRoundTrip(string displayName)
+    {
+        var shortcut = new ShortcutDefinition
+        {
+            Id = "shortcut-polish-test",
+            Name = displayName,
+            Icon = "shortcut",
+            Action = new ShortcutActionDefinition
+            {
+                Type = ShortcutActionTypes.OpenUrl,
+                Url = "https://example.com"
+            }
+        };
+
+        var config = new ShortcutConfiguration { Shortcuts = [shortcut] };
+        var validator = new ShortcutConfigurationValidator();
+        var issues = validator.Validate(config);
+        Assert.Empty(issues);
+
+        var json = ShortcutJson.SerializeConfiguration(config);
+        Assert.Contains(displayName, json);
+
+        var restored = ShortcutJson.DeserializeConfiguration(json);
+        Assert.Single(restored.Shortcuts);
+        Assert.Equal(displayName, restored.Shortcuts[0].Name);
+
+        var restoredIssues = validator.Validate(restored);
+        Assert.Empty(restoredIssues);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(" Leading Space")]
+    [InlineData("Trailing Space ")]
+    [InlineData("Control\nCharacter")]
+    [InlineData("Control\tTab")]
+    [InlineData("Control\0Null")]
+    public void InvalidShortcutNamesAreRejected(string invalidName)
+    {
+        var shortcut = new ShortcutDefinition
+        {
+            Id = "test-id",
+            Name = invalidName,
+            Icon = "shortcut",
+            Action = new ShortcutActionDefinition
+            {
+                Type = ShortcutActionTypes.OpenUrl,
+                Url = "https://example.com"
+            }
+        };
+
+        var config = new ShortcutConfiguration { Shortcuts = [shortcut] };
+        var validator = new ShortcutConfigurationValidator();
+        var issues = validator.Validate(config);
+        Assert.Contains(issues, issue => issue.Path.EndsWith(".name"));
+    }
+
+    [Fact]
+    public void DecomposedUnicodeShortcutNameIsRejectedUnlessNormalizedToNfc()
+    {
+        var nfdName = "Zażółć gęślą jaźń".Normalize(System.Text.NormalizationForm.FormD);
+        var shortcut = new ShortcutDefinition
+        {
+            Id = "test-nfd",
+            Name = nfdName,
+            Icon = "shortcut",
+            Action = new ShortcutActionDefinition { Type = ShortcutActionTypes.OpenUrl, Url = "https://example.com" }
+        };
+
+        var validator = new ShortcutConfigurationValidator();
+        var issues = validator.Validate(new ShortcutConfiguration { Shortcuts = [shortcut] });
+        Assert.Contains(issues, issue => issue.Path.EndsWith(".name") && issue.Message.Contains("NFC"));
+
+        var nfcShortcut = shortcut with { Name = nfdName.Normalize(System.Text.NormalizationForm.FormC) };
+        var nfcIssues = validator.Validate(new ShortcutConfiguration { Shortcuts = [nfcShortcut] });
+        Assert.Empty(nfcIssues);
+    }
+
     private static ShortcutCatalog LoadValidCatalog()
     {
         return ShortcutCatalog.Create(LoadConfiguration("valid-shortcuts.json"));

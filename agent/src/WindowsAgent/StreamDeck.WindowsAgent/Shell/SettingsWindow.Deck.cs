@@ -29,7 +29,7 @@ public sealed partial class SettingsWindow
         var libraryCard = DesktopCard(UiText.Get("Deck.Library"));
         var header = new TableLayoutPanel { ColumnCount = 2, RowCount = 2, Dock = DockStyle.Fill, Margin = Padding.Empty };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Dip(grid, 74)));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Dip(grid, 92)));
         var search = new TextBox { Name = "DeckSearch", PlaceholderText = UiText.Get("Deck.SearchPlaceholder"), AccessibleName = UiText.Get("Deck.Search"), BackColor = SurfaceAlt, ForeColor = TextPrimary, Dock = DockStyle.Fill };
         var add = CompactButton(UiText.Get("Deck.New"), () => {
             using var dialog = new ShortcutEditorDialog();
@@ -44,6 +44,7 @@ public sealed partial class SettingsWindow
         });
         add.Name = "DeckNewAction";
         add.Dock = DockStyle.Fill;
+        add.Padding = new Padding(4, 0, 4, 0);
         add.AccessibleName = UiText.Get("Deck.NewAction");
         desktopTips.SetToolTip(add, UiText.Get("Deck.NewHint"));
         add.Enabled = shortcuts.Count < 64;
@@ -62,6 +63,8 @@ public sealed partial class SettingsWindow
         libraryCard.Controls.Add(header, 0, 0);
 
         var library = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight, AccessibleName = UiText.Get("Deck.LibraryScroll"), Padding = new Padding(0, 0, 4, 0) };
+        if (Environment.OSVersion.Version.Major >= 10 && library.IsHandleCreated) SetWindowTheme(library.Handle, "DarkMode_Explorer", null);
+        library.HandleCreated += (_, _) => { if (Environment.OSVersion.Version.Major >= 10) SetWindowTheme(library.Handle, "DarkMode_Explorer", null); };
         libraryCard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         libraryCard.Controls.Add(library, 0, libraryCard.RowCount++);
 
@@ -69,7 +72,7 @@ public sealed partial class SettingsWindow
         var inspector = DesktopCard(UiText.Get("Deck.Inspector"));
         var inspectorTitleLabel = (Label)inspector.Controls[0];
 
-        var slotChoice = new DarkComboBox { AccessibleName = "Slot" };
+        var slotChoice = new DarkComboBox { AccessibleName = UiText.GetOrDefault("Deck.SlotChoiceAccessible", "Wybór kafelka") };
         slotChoice.Items.AddRange(new object[] { UiText.Get("Deck.LibraryOnly"), UiText.Format("Deck.Slot", 1), UiText.Format("Deck.Slot", 2), UiText.Format("Deck.Slot", 3), UiText.Format("Deck.Slot", 4), UiText.Format("Deck.Slot", 5), UiText.Format("Deck.Slot", 6) });
 
         var typeMap = new (string Key, string Label)[]
@@ -138,8 +141,8 @@ public sealed partial class SettingsWindow
             inspector.Controls.Add(row, 0, inspector.RowCount++);
         }
 
-        Pair("Slot", slotChoice, UiText.Get("Deck.ActionType"), type);
-        slotChoice.AccessibleName = "Slot";
+        Pair(UiText.GetOrDefault("Deck.SlotLabel", "Kafelek"), slotChoice, UiText.Get("Deck.ActionType"), type);
+        slotChoice.AccessibleName = UiText.GetOrDefault("Deck.SlotChoiceAccessible", "Wybór kafelka");
         type.AccessibleName = UiText.Get("Deck.Type");
         Pair(UiText.Get("Deck.Title"), title, UiText.Get("Deck.Icon"), chooseIcon);
         title.AccessibleName = UiText.Get("Deck.Title");
@@ -221,7 +224,7 @@ public sealed partial class SettingsWindow
         desktopTips.SetToolTip(display, UiText.Get("Deck.DisplayHint"));
 
         var status = new Label { Dock = DockStyle.Fill, ForeColor = TextMuted, AutoEllipsis = true };
-        CompactField(inspector, "Status", status, 44);
+        CompactField(inspector, UiText.GetOrDefault("Deck.StatusLabel", "Status"), status, 44);
 
         var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
         actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28)); // Zastosuj
@@ -468,13 +471,10 @@ public sealed partial class SettingsWindow
             foreach (Control row in library.Controls) row.Width = Math.Max(Dip(grid, 145), library.ClientSize.Width - Dip(grid, 28));
         };
         desktopRefresh = RefreshPreview;
-        var inspectorScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Name = "DeckInspectorScroll" };
-        inspector.Dock = DockStyle.Top;
-        inspector.Height = Dip(grid, 720);
-        inspectorScroll.Controls.Add(inspector);
+        inspector.Dock = DockStyle.Fill;
         grid.Controls.Add(libraryCard, 0, 0);
         grid.Controls.Add(previewCard, 1, 0);
-        grid.Controls.Add(inspectorScroll, 2, 0);
+        grid.Controls.Add(inspector, 2, 0);
         AddPageBodyControl(page, grid);
         loadInspector();
         rebuildLibrary();

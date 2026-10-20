@@ -30,5 +30,21 @@ internal static class UiText
             ?? throw new MissingManifestResourceException($"Missing UI resource: {key}");
     }
 
+    public static string GetOrDefault(string key, string fallback)
+    {
+        try
+        {
+            var separator = key.IndexOf('.');
+            if (separator <= 0 || separator == key.Length - 1) return fallback;
+            var manager = Managers.GetOrAdd(key[..separator], feature => new ResourceManager(
+                $"StreamDeck.WindowsAgent.Localization.{feature}", typeof(UiText).Assembly));
+            return manager.GetString(key[(separator + 1)..], culture) ?? fallback;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
     public static string Format(string key, params object?[] values) => string.Format(culture, Get(key), values);
 }

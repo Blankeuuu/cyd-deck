@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace StreamDeck.Configuration;
@@ -6,7 +7,8 @@ public static class AgentConfigurationJson
 {
     public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
-        WriteIndented = true
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     public static AgentConfiguration Deserialize(string json)

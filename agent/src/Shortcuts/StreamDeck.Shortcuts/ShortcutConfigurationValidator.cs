@@ -21,6 +21,68 @@ public sealed class ShortcutConfigurationValidator
         "VOLUME_UP", "VOLUME_DOWN", "VOLUME_MUTE"
     };
 
+    public static bool IsValidDisplayName(string? name, out string? failureReason)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            failureReason = "Name must be a non-empty display name.";
+            return false;
+        }
+
+        if (!name.IsNormalized(System.Text.NormalizationForm.FormC))
+        {
+            failureReason = "Name must be in Unicode normalization form C (NFC).";
+            return false;
+        }
+
+        var stringInfo = new System.Globalization.StringInfo(name);
+        if (stringInfo.LengthInTextElements is < 1 or > 64)
+        {
+            failureReason = "Name length must be between 1 and 64 user-perceived characters.";
+            return false;
+        }
+
+        if (char.IsWhiteSpace(name[0]) || char.IsWhiteSpace(name[^1]))
+        {
+            failureReason = "Name must not have leading or trailing whitespace.";
+            return false;
+        }
+
+        for (var i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (char.IsControl(c))
+            {
+                failureReason = "Name must not contain control characters.";
+                return false;
+            }
+
+            var category = char.GetUnicodeCategory(name, i);
+            if (category is System.Globalization.UnicodeCategory.Control
+                or System.Globalization.UnicodeCategory.LineSeparator
+                or System.Globalization.UnicodeCategory.ParagraphSeparator
+                or System.Globalization.UnicodeCategory.OtherNotAssigned)
+            {
+                failureReason = "Name must not contain control or unassigned characters.";
+                return false;
+            }
+
+            if (char.IsSurrogate(c))
+            {
+                if (char.IsSurrogatePair(name, i))
+                {
+                    i++;
+                    continue;
+                }
+                failureReason = "Name contains invalid surrogate characters.";
+                return false;
+            }
+        }
+
+        failureReason = null;
+        return true;
+    }
+
     public IReadOnlyList<ShortcutValidationIssue> Validate(ShortcutConfiguration? configuration)
     {
         var issues = new List<ShortcutValidationIssue>();
@@ -70,9 +132,9 @@ public sealed class ShortcutConfigurationValidator
             issues.Add(new ShortcutValidationIssue($"{path}.id", "Shortcut id must be a stable 1-64 character token."));
         }
 
-        if (!DisplayTokenPattern.IsMatch(shortcut.Name ?? string.Empty))
+        if (!IsValidDisplayName(shortcut.Name, out var nameError))
         {
-            issues.Add(new ShortcutValidationIssue($"{path}.name", "Name must be a non-empty display token up to 64 characters."));
+            issues.Add(new ShortcutValidationIssue($"{path}.name", nameError ?? "Name must be a non-empty display name up to 64 characters."));
         }
 
         if (!DisplayTokenPattern.IsMatch(shortcut.Icon ?? string.Empty))
@@ -181,7 +243,6 @@ public sealed class ShortcutConfigurationValidator
         if (IsUncPath(normalizedValue))
         {
             issues.Add(new ShortcutValidationIssue(path, "Network share paths are not valid local paths."));
-            return;
         }
 
         if (Path.IsPathFullyQualified(normalizedValue) || IsBareExecutableName(normalizedValue))

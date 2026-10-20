@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="CardTitle" xml:space="preserve"><value>Odtwarzacz multimediów (Now Playing)</value></data>
+  <data name="VolumeCardTitle" xml:space="preserve"><value>Sterowanie głośnością audio</value></data>
+  <data name="PreviewCardTitle" xml:space="preserve"><value>Podgląd strony multimediów CYD</value></data>
+  <data name="ReadyToPlay" xml:space="preserve"><value>Gotowy do odtwarzania</value></data>
+  <data name="NoSession" xml:space="preserve"><value>Brak aktywnej sesji multimediów</value></data>
+  <data name="Playing" xml:space="preserve"><value>● Odtwarzanie</value></data>
+  <data name="Paused" xml:space="preserve"><value>Ⅱ Wstrzymano</value></data>
+  <data name="Stopped" xml:space="preserve"><value>Brak sesji</value></data>
+  <data name="Previous" xml:space="preserve"><value>Poprzedni utwór</value></data>
+  <data name="PlayPause" xml:space="preserve"><value>Odtwórz / Wstrzymaj</value></data>
+  <data name="Next" xml:space="preserve"><value>Następny utwór</value></data>
+  <data name="VolumeLevel" xml:space="preserve"><value>Poziom głośności</value></data>
+  <data name="SystemVolume" xml:space="preserve"><value>Głośność systemowa</value></data>
+  <data name="VolumeFormat" xml:space="preserve"><value>Głośność systemowa: {0}% · {1}</value></data>
+  <data name="DefaultDevice" xml:space="preserve"><value>Domyślne wyjście audio</value></data>
+  <data name="AudioUnavailable" xml:space="preserve"><value>Dźwięk niedostępny</value></data>
+  <data name="Mute" xml:space="preserve"><value>Wycisz</value></data>
+  <data name="Unmute" xml:space="preserve"><value>Wyciszono (Włącz)</value></data>
+  <data name="LiveOrUnavailable" xml:space="preserve"><value>Odtwarzanie na żywo / czas niedostępny</value></data>
+  <data name="ArtworkAccessible" xml:space="preserve"><value>Okładka albumu</value></data>
+  <data name="TrackProgress" xml:space="preserve"><value>Postęp utworu</value></data>
+</root>

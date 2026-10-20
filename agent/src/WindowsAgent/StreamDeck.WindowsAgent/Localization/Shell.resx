@@ -99,5 +99,7 @@
   <data name="LogsClear" xml:space="preserve"><value>Wyczyść widok</value></data>
   <data name="LogsEmpty" xml:space="preserve"><value>Brak zdarzeń pasujących do filtrów.</value></data>
   <data name="SettingsDescription" xml:space="preserve"><value>Ustawienia Windows Agenta, urządzenia CYD, wyglądu i biblioteki akcji.</value></data>
+  <data name="On" xml:space="preserve"><value>Wł.</value></data>
+  <data name="Off" xml:space="preserve"><value>Wył.</value></data>
 </root>
 

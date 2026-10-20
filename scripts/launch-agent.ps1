@@ -12,7 +12,12 @@ if (-not $ExecutablePath) {
     if (Test-Path $installed) {
         $ExecutablePath = $installed
     } else {
-        $ExecutablePath = Join-Path $projectRoot 'artifacts\dist\publish\CYD-DECK\CYD-DECK.exe'
+        $candidate = Join-Path $projectRoot 'artifacts\dist\publish\CYD-DECK\CYD-DECK.exe'
+        if (Test-Path $candidate) {
+            $ExecutablePath = $candidate
+        } else {
+            $ExecutablePath = Join-Path $projectRoot 'artifacts\icon-agent\StreamDeck.WindowsAgent.exe'
+        }
     }
 }
 
