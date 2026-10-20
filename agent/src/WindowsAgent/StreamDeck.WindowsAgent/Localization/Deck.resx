@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="Preview" xml:space="preserve"><value>Podgląd CYD Display</value></data>
+  <data name="DeckPage" xml:space="preserve"><value>Skróty (6)</value></data>
+  <data name="HomePage" xml:space="preserve"><value>Ekran główny (4)</value></data>
+  <data name="Library" xml:space="preserve"><value>Biblioteka skrótów</value></data>
+  <data name="Search" xml:space="preserve"><value>Szukaj w bibliotece</value></data>
+  <data name="SearchPlaceholder" xml:space="preserve"><value>Szukaj skrótów...</value></data>
+  <data name="New" xml:space="preserve"><value>+ Nowy</value></data>
+  <data name="NewAction" xml:space="preserve"><value>Nowy skrót</value></data>
+  <data name="NewHint" xml:space="preserve"><value>Dodaj nowy skrót do biblioteki</value></data>
+  <data name="LibraryScroll" xml:space="preserve"><value>Lista skrótów</value></data>
+  <data name="Inspector" xml:space="preserve"><value>Inspektor kafelka</value></data>
+  <data name="LibraryOnly" xml:space="preserve"><value>Tylko w bibliotece</value></data>
+  <data name="Launch" xml:space="preserve"><value>Aplikacja (.exe)</value></data>
+  <data name="Script" xml:space="preserve"><value>Skrypt (.ps1, .bat)</value></data>
+  <data name="Url" xml:space="preserve"><value>Adres URL</value></data>
+  <data name="Hotkey" xml:space="preserve"><value>Skrót klawiszowy</value></data>
+  <data name="BuiltIn" xml:space="preserve"><value>Akcja systemowa</value></data>
+  <data name="Type" xml:space="preserve"><value>Typ</value></data>
+  <data name="ChooseIcon" xml:space="preserve"><value>Wybierz ikonę…</value></data>
+  <data name="ActionType" xml:space="preserve"><value>Typ akcji</value></data>
+  <data name="Title" xml:space="preserve"><value>Tytuł / Etykieta</value></data>
+  <data name="Icon" xml:space="preserve"><value>Ikona</value></data>
+  <data name="ExecutablePath" xml:space="preserve"><value>Ścieżka do aplikacji (.exe)</value></data>
+  <data name="TargetAccessible" xml:space="preserve"><value>Cel akcji</value></data>
+  <data name="Browse" xml:space="preserve"><value>Przeglądaj…</value></data>
+  <data name="ChooseScript" xml:space="preserve"><value>Wybierz skrypt</value></data>
+  <data name="ChooseApp" xml:space="preserve"><value>Wybierz aplikację</value></data>
+  <data name="BrowseHint" xml:space="preserve"><value>Wybierz aplikację lub skrypt</value></data>
+  <data name="ArgumentsOptional" xml:space="preserve"><value>Argumenty (opcjonalne)</value></data>
+  <data name="ArgumentsHint" xml:space="preserve"><value>Dodatkowe parametry polecenia przekazywane do programu lub skryptu.</value></data>
+  <data name="Default" xml:space="preserve"><value>Domyślny</value></data>
+  <data name="DefaultHint" xml:space="preserve"><value>Użyj domyślnego motywu kafelków (bez nadpisania koloru)</value></data>
+  <data name="Color" xml:space="preserve"><value>Kolor kafelka</value></data>
+  <data name="Both" xml:space="preserve"><value>Ikona i etykieta</value></data>
+  <data name="IconOnly" xml:space="preserve"><value>Tylko ikona</value></data>
+  <data name="LabelOnly" xml:space="preserve"><value>Tylko etykieta</value></data>
+  <data name="Display" xml:space="preserve"><value>Wyświetlanie</value></data>
+  <data name="DisplayStyle" xml:space="preserve"><value>Styl wyświetlania (CYD)</value></data>
+  <data name="DisplayHint" xml:space="preserve"><value>Określa sposób prezentacji skrótu na CYD.</value></data>
+  <data name="Validate" xml:space="preserve"><value>Sprawdź</value></data>
+  <data name="Ready" xml:space="preserve"><value>Gotowe do zapisu</value></data>
+  <data name="Required" xml:space="preserve"><value>Uzupełnij wymagane pola</value></data>
+  <data name="ApplyHint" xml:space="preserve"><value>Edycja aktualizuje szkic. Użyj zapisu w pasku narzędzi, aby zapisać i synchronizować.</value></data>
+  <data name="Detach" xml:space="preserve"><value>Odepnij</value></data>
+  <data name="DetachHint" xml:space="preserve"><value>Odczepia skrót z wybranego kafelka, zachowując go w bibliotece.</value></data>
+  <data name="Delete" xml:space="preserve"><value>Usuń definicję</value></data>
+  <data name="DeleteConfirm" xml:space="preserve"><value>Usunąć definicję z biblioteki tego profilu?
+
+Zostanie odpięta od wszystkich jego kafelków. Inne profile pozostaną bez zmian. Zmiana stanie się trwała po zapisaniu szkicu.</value></data>
+  <data name="DeleteTitle" xml:space="preserve"><value>Usuń skrót</value></data>
+  <data name="DeleteHint" xml:space="preserve"><value>Usuwa definicję i jej przypisania w bieżącym profilu.</value></data>
+  <data name="Undo" xml:space="preserve"><value>Cofnij przypisanie</value></data>
+  <data name="ScriptPath" xml:space="preserve"><value>Ścieżka do skryptu (.ps1, .bat)</value></data>
+  <data name="UrlHint" xml:space="preserve"><value>Adres URL (np. https://...)</value></data>
+  <data name="KeysHint" xml:space="preserve"><value>Kombinacja klawiszy (np. Ctrl+Shift+Esc)</value></data>
+  <data name="SystemCommand" xml:space="preserve"><value>Polecenie systemowe (audio:toggle-mic)</value></data>
+  <data name="Target" xml:space="preserve"><value>Cel / Ścieżka</value></data>
+  <data name="LibraryEdit" xml:space="preserve"><value>Edycja skrótu w bibliotece</value></data>
+  <data name="SelectHint" xml:space="preserve"><value>Wybierz skrót w bibliotece lub kafelek</value></data>
+  <data name="Unassigned" xml:space="preserve"><value>Tylko w bibliotece (nieprzypisany)</value></data>
+  <data name="Updated" xml:space="preserve"><value>Zaktualizowano w szkicu</value></data>
+  <data name="ScriptShort" xml:space="preserve"><value>Skrypt</value></data>
+  <data name="Program" xml:space="preserve"><value>Program</value></data>
+  <data name="ChooseSlot" xml:space="preserve"><value>Wybierz kafelek do zastąpienia</value></data>
+  <data name="FirstFree" xml:space="preserve"><value>pierwszego wolnego kafelka</value></data>
+  <data name="EmptyLibrary" xml:space="preserve"><value>Brak skrótów. Dodaj swój pierwszy skrót.</value></data>
+  <data name="NoMatches" xml:space="preserve"><value>Brak pasujących skrótów</value></data>
+  <data name="AddDialog" xml:space="preserve"><value>Dodaj skrót</value></data>
+  <data name="EditDialog" xml:space="preserve"><value>Edytuj skrót</value></data>
+  <data name="DialogHelp" xml:space="preserve"><value>Skonfiguruj akcję Windows Agenta i ikonę na CYD Display.</value></data>
+  <data name="Action" xml:space="preserve"><value>Akcja skrótu</value></data>
+  <data name="DisplayMode" xml:space="preserve"><value>Sposób wyświetlania</value></data>
+  <data name="IconAccessible" xml:space="preserve"><value>Wybierz ikonę skrótu</value></data>
+  <data name="Id" xml:space="preserve"><value>Identyfikator skrótu</value></data>
+  <data name="NameAccessible" xml:space="preserve"><value>Nazwa skrótu</value></data>
+  <data name="IconAccessible2" xml:space="preserve"><value>Ikona skrótu</value></data>
+  <data name="TargetName" xml:space="preserve"><value>Cel skrótu</value></data>
+  <data name="ArgumentsName" xml:space="preserve"><value>Argumenty skrótu</value></data>
+  <data name="BrowseTarget" xml:space="preserve"><value>Wybierz cel skrótu</value></data>
+  <data name="Clear" xml:space="preserve"><value>Wyczyść</value></data>
+  <data name="ClearKeys" xml:space="preserve"><value>Wyczyść kombinację klawiszy</value></data>
+  <data name="Shortcut" xml:space="preserve"><value>Skrót</value></data>
+  <data name="TestAction" xml:space="preserve"><value>Przetestuj akcję</value></data>
+  <data name="TestAccessible" xml:space="preserve"><value>Przetestuj akcję skrótu</value></data>
+  <data name="Validation" xml:space="preserve"><value>Walidacja skrótu</value></data>
+  <data name="Name" xml:space="preserve"><value>Nazwa</value></data>
+  <data name="ActionLabel" xml:space="preserve"><value>Akcja</value></data>
+  <data name="ActionHelp" xml:space="preserve"><value>Pomoc akcji skrótu</value></data>
+  <data name="Save" xml:space="preserve"><value>Dodaj do szkicu</value></data>
+  <data name="Cancel" xml:space="preserve"><value>Anuluj</value></data>
+  <data name="Executable" xml:space="preserve"><value>Aplikacja</value></data>
+  <data name="Arguments" xml:space="preserve"><value>Argumenty</value></data>
+  <data name="Keys" xml:space="preserve"><value>Klawisze</value></data>
+  <data name="ScriptLabel" xml:space="preserve"><value>Skrypt</value></data>
+  <data name="BuiltInLabel" xml:space="preserve"><value>Akcja systemowa</value></data>
+  <data name="TargetLabel" xml:space="preserve"><value>Cel</value></data>
+  <data name="ChooseExe" xml:space="preserve"><value>Wybierz aplikację</value></data>
+  <data name="ChooseScript2" xml:space="preserve"><value>Wybierz skrypt</value></data>
+  <data name="ChooseIconTitle" xml:space="preserve"><value>Wybierz ikonę</value></data>
+  <data name="BuiltInIcons" xml:space="preserve"><value>Wbudowane ikony</value></data>
+  <data name="IconHelp" xml:space="preserve"><value>Wybierz ikonę lub pobierz obraz z adresu URL.</value></data>
+  <data name="ImageUrl" xml:space="preserve"><value>Adres URL obrazu</value></data>
+  <data name="LoadPreview" xml:space="preserve"><value>Pobierz podgląd</value></data>
+  <data name="UseIcon" xml:space="preserve"><value>Użyj ikony</value></data>
+  <data name="Loading" xml:space="preserve"><value>Pobieranie obrazu…</value></data>
+  <data name="IconReady" xml:space="preserve"><value>Gotowe · 24 × 24 · dostępne offline w szkicu</value></data>
+  <data name="IconError" xml:space="preserve"><value>Nie można pobrać obrazu. Sprawdź bezpośredni adres URL.</value></data>
+  <data name="ToggleMic" xml:space="preserve"><value>Wycisz / włącz mikrofon</value></data>
+  <data name="TestConfirm" xml:space="preserve"><value>Ta akcja zostanie wykonana na komputerze. Kontynuować?</value></data>
+  <data name="TestExecuted" xml:space="preserve"><value>Wykonano akcję.</value></data>
+  <data name="SlotInspector" xml:space="preserve"><value>Inspektor kafelka {0}</value></data>
+  <data name="Assigned" xml:space="preserve"><value>Przypisany do kafelka {0}</value></data>
+  <data name="Slot" xml:space="preserve"><value>Kafelek {0}</value></data>
+  <data name="AssignHint" xml:space="preserve"><value>Przypisz „{0}” do: {1}</value></data>
+  <data name="EditPrefix" xml:space="preserve"><value>Edytuj </value></data>
+  <data name="AssignPrefix" xml:space="preserve"><value>Przypisz </value></data>
+  <data name="LaunchHelp" xml:space="preserve"><value>Wybierz pełną ścieżkę programu lub nazwę .exe. Argumenty są przekazywane osobno.</value></data>
+  <data name="UrlHelp" xml:space="preserve"><value>Podaj pełny adres HTTP lub HTTPS.</value></data>
+  <data name="HotkeyHelp" xml:space="preserve"><value>Podaj kombinację, np. Ctrl+Shift+R lub Win+L.</value></data>
+  <data name="ScriptHelp" xml:space="preserve"><value>Podaj pełną lokalną ścieżkę skryptu. Argumenty są opcjonalne.</value></data>
+  <data name="PowerShellHelp" xml:space="preserve"><value>Historyczna akcja PowerShell zachowuje swój typ.</value></data>
+  <data name="BuiltInHelp" xml:space="preserve"><value>Przełącz wyciszenie domyślnego mikrofonu.</value></data>
+  <data name="ChooseType" xml:space="preserve"><value>Wybierz typ akcji.</value></data>
+  <data name="TestInvalid" xml:space="preserve"><value>Nie można wykonać akcji. Popraw konfigurację:
+{0}</value></data>
+  <data name="TestError" xml:space="preserve"><value>Wykonanie akcji nie powiodło się: {0}</value></data>
+  <data name="TestErrorTitle" xml:space="preserve"><value>Błąd testu akcji</value></data>
+  <data name="ReadyToPlay" xml:space="preserve"><value>Gotowe do odtwarzania</value></data>
+  <data name="NoMedia" xml:space="preserve"><value>Brak sesji multimediów</value></data>
+  <data name="AssignShortcut" xml:space="preserve"><value>Przypisz skrót</value></data>
+  <data name="ScriptFilter" xml:space="preserve"><value>Skrypty (*.ps1;*.bat;*.cmd;*.exe)|*.ps1;*.bat;*.cmd;*.exe|Wszystkie pliki (*.*)|*.*</value></data>
+  <data name="AppFilter" xml:space="preserve"><value>Aplikacje (*.exe)|*.exe|Wszystkie pliki (*.*)|*.*</value></data>
+  <data name="NamePlaceholder" xml:space="preserve"><value>np. Browser, Terminal, Lock PC</value></data>
+  <data name="PathPlaceholder" xml:space="preserve"><value>np. C:\Program Files\... lub notepad.exe</value></data>
+  <data name="KeysPlaceholder" xml:space="preserve"><value>np. Ctrl+Shift+R lub Win+L (naciśnij klawisze)</value></data>
+  <data name="ScriptPlaceholder" xml:space="preserve"><value>np. C:\Scripts\deploy.bat lub .ps1</value></data>
+</root>
