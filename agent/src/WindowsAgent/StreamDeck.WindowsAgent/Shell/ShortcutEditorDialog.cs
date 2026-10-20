@@ -6,10 +6,10 @@ namespace StreamDeck.WindowsAgent.Shell;
 internal sealed class ShortcutEditorDialog : Form
 {
     private const int DialogWidth = 620;
-    private const int DialogHeight = 540;
-    private const int FieldLabelWidth = 126;
+    private const int DialogHeight = 620;
+    private const int FieldLabelWidth = 146;
     private const int FieldRowHeight = 46;
-    private const int PrimaryButtonWidth = 104;
+    private const int PrimaryButtonWidth = 150;
     private const int PrimaryButtonHeight = 38;
     internal const string LaunchApplicationChoice = "Launch application";
     internal const string OpenUrlChoice = "Open URL";
@@ -63,7 +63,7 @@ internal sealed class ShortcutEditorDialog : Form
         var inputBg = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(28, 32, 40);
         var inputBorder = isLight ? Color.FromArgb(210, 214, 220) : Color.FromArgb(42, 46, 56);
 
-        Text = shortcut is null ? "Add shortcut" : "Edit shortcut";
+        Text = shortcut is null ? UiText.Get("Deck.AddDialog") : UiText.Get("Deck.EditDialog");
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -71,12 +71,17 @@ internal sealed class ShortcutEditorDialog : Form
         Width = DialogWidth;
         Height = DialogHeight;
         MinimumSize = new Size(DialogWidth, DialogHeight);
-        Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        Font = new Font("Segoe UI", 11F, FontStyle.Regular, GraphicsUnit.Point);
         AccessibleName = Text;
-        AccessibleDescription = "Configure an Agent-side shortcut action. Choose a built-in icon or import an image URL for the CYD display.";
+        AccessibleDescription = UiText.Get("Deck.DialogHelp");
 
+        foreach (var combo in new[] { typeCombo, displayModeCombo, builtInActionCombo }) {
+            combo.FormattingEnabled = true;
+            combo.Format += (_, e) => e.Value = LocalizedChoice(e.ListItem?.ToString());
+        }
         typeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        typeCombo.AccessibleName = "Shortcut action";
+        typeCombo.AccessibleName = UiText.Get("Deck.Action");
         typeCombo.BackColor = inputBg;
         typeCombo.ForeColor = ForeColor;
         typeCombo.FlatStyle = FlatStyle.Flat;
@@ -84,22 +89,22 @@ internal sealed class ShortcutEditorDialog : Form
         typeCombo.SelectedIndexChanged += (_, _) => ApplySelectedActionChoice();
 
         builtInActionCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        builtInActionCombo.AccessibleName = "Built-in action";
+        builtInActionCombo.AccessibleName = UiText.Get("Deck.BuiltIn");
         builtInActionCombo.BackColor = inputBg;
         builtInActionCombo.ForeColor = ForeColor;
         builtInActionCombo.FlatStyle = FlatStyle.Flat;
         builtInActionCombo.Items.AddRange(GetBuiltInActionChoices().Cast<object>().ToArray());
 
         displayModeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        displayModeCombo.AccessibleName = "Shortcut display mode";
+        displayModeCombo.AccessibleName = UiText.Get("Deck.DisplayMode");
         displayModeCombo.BackColor = inputBg;
         displayModeCombo.ForeColor = ForeColor;
         displayModeCombo.FlatStyle = FlatStyle.Flat;
         displayModeCombo.Items.AddRange(GetDisplayModeChoices().Cast<object>().ToArray());
         displayModeCombo.SelectedIndexChanged += (_, _) => UpdatePreview();
 
-        chooseIconButton.Text = "Choose icon…";
-        chooseIconButton.AccessibleName = "Choose shortcut icon";
+        chooseIconButton.Text = UiText.Get("Deck.ChooseIcon");
+        chooseIconButton.AccessibleName = UiText.Get("Deck.IconAccessible");
         chooseIconButton.BackColor = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(39, 43, 52);
         chooseIconButton.ForeColor = ForeColor;
         chooseIconButton.FlatStyle = FlatStyle.Flat;
@@ -112,33 +117,33 @@ internal sealed class ShortcutEditorDialog : Form
 
         idText.ReadOnly = true;
         idText.TabStop = false;
-        idText.AccessibleName = "Shortcut ID";
+        idText.AccessibleName = UiText.Get("Deck.Id");
         idText.PlaceholderText = "e.g. shortcut-browser";
         idText.BackColor = inputBg;
         idText.ForeColor = ForeColor;
         idText.BorderStyle = BorderStyle.FixedSingle;
 
-        nameText.AccessibleName = "Shortcut name";
-        nameText.PlaceholderText = "e.g. Browser, Terminal, Lock PC";
+        nameText.AccessibleName = UiText.Get("Deck.NameAccessible");
+        nameText.PlaceholderText = UiText.Get("Deck.NamePlaceholder");
         nameText.BackColor = inputBg;
         nameText.ForeColor = ForeColor;
         nameText.BorderStyle = BorderStyle.FixedSingle;
         nameText.TextChanged += (_, _) => UpdatePreview();
 
         iconText.ReadOnly = true;
-        iconText.AccessibleName = "Shortcut icon";
+        iconText.AccessibleName = UiText.Get("Deck.IconAccessible2");
         iconText.PlaceholderText = "e.g. browser, app, audio";
         iconText.BackColor = inputBg;
         iconText.ForeColor = ForeColor;
         iconText.BorderStyle = BorderStyle.FixedSingle;
         iconText.TextChanged += (_, _) => UpdatePreview();
 
-        targetText.AccessibleName = "Shortcut target";
+        targetText.AccessibleName = UiText.Get("Deck.TargetName");
         targetText.BackColor = inputBg;
         targetText.ForeColor = ForeColor;
         targetText.BorderStyle = BorderStyle.FixedSingle;
 
-        argumentsText.AccessibleName = "Shortcut arguments";
+        argumentsText.AccessibleName = UiText.Get("Deck.ArgumentsName");
         argumentsText.PlaceholderText = "e.g. --profile Default";
         argumentsText.BackColor = inputBg;
         argumentsText.ForeColor = ForeColor;
@@ -160,16 +165,16 @@ internal sealed class ShortcutEditorDialog : Form
             }
         };
 
-        browseButton.Text = "Browse…";
-        browseButton.AccessibleName = "Browse for shortcut target";
+        browseButton.Text = UiText.Get("Deck.Browse");
+        browseButton.AccessibleName = UiText.Get("Deck.BrowseTarget");
         browseButton.BackColor = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(39, 43, 52);
         browseButton.ForeColor = ForeColor;
         browseButton.FlatStyle = FlatStyle.Flat;
         browseButton.FlatAppearance.BorderColor = inputBorder;
         browseButton.Click += (_, _) => BrowseForActionTarget();
 
-        clearHotkeyButton.Text = "Clear";
-        clearHotkeyButton.AccessibleName = "Clear hotkey combination";
+        clearHotkeyButton.Text = UiText.Get("Deck.Clear");
+        clearHotkeyButton.AccessibleName = UiText.Get("Deck.ClearKeys");
         clearHotkeyButton.BackColor = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(39, 43, 52);
         clearHotkeyButton.ForeColor = ForeColor;
         clearHotkeyButton.FlatStyle = FlatStyle.Flat;
@@ -181,16 +186,16 @@ internal sealed class ShortcutEditorDialog : Form
         previewBadge.Dock = DockStyle.Fill;
         previewBadgeLabel.Dock = DockStyle.Fill;
         previewBadgeLabel.TextAlign = ContentAlignment.MiddleCenter;
-        previewBadgeLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        previewBadgeLabel.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
         previewBadgeLabel.ForeColor = isLight ? Color.FromArgb(40, 100, 180) : Color.FromArgb(82, 153, 224);
         previewBadge.Paint += (_, e) => {
             var mode = NormalizeDisplayModeChoice(displayModeCombo.SelectedItem?.ToString());
             if (mode != ShortcutDisplayModes.Label) ShortcutIconCatalog.Draw(e.Graphics, iconText.Text, loadedIconData, new Rectangle(mode == ShortcutDisplayModes.Icon ? (previewBadge.Width - 24) / 2 : 8, (previewBadge.Height - 24) / 2, 24, 24), ForeColor);
-            if (mode != ShortcutDisplayModes.Icon) TextRenderer.DrawText(e.Graphics, nameText.Text.Length == 0 ? "Shortcut" : nameText.Text, Font, new Rectangle(mode == ShortcutDisplayModes.Both ? 40 : 4, 0, previewBadge.Width - (mode == ShortcutDisplayModes.Both ? 44 : 8), previewBadge.Height), ForeColor, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            if (mode != ShortcutDisplayModes.Icon) TextRenderer.DrawText(e.Graphics, nameText.Text.Length == 0 ? UiText.Get("Deck.Shortcut") : nameText.Text, Font, new Rectangle(mode == ShortcutDisplayModes.Both ? 40 : 4, 0, previewBadge.Width - (mode == ShortcutDisplayModes.Both ? 44 : 8), previewBadge.Height), ForeColor, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         };
 
-        testActionButton.Text = "Test action";
-        testActionButton.AccessibleName = "Test shortcut action";
+        testActionButton.Text = UiText.Get("Deck.TestAction");
+        testActionButton.AccessibleName = UiText.Get("Deck.TestAccessible");
         testActionButton.BackColor = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(39, 43, 52);
         testActionButton.ForeColor = isLight ? Color.FromArgb(29, 32, 37) : Color.White;
         testActionButton.FlatStyle = FlatStyle.Flat;
@@ -202,7 +207,7 @@ internal sealed class ShortcutEditorDialog : Form
         if (shortcut is null)
         {
             idText.Text = CreateNewShortcutId();
-            nameText.Text = "New Shortcut";
+            nameText.Text = UiText.Get("Deck.NewAction");
             iconText.Text = "shortcut";
             displayModeCombo.SelectedItem = DisplayLabelChoice;
             typeCombo.SelectedItem = LaunchApplicationChoice;
@@ -225,7 +230,7 @@ internal sealed class ShortcutEditorDialog : Form
             var candidate = BuildShortcut();
             if (!TryValidateShortcutDraft(candidate, out var error))
             {
-                MessageBox.Show(this, error, "Shortcut validation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, error, UiText.Get("Deck.Validation"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 e.Cancel = true;
                 DialogResult = DialogResult.None;
                 return;
@@ -237,13 +242,27 @@ internal sealed class ShortcutEditorDialog : Form
         base.OnFormClosing(e);
     }
 
+    private static string LocalizedChoice(string? value) => value switch
+    {
+        LaunchApplicationChoice => UiText.Get("Deck.Launch"),
+        OpenUrlChoice => UiText.Get("Deck.Url"),
+        SendHotkeyChoice => UiText.Get("Deck.Hotkey"),
+        RunScriptChoice => UiText.Get("Deck.Script"),
+        BuiltInActionChoice => UiText.Get("Deck.BuiltIn"),
+        DisplayLabelChoice => UiText.Get("Deck.LabelOnly"),
+        DisplayIconChoice => UiText.Get("Deck.Icon"),
+        DisplayBothChoice => UiText.Get("Deck.Both"),
+        ToggleMicrophoneChoice => UiText.Get("Deck.ToggleMic"),
+        _ => value ?? string.Empty
+    };
+
     private Control BuildLayout()
     {
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 9, Padding = new Padding(24, 22, 24, 18), BackColor = BackColor };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, FieldLabelWidth));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddField(root, 0, "ID", idText);
-        AddField(root, 1, "Name", nameText);
+        AddField(root, 1, UiText.Get("Deck.Name"), nameText);
 
         var iconPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
         iconPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
@@ -254,7 +273,7 @@ internal sealed class ShortcutEditorDialog : Form
         chooseIconButton.Margin = new Padding(4, 4, 0, 4);
         iconPanel.Controls.Add(iconText, 0, 0);
         iconPanel.Controls.Add(chooseIconButton, 1, 0);
-        AddField(root, 2, "Icon", iconPanel);
+        AddField(root, 2, UiText.Get("Deck.Icon"), iconPanel);
 
         var displayPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
         displayPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
@@ -265,9 +284,9 @@ internal sealed class ShortcutEditorDialog : Form
         previewBadge.Margin = new Padding(4, 4, 0, 4);
         displayPanel.Controls.Add(displayModeCombo, 0, 0);
         displayPanel.Controls.Add(previewBadge, 1, 0);
-        AddField(root, 3, "Display", displayPanel);
+        AddField(root, 3, UiText.Get("Deck.Display"), displayPanel);
 
-        AddField(root, 4, "Action", typeCombo);
+        AddField(root, 4, UiText.Get("Deck.ActionLabel"), typeCombo);
         actionPanel.Dock = DockStyle.Fill;
         actionPanel.ColumnCount = 2;
         actionPanel.BackColor = BackColor;
@@ -279,13 +298,13 @@ internal sealed class ShortcutEditorDialog : Form
         hintLabel.Dock = DockStyle.Fill;
         hintLabel.ForeColor = Color.FromArgb(177, 184, 195);
         hintLabel.TextAlign = ContentAlignment.MiddleLeft;
-        hintLabel.AccessibleName = "Shortcut action help";
+        hintLabel.AccessibleName = UiText.Get("Deck.ActionHelp");
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
         root.Controls.Add(hintLabel, 0, 6);
         root.SetColumnSpan(hintLabel, 2);
         var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, Height = 52, Padding = new Padding(0, 8, 0, 0) };
-        buttons.Controls.Add(CreateDialogButton("Save", DialogResult.OK, isDefault: true));
-        buttons.Controls.Add(CreateDialogButton("Cancel", DialogResult.Cancel, isDefault: false));
+        buttons.Controls.Add(CreateDialogButton(UiText.Get("Deck.Save"), DialogResult.OK, isDefault: true));
+        buttons.Controls.Add(CreateDialogButton(UiText.Get("Deck.Cancel"), DialogResult.Cancel, isDefault: false));
         testActionButton.Width = PrimaryButtonWidth + 8;
         testActionButton.Height = PrimaryButtonHeight;
         testActionButton.Margin = new Padding(8, 0, 0, 0);
@@ -349,7 +368,7 @@ internal sealed class ShortcutEditorDialog : Form
             ShortcutActionTypes.Script or ShortcutActionTypes.PowerShell => shortcut.Action.ScriptPath,
             _ => string.Empty
         } ?? string.Empty;
-        argumentsText.Text = shortcut.Action.Type is ShortcutActionTypes.LaunchApplication or ShortcutActionTypes.Script or ShortcutActionTypes.PowerShell ? string.Join(" ", shortcut.Action.Arguments) : string.Empty;
+        argumentsText.Text = shortcut.Action.Type is ShortcutActionTypes.LaunchApplication or ShortcutActionTypes.Script or ShortcutActionTypes.PowerShell ? JoinArguments(shortcut.Action.Arguments) : string.Empty;
         if (shortcut.Action.Type == ShortcutActionTypes.PredefinedAdapter)
         {
             builtInActionCombo.SelectedItem = ToggleMicrophoneChoice;
@@ -387,9 +406,9 @@ internal sealed class ShortcutEditorDialog : Form
         switch (NormalizeActionChoice(choice))
         {
             case ShortcutActionTypes.LaunchApplication:
-                targetText.PlaceholderText = "e.g. C:\\Program Files\\... or notepad.exe";
-                AddPathActionRow("Executable");
-                AddTextActionRow("Arguments", argumentsText);
+                targetText.PlaceholderText = UiText.Get("Deck.PathPlaceholder");
+                AddPathActionRow(UiText.Get("Deck.Executable"));
+                AddTextActionRow(UiText.Get("Deck.Arguments"), argumentsText);
                 break;
             case ShortcutActionTypes.OpenUrl:
                 targetText.PlaceholderText = "e.g. https://example.com";
@@ -397,18 +416,18 @@ internal sealed class ShortcutEditorDialog : Form
                 argumentsText.Text = string.Empty;
                 break;
             case ShortcutActionTypes.Hotkey:
-                targetText.PlaceholderText = "e.g. Ctrl+Shift+R or Win+L (press keys)";
-                AddHotkeyActionRow("Keys");
+                targetText.PlaceholderText = UiText.Get("Deck.KeysPlaceholder");
+                AddHotkeyActionRow(UiText.Get("Deck.Keys"));
                 argumentsText.Text = string.Empty;
                 break;
             case ShortcutActionTypes.Script:
             case ShortcutActionTypes.PowerShell:
-                targetText.PlaceholderText = "e.g. C:\\Scripts\\deploy.bat or .ps1";
-                AddPathActionRow("Script");
-                AddTextActionRow("Arguments", argumentsText);
+                targetText.PlaceholderText = UiText.Get("Deck.ScriptPlaceholder");
+                AddPathActionRow(UiText.Get("Deck.ScriptLabel"));
+                AddTextActionRow(UiText.Get("Deck.Arguments"), argumentsText);
                 break;
             case ShortcutActionTypes.PredefinedAdapter:
-                AddTextActionRow("Built-in", builtInActionCombo);
+                AddTextActionRow(UiText.Get("Deck.BuiltInLabel"), builtInActionCombo);
                 targetText.Text = string.Empty;
                 argumentsText.Text = string.Empty;
                 builtInActionCombo.SelectedItem ??= ToggleMicrophoneChoice;
@@ -435,44 +454,26 @@ internal sealed class ShortcutEditorDialog : Form
         var candidate = BuildShortcut();
         if (!TryValidateShortcutDraft(candidate, out var error))
         {
-            MessageBox.Show(this, $"Cannot test action because configuration is invalid:\n{error}", "Test action", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, UiText.Format("Deck.TestInvalid", error), UiText.Get("Deck.TestAction"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
+        if (MessageBox.Show(this, UiText.Get("Deck.TestConfirm"), UiText.Get("Deck.TestAction"), MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
         try
         {
-            var action = candidate.Action;
-            if (string.Equals(action.Type, ShortcutActionTypes.OpenUrl, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(action.Url))
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(action.Url) { UseShellExecute = true });
-                MessageBox.Show(this, $"Opening URL in default browser:\n{action.Url}", "Test action", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            else if (string.Equals(action.Type, ShortcutActionTypes.LaunchApplication, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(action.ExecutablePath))
-            {
-                var psi = new System.Diagnostics.ProcessStartInfo(action.ExecutablePath, string.Join(" ", action.Arguments)) { UseShellExecute = true };
-                System.Diagnostics.Process.Start(psi);
-                MessageBox.Show(this, $"Launched application:\n{action.ExecutablePath}", "Test action", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            else if (string.Equals(action.Type, ShortcutActionTypes.Hotkey, StringComparison.Ordinal) && action.Keys.Count > 0)
-            {
-                var sender = new Runtime.WindowsHotkeySender();
-                await sender.SendAsync(action.Keys, CancellationToken.None).ConfigureAwait(true);
-                MessageBox.Show(this, $"Hotkey executed: {string.Join("+", action.Keys)}", "Test action", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            else if (string.Equals(action.Type, ShortcutActionTypes.Script, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(action.ScriptPath))
-            {
-                var psi = new System.Diagnostics.ProcessStartInfo(action.ScriptPath, string.Join(" ", action.Arguments)) { UseShellExecute = true };
-                System.Diagnostics.Process.Start(psi);
-                MessageBox.Show(this, $"Running script:\n{action.ScriptPath}", "Test action", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            else
-            {
-                MessageBox.Show(this, $"Action configuration is valid: {candidate.Action.Type}", "Test action", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
+            var catalog = ShortcutCatalog.Create(new ShortcutConfiguration { Shortcuts = [candidate] });
+            var executor = new ShortcutExecutor(catalog, new WindowsProcessApplicationLauncher(), new WindowsShellUrlOpener(),
+                new Runtime.WindowsHotkeySender(), new WindowsProcessScriptRunner(), new Runtime.WindowsPredefinedShortcutAdapter(() => {
+                    using var endpoint = StreamDeck.Audio.CoreAudioEndpoint.CreateDefaultCaptureEndpoint();
+                    endpoint.SetMute(!endpoint.GetMute());
+                    return true;
+                }));
+            await executor.ExecuteAsync(new ShortcutExecuteRequest(candidate.Id));
+            MessageBox.Show(this, UiText.Get("Deck.TestExecuted"), UiText.Get("Deck.TestAction"), MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Action execution failed: {ex.Message}", "Test action error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, UiText.Format("Deck.TestError", ex.Message), UiText.Get("Deck.TestErrorTitle"), MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -577,13 +578,13 @@ internal sealed class ShortcutEditorDialog : Form
 
     internal static ActionFieldHints GetActionFieldHints(string? actionType) => NormalizeActionChoice(actionType) switch
     {
-        ShortcutActionTypes.LaunchApplication => new("Executable", "Arguments", true, true, "Agent-side shortcut. Choose a full executable path or enter a bare .exe name; firmware does not preload shortcuts and displays only the first 6 labels/IDs."),
-        ShortcutActionTypes.OpenUrl => new("URL", string.Empty, true, false, "URL action uses only an absolute http/https URL; arguments are not used."),
-        ShortcutActionTypes.Hotkey => new("Keys", string.Empty, true, false, "Hotkey action uses one keys field, e.g. Ctrl+Shift+R or Win+L. Win+L is executed through the Windows lock-workstation API because Windows reserves that system shortcut."),
-        ShortcutActionTypes.Script => new("Script", "Arguments", true, true, "Full local script path required; optional arguments are passed by the Agent. Existing PowerShell shortcut types remain supported when loaded from config, but new shortcuts use the generic Script action."),
-        ShortcutActionTypes.PowerShell => new("Script", "Arguments", true, true, "Existing PowerShell shortcut types remain supported when loaded from config, but new shortcuts use the generic Script action."),
-        ShortcutActionTypes.PredefinedAdapter => new("Built-in", string.Empty, true, false, "Choose a known Agent built-in action. The device still receives only shortcut labels/IDs."),
-        _ => new("Target", string.Empty, true, false, "Choose an action type.")
+        ShortcutActionTypes.LaunchApplication => new(UiText.Get("Deck.Executable"), UiText.Get("Deck.Arguments"), true, true, UiText.Get("Deck.LaunchHelp")),
+        ShortcutActionTypes.OpenUrl => new("URL", string.Empty, true, false, UiText.Get("Deck.UrlHelp")),
+        ShortcutActionTypes.Hotkey => new(UiText.Get("Deck.Keys"), string.Empty, true, false, UiText.Get("Deck.HotkeyHelp")),
+        ShortcutActionTypes.Script => new(UiText.Get("Deck.ScriptLabel"), UiText.Get("Deck.Arguments"), true, true, UiText.Get("Deck.ScriptHelp")),
+        ShortcutActionTypes.PowerShell => new(UiText.Get("Deck.ScriptLabel"), UiText.Get("Deck.Arguments"), true, true, UiText.Get("Deck.PowerShellHelp")),
+        ShortcutActionTypes.PredefinedAdapter => new(UiText.Get("Deck.BuiltInLabel"), string.Empty, true, false, UiText.Get("Deck.BuiltInHelp")),
+        _ => new(UiText.Get("Deck.TargetLabel"), string.Empty, true, false, UiText.Get("Deck.ChooseType"))
     };
 
     internal static ShortcutActionDefinition CreateActionForInputs(string choice, string target, string arguments, string? builtInChoice = null)
@@ -644,13 +645,13 @@ internal sealed class ShortcutEditorDialog : Form
             CheckFileExists = true,
             Title = type switch
             {
-                ShortcutActionTypes.LaunchApplication => "Choose executable",
-                _ => "Choose script"
+                ShortcutActionTypes.LaunchApplication => UiText.Get("Deck.ChooseExe"),
+                _ => UiText.Get("Deck.ChooseScript2")
             },
             Filter = type switch
             {
-                ShortcutActionTypes.LaunchApplication => "Programs (*.exe)|*.exe|All files (*.*)|*.*",
-                _ => "Scripts (*.bat;*.cmd;*.ps1;*.exe)|*.bat;*.cmd;*.ps1;*.exe|All files (*.*)|*.*"
+                ShortcutActionTypes.LaunchApplication => UiText.Get("Deck.AppFilter"),
+                _ => UiText.Get("Deck.ScriptFilter")
             }
         };
         if (dialog.ShowDialog(this) == DialogResult.OK)
@@ -659,15 +660,36 @@ internal sealed class ShortcutEditorDialog : Form
         }
     }
 
+    internal static string JoinArguments(IReadOnlyList<string> values)
+    {
+        static string Quote(string value)
+        {
+            if (value.Length > 0 && !value.Any(c => char.IsWhiteSpace(c) || c == '"')) return value;
+            var result = new System.Text.StringBuilder("\"");
+            var slashes = 0;
+            foreach (var c in value)
+            {
+                if (c == '\\') { slashes++; continue; }
+                result.Append('\\', c == '"' ? slashes * 2 + 1 : slashes);
+                slashes = 0; result.Append(c);
+            }
+            result.Append('\\', slashes * 2); result.Append('"');
+            return result.ToString();
+        }
+        return string.Join(" ", values.Select(Quote));
+    }
+
     internal static IReadOnlyList<string> SplitArguments(string value)
     {
         var arguments = new List<string>();
         var current = new System.Text.StringBuilder();
         var inQuotes = false;
         var backslashes = 0;
+        var started = false;
 
         foreach (var character in value)
         {
+            if (!char.IsWhiteSpace(character) || inQuotes) started = true;
             if (character == '\\')
             {
                 backslashes++;
@@ -698,7 +720,7 @@ internal sealed class ShortcutEditorDialog : Form
 
             if (char.IsWhiteSpace(character) && !inQuotes)
             {
-                AddCurrentArgument(arguments, current);
+                if (started) { arguments.Add(current.ToString()); current.Clear(); started = false; }
                 continue;
             }
 
@@ -710,7 +732,7 @@ internal sealed class ShortcutEditorDialog : Form
             current.Append('\\', backslashes);
         }
 
-        AddCurrentArgument(arguments, current);
+        if (started) arguments.Add(current.ToString());
         return arguments;
     }
 

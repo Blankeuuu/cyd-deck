@@ -26,8 +26,8 @@ internal sealed class ShortcutIconPicker : Form
         IconKey = key;
         IconData = data;
         IconUrl = sourceUrl;
-        Text = "Choose icon";
-        ClientSize = new Size(560, 550);
+        Text = UiText.Get("Deck.ChooseIconTitle");
+        ClientSize = new Size(620, 640);
         MinimumSize = Size;
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
@@ -39,17 +39,18 @@ internal sealed class ShortcutIconPicker : Form
         var itemBg = isLight ? Color.FromArgb(236, 238, 242) : Color.FromArgb(28, 32, 40);
         var itemBorder = isLight ? Color.FromArgb(210, 214, 220) : Color.FromArgb(42, 46, 56);
         var accent = SettingsWindow.CurrentAccent;
-        Font = new Font("Segoe UI", 9F);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        Font = new Font("Segoe UI", 11F);
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1, RowCount = 6 };
-        foreach (var height in new[] { 28, 280, 26, 36, 64, 46 })
+        foreach (var height in new[] { 32, 320, 30, 42, 90, 46 })
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
 
         var builtInLabel = new Label
         {
-            Text = "Built-in icons",
+            Text = UiText.Get("Deck.BuiltInIcons"),
             Dock = DockStyle.Fill,
-            Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
             ForeColor = isLight ? Color.FromArgb(40, 44, 52) : Color.FromArgb(215, 222, 232),
             TextAlign = ContentAlignment.MiddleLeft
         };
@@ -65,7 +66,7 @@ internal sealed class ShortcutIconPicker : Form
         var status = new Label
         {
             Dock = DockStyle.Fill,
-            Text = "Select an icon, or load an image from a URL.",
+            Text = UiText.Get("Deck.IconHelp"),
             TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = isLight ? Color.FromArgb(93, 101, 112) : Color.FromArgb(180, 188, 200)
         };
@@ -82,7 +83,7 @@ internal sealed class ShortcutIconPicker : Form
                 FlatStyle = FlatStyle.Flat,
                 BackColor = itemBg,
                 ForeColor = ForeColor,
-                Font = new Font("Segoe UI", 8F),
+                Font = new Font("Segoe UI", 10F),
                 Padding = new Padding(0, 0, 0, 4),
                 AccessibleName = item.Key
             };
@@ -110,9 +111,9 @@ internal sealed class ShortcutIconPicker : Form
 
         var imageUrlLabel = new Label
         {
-            Text = "Image URL",
+            Text = UiText.Get("Deck.ImageUrl"),
             Dock = DockStyle.Fill,
-            Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
             ForeColor = isLight ? Color.FromArgb(40, 44, 52) : Color.FromArgb(215, 222, 232),
             TextAlign = ContentAlignment.MiddleLeft
         };
@@ -131,31 +132,31 @@ internal sealed class ShortcutIconPicker : Form
             BackColor = itemBg,
             ForeColor = ForeColor,
             BorderStyle = BorderStyle.FixedSingle,
-            AccessibleName = "Image URL"
+            AccessibleName = UiText.Get("Deck.ImageUrl")
         };
 
         var load = new Button
         {
-            Text = "Load preview",
+            Text = UiText.Get("Deck.LoadPreview"),
             Dock = DockStyle.Fill,
             FlatStyle = FlatStyle.Flat,
             BackColor = itemBg,
             ForeColor = ForeColor,
-            AccessibleName = "Load preview"
+            AccessibleName = UiText.Get("Deck.LoadPreview")
         };
         load.FlatAppearance.BorderSize = 1;
         load.FlatAppearance.BorderColor = itemBorder;
 
         var use = new Button
         {
-            Text = "Use icon",
+            Text = UiText.Get("Deck.UseIcon"),
             Width = 108,
             Height = 34,
             DialogResult = DialogResult.OK,
             FlatStyle = FlatStyle.Flat,
             BackColor = accent,
             ForeColor = Color.White,
-            AccessibleName = "Use icon"
+            AccessibleName = UiText.Get("Deck.UseIcon")
         };
         use.FlatAppearance.BorderSize = 0;
 
@@ -165,7 +166,7 @@ internal sealed class ShortcutIconPicker : Form
             use.Enabled = false;
             grid.Enabled = false;
             url.Enabled = false;
-            status.Text = "Loading image…";
+            status.Text = UiText.Get("Deck.Loading");
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(15));
             try
@@ -180,13 +181,13 @@ internal sealed class ShortcutIconPicker : Form
                     button.FlatAppearance.BorderSize = 1;
                     button.FlatAppearance.BorderColor = Color.FromArgb(42, 46, 56);
                 }
-                status.Text = "Ready · 24 × 24 · saved for offline use";
+                status.Text = UiText.Get("Deck.IconReady");
                 preview.Invalidate();
             }
             catch (Exception error) when (error is HttpRequestException or IOException or OperationCanceledException or ArgumentException)
             {
                 if (!IsDisposed)
-                    status.Text = error is InvalidDataException ? error.Message : "Could not load image. Check the direct image URL.";
+                    status.Text = error is InvalidDataException ? error.Message : UiText.Get("Deck.IconError");
             }
             finally
             {
@@ -212,14 +213,14 @@ internal sealed class ShortcutIconPicker : Form
         var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var cancel = new Button
         {
-            Text = "Cancel",
+            Text = UiText.Get("Deck.Cancel"),
             Width = 108,
             Height = 34,
             DialogResult = DialogResult.Cancel,
             FlatStyle = FlatStyle.Flat,
             BackColor = itemBg,
             ForeColor = ForeColor,
-            AccessibleName = "Cancel"
+            AccessibleName = UiText.Get("Deck.Cancel")
         };
         cancel.FlatAppearance.BorderSize = 1;
         cancel.FlatAppearance.BorderColor = itemBorder;

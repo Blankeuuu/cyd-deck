@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="Preview" xml:space="preserve"><value>CYD Display Preview</value></data>
+  <data name="DeckPage" xml:space="preserve"><value>Deck (6)</value></data>
+  <data name="HomePage" xml:space="preserve"><value>Home Screen (4)</value></data>
+  <data name="Library" xml:space="preserve"><value>Shortcut Library</value></data>
+  <data name="Search" xml:space="preserve"><value>Search Shortcut Library</value></data>
+  <data name="SearchPlaceholder" xml:space="preserve"><value>Search shortcuts…</value></data>
+  <data name="New" xml:space="preserve"><value>+ New</value></data>
+  <data name="NewAction" xml:space="preserve"><value>New Shortcut</value></data>
+  <data name="NewHint" xml:space="preserve"><value>Add an action to the library</value></data>
+  <data name="LibraryScroll" xml:space="preserve"><value>Shortcut Library Scroll</value></data>
+  <data name="Inspector" xml:space="preserve"><value>Tile inspector</value></data>
+  <data name="LibraryOnly" xml:space="preserve"><value>Library only</value></data>
+  <data name="Launch" xml:space="preserve"><value>Application (.exe)</value></data>
+  <data name="Script" xml:space="preserve"><value>Script (.ps1, .bat)</value></data>
+  <data name="Url" xml:space="preserve"><value>URL</value></data>
+  <data name="Hotkey" xml:space="preserve"><value>Hotkey</value></data>
+  <data name="BuiltIn" xml:space="preserve"><value>System action</value></data>
+  <data name="Type" xml:space="preserve"><value>Type</value></data>
+  <data name="ChooseIcon" xml:space="preserve"><value>Choose icon…</value></data>
+  <data name="ActionType" xml:space="preserve"><value>Action type</value></data>
+  <data name="Title" xml:space="preserve"><value>Title / Label</value></data>
+  <data name="Icon" xml:space="preserve"><value>Icon</value></data>
+  <data name="ExecutablePath" xml:space="preserve"><value>Executable path (.exe)</value></data>
+  <data name="TargetAccessible" xml:space="preserve"><value>Shortcut / URL / Path / Adapter</value></data>
+  <data name="Browse" xml:space="preserve"><value>Browse…</value></data>
+  <data name="ChooseScript" xml:space="preserve"><value>Choose script</value></data>
+  <data name="ChooseApp" xml:space="preserve"><value>Choose application</value></data>
+  <data name="BrowseHint" xml:space="preserve"><value>Browse for application or script</value></data>
+  <data name="ArgumentsOptional" xml:space="preserve"><value>Arguments (optional)</value></data>
+  <data name="ArgumentsHint" xml:space="preserve"><value>Additional arguments passed to the program or script.</value></data>
+  <data name="Default" xml:space="preserve"><value>Default</value></data>
+  <data name="DefaultHint" xml:space="preserve"><value>Use the default tile theme without a color override</value></data>
+  <data name="Color" xml:space="preserve"><value>Tile color</value></data>
+  <data name="Both" xml:space="preserve"><value>Icon and label</value></data>
+  <data name="IconOnly" xml:space="preserve"><value>Icon only</value></data>
+  <data name="LabelOnly" xml:space="preserve"><value>Label only</value></data>
+  <data name="Display" xml:space="preserve"><value>Display</value></data>
+  <data name="DisplayStyle" xml:space="preserve"><value>Display style (CYD)</value></data>
+  <data name="DisplayHint" xml:space="preserve"><value>Controls how the action appears on CYD.</value></data>
+  <data name="Validate" xml:space="preserve"><value>Validate</value></data>
+  <data name="Ready" xml:space="preserve"><value>Ready to save</value></data>
+  <data name="Required" xml:space="preserve"><value>Complete the required fields</value></data>
+  <data name="ApplyHint" xml:space="preserve"><value>Edits update the draft. Use the toolbar to save and sync.</value></data>
+  <data name="Detach" xml:space="preserve"><value>Detach</value></data>
+  <data name="DetachHint" xml:space="preserve"><value>Detach from this tile and keep the library definition.</value></data>
+  <data name="Delete" xml:space="preserve"><value>Delete definition</value></data>
+  <data name="DeleteConfirm" xml:space="preserve"><value>Delete the definition from this profile?
+
+It will be detached from all tiles in this profile. Other profiles are unchanged. The change becomes permanent after saving the draft.</value></data>
+  <data name="DeleteTitle" xml:space="preserve"><value>Delete action</value></data>
+  <data name="DeleteHint" xml:space="preserve"><value>Delete the definition and its assignments from this profile.</value></data>
+  <data name="Undo" xml:space="preserve"><value>Undo assignment</value></data>
+  <data name="ScriptPath" xml:space="preserve"><value>Script path (.ps1, .bat)</value></data>
+  <data name="UrlHint" xml:space="preserve"><value>URL (e.g. https://...)</value></data>
+  <data name="KeysHint" xml:space="preserve"><value>Keys (e.g. Ctrl+Shift+Esc)</value></data>
+  <data name="SystemCommand" xml:space="preserve"><value>System command (audio:toggle-mic)</value></data>
+  <data name="Target" xml:space="preserve"><value>Target / Path</value></data>
+  <data name="LibraryEdit" xml:space="preserve"><value>Library action editor</value></data>
+  <data name="SelectHint" xml:space="preserve"><value>Select a library action or a tile</value></data>
+  <data name="Unassigned" xml:space="preserve"><value>Library only (unassigned)</value></data>
+  <data name="Updated" xml:space="preserve"><value>Updated in draft</value></data>
+  <data name="ScriptShort" xml:space="preserve"><value>Script</value></data>
+  <data name="Program" xml:space="preserve"><value>Program</value></data>
+  <data name="ChooseSlot" xml:space="preserve"><value>Select a tile to replace</value></data>
+  <data name="FirstFree" xml:space="preserve"><value>first empty tile</value></data>
+  <data name="EmptyLibrary" xml:space="preserve"><value>No actions yet. Add your first action.</value></data>
+  <data name="NoMatches" xml:space="preserve"><value>No matching actions</value></data>
+  <data name="AddDialog" xml:space="preserve"><value>Add shortcut</value></data>
+  <data name="EditDialog" xml:space="preserve"><value>Edit shortcut</value></data>
+  <data name="DialogHelp" xml:space="preserve"><value>Configure an Agent-side shortcut action. Choose a built-in icon or import an image URL for the CYD display.</value></data>
+  <data name="Action" xml:space="preserve"><value>Shortcut action</value></data>
+  <data name="DisplayMode" xml:space="preserve"><value>Shortcut display mode</value></data>
+  <data name="IconAccessible" xml:space="preserve"><value>Choose shortcut icon</value></data>
+  <data name="Id" xml:space="preserve"><value>Shortcut ID</value></data>
+  <data name="NameAccessible" xml:space="preserve"><value>Shortcut name</value></data>
+  <data name="IconAccessible2" xml:space="preserve"><value>Shortcut icon</value></data>
+  <data name="TargetName" xml:space="preserve"><value>Shortcut target</value></data>
+  <data name="ArgumentsName" xml:space="preserve"><value>Shortcut arguments</value></data>
+  <data name="BrowseTarget" xml:space="preserve"><value>Browse for shortcut target</value></data>
+  <data name="Clear" xml:space="preserve"><value>Clear</value></data>
+  <data name="ClearKeys" xml:space="preserve"><value>Clear hotkey combination</value></data>
+  <data name="Shortcut" xml:space="preserve"><value>Shortcut</value></data>
+  <data name="TestAction" xml:space="preserve"><value>Test action</value></data>
+  <data name="TestAccessible" xml:space="preserve"><value>Test shortcut action</value></data>
+  <data name="Validation" xml:space="preserve"><value>Shortcut validation</value></data>
+  <data name="Name" xml:space="preserve"><value>Name</value></data>
+  <data name="ActionLabel" xml:space="preserve"><value>Action</value></data>
+  <data name="ActionHelp" xml:space="preserve"><value>Shortcut action help</value></data>
+  <data name="Save" xml:space="preserve"><value>Save</value></data>
+  <data name="Cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="Executable" xml:space="preserve"><value>Executable</value></data>
+  <data name="Arguments" xml:space="preserve"><value>Arguments</value></data>
+  <data name="Keys" xml:space="preserve"><value>Keys</value></data>
+  <data name="ScriptLabel" xml:space="preserve"><value>Script</value></data>
+  <data name="BuiltInLabel" xml:space="preserve"><value>Built-in</value></data>
+  <data name="TargetLabel" xml:space="preserve"><value>Target</value></data>
+  <data name="ChooseExe" xml:space="preserve"><value>Choose executable</value></data>
+  <data name="ChooseScript2" xml:space="preserve"><value>Choose script</value></data>
+  <data name="ChooseIconTitle" xml:space="preserve"><value>Choose icon</value></data>
+  <data name="BuiltInIcons" xml:space="preserve"><value>Built-in icons</value></data>
+  <data name="IconHelp" xml:space="preserve"><value>Select an icon, or load an image from a URL.</value></data>
+  <data name="ImageUrl" xml:space="preserve"><value>Image URL</value></data>
+  <data name="LoadPreview" xml:space="preserve"><value>Load preview</value></data>
+  <data name="UseIcon" xml:space="preserve"><value>Use icon</value></data>
+  <data name="Loading" xml:space="preserve"><value>Loading image…</value></data>
+  <data name="IconReady" xml:space="preserve"><value>Ready · 24 × 24 · saved for offline use</value></data>
+  <data name="IconError" xml:space="preserve"><value>Could not load image. Check the direct image URL.</value></data>
+  <data name="ToggleMic" xml:space="preserve"><value>Toggle microphone</value></data>
+  <data name="TestConfirm" xml:space="preserve"><value>This action will run on your computer. Continue?</value></data>
+  <data name="TestExecuted" xml:space="preserve"><value>Action executed.</value></data>
+  <data name="SlotInspector" xml:space="preserve"><value>Tile {0} inspector</value></data>
+  <data name="Assigned" xml:space="preserve"><value>Assigned to tile {0}</value></data>
+  <data name="Slot" xml:space="preserve"><value>Tile {0}</value></data>
+  <data name="AssignHint" xml:space="preserve"><value>Assign “{0}” to: {1}</value></data>
+  <data name="EditPrefix" xml:space="preserve"><value>Edit </value></data>
+  <data name="AssignPrefix" xml:space="preserve"><value>Assign </value></data>
+  <data name="LaunchHelp" xml:space="preserve"><value>Choose a full executable path or an .exe name. Arguments are passed separately.</value></data>
+  <data name="UrlHelp" xml:space="preserve"><value>Enter an absolute HTTP or HTTPS URL.</value></data>
+  <data name="HotkeyHelp" xml:space="preserve"><value>Enter keys, e.g. Ctrl+Shift+R or Win+L.</value></data>
+  <data name="ScriptHelp" xml:space="preserve"><value>Enter a full local script path. Arguments are optional.</value></data>
+  <data name="PowerShellHelp" xml:space="preserve"><value>The historical PowerShell action retains its type.</value></data>
+  <data name="BuiltInHelp" xml:space="preserve"><value>Toggle mute on the default microphone.</value></data>
+  <data name="ChooseType" xml:space="preserve"><value>Choose an action type.</value></data>
+  <data name="TestInvalid" xml:space="preserve"><value>Cannot run the action. Correct its configuration:
+{0}</value></data>
+  <data name="TestError" xml:space="preserve"><value>Action execution failed: {0}</value></data>
+  <data name="TestErrorTitle" xml:space="preserve"><value>Action test error</value></data>
+  <data name="ReadyToPlay" xml:space="preserve"><value>Ready to play</value></data>
+  <data name="NoMedia" xml:space="preserve"><value>No media session</value></data>
+  <data name="AssignShortcut" xml:space="preserve"><value>Assign action</value></data>
+  <data name="ScriptFilter" xml:space="preserve"><value>Scripts (*.ps1;*.bat;*.cmd;*.exe)|*.ps1;*.bat;*.cmd;*.exe|All files (*.*)|*.*</value></data>
+  <data name="AppFilter" xml:space="preserve"><value>Programs (*.exe)|*.exe|All files (*.*)|*.*</value></data>
+  <data name="NamePlaceholder" xml:space="preserve"><value>e.g. Browser, Terminal, Lock PC</value></data>
+  <data name="PathPlaceholder" xml:space="preserve"><value>e.g. C:\Program Files\... or notepad.exe</value></data>
+  <data name="KeysPlaceholder" xml:space="preserve"><value>e.g. Ctrl+Shift+R or Win+L (press keys)</value></data>
+  <data name="ScriptPlaceholder" xml:space="preserve"><value>e.g. C:\Scripts\deploy.bat or .ps1</value></data>
+</root>

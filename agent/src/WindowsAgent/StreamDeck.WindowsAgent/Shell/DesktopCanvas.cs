@@ -25,25 +25,57 @@ internal sealed class DesktopCanvas : Control
     private int dragSlot = -1;
     private Point dragStart;
     private RectangleF viewport;
+    protected override AccessibleObject CreateAccessibilityInstance() => new CanvasAccessibility(this);
+
+    private sealed class CanvasAccessibility(DesktopCanvas canvas) : ControlAccessibleObject(canvas)
+    {
+        public override int GetChildCount() => canvas.Page == "Home" ? 4 : canvas.Page == "Deck" ? 6 : 0;
+        public override AccessibleObject? GetChild(int index) => index >= 0 && index < GetChildCount() ? new SlotAccessibility(canvas, index) : null;
+    }
+
+    private sealed class SlotAccessibility(DesktopCanvas canvas, int slot) : AccessibleObject
+    {
+        public override string? Name { get => UiText.Format("Deck.Slot", slot + 1) + ": " + (canvas.Slots[slot]?.Name ?? UiText.Get("Deck.AssignShortcut")); set { } }
+        public override AccessibleRole Role => AccessibleRole.PushButton;
+        public override AccessibleStates State => AccessibleStates.Focusable | AccessibleStates.Selectable
+            | (canvas.SelectedSlot == slot ? AccessibleStates.Selected : AccessibleStates.None)
+            | (canvas.Focused && canvas.SelectedSlot == slot ? AccessibleStates.Focused : AccessibleStates.None);
+        public override AccessibleObject? Parent => canvas.AccessibilityObject;
+        public override string? DefaultAction => UiText.Get("Deck.SelectHint");
+        public override Rectangle Bounds
+        {
+            get
+            {
+                var hit = canvas.hits.FirstOrDefault(h => h.Slot == slot).Bounds;
+                if (hit.IsEmpty) return Rectangle.Empty;
+                var viewport = canvas.viewport;
+                var scale = viewport.Width / 320;
+                return canvas.RectangleToScreen(Rectangle.Round(new RectangleF(viewport.X + hit.X * scale,
+                    viewport.Y + hit.Y * scale, hit.Width * scale, hit.Height * scale)));
+            }
+        }
+        public override void DoDefaultAction() { canvas.Focus(); canvas.SelectSlot?.Invoke(slot); }
+    }
     internal DesktopCanvas()
     {
-        DoubleBuffered = true; ResizeRedraw = true; TabStop = true; AccessibleName = "CYD Display Preview"; AccessibleRole = AccessibleRole.Graphic; AllowDrop = true;
-        DragEnter += (_, e) => { if (e.Data?.GetDataPresent(typeof(int)) == true) e.Effect = DragDropEffects.Move; };
-        DragDrop += (_, e) => { var target = Hit(PointToClient(new Point(e.X, e.Y))); if (target >= 0 && e.Data?.GetData(typeof(int)) is int source) MoveSlot?.Invoke(source, target); };
+        DoubleBuffered = true; ResizeRedraw = true; TabStop = true; AccessibleName = UiText.Get("Deck.Preview"); AccessibleRole = AccessibleRole.Graphic; AllowDrop = true;
+        DragEnter += (_, e) => { if (e.Data?.GetDataPresent("CYD.DeckSlot") == true) e.Effect = DragDropEffects.Move; };
+        DragDrop += (_, e) => { var target = Hit(PointToClient(new Point(e.X, e.Y))); if (target >= 0 && e.Data?.GetData("CYD.DeckSlot") is int source) { if (source >= 0 && source < Slots.Length && source != target) MoveSlot?.Invoke(source, target); } };
     }
     private PointF Logical(Point point) => viewport.Width <= 0 ? PointF.Empty : new((point.X - viewport.X) * 320 / viewport.Width, (point.Y - viewport.Y) * 240 / viewport.Height);
     private int Hit(Point point) { var logical = Logical(point); return hits.FirstOrDefault(hit => hit.Bounds.Contains(logical), (Slot: -1, Bounds: RectangleF.Empty)).Slot; }
     protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); if (SelectSlot is not null) Focus(); dragSlot = Hit(e.Location); dragStart = e.Location; }
     protected override void OnMouseMove(MouseEventArgs e) {
         base.OnMouseMove(e); var hit = Hit(e.Location); if (hovered != hit) { hovered = hit; Cursor = hit >= 0 ? Cursors.Hand : Cursors.Default; Invalidate(); }
-        if (e.Button == MouseButtons.Left && dragSlot >= 0 && (Math.Abs(e.X - dragStart.X) > SystemInformation.DragSize.Width || Math.Abs(e.Y - dragStart.Y) > SystemInformation.DragSize.Height)) { DoDragDrop(dragSlot, DragDropEffects.Move); dragSlot = -1; }
+        if (e.Button == MouseButtons.Left && dragSlot >= 0 && (Math.Abs(e.X - dragStart.X) > SystemInformation.DragSize.Width || Math.Abs(e.Y - dragStart.Y) > SystemInformation.DragSize.Height)) { var data = new DataObject(); data.SetData("CYD.DeckSlot", dragSlot); DoDragDrop(data, DragDropEffects.Move); dragSlot = -1; }
     }
     protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hovered = -1; Invalidate(); }
     protected override void OnMouseClick(MouseEventArgs e) {
-        base.OnMouseClick(e); var hit = Hit(e.Location); if (hit < 0) return;
+        base.OnMouseClick(e); if (e.Button != MouseButtons.Left) return; var hit = Hit(e.Location); if (hit < 0) return;
         var bounds = hits.First(h => h.Slot == hit).Bounds; var point = Logical(e.Location);
         if (Slots[hit] is not null && point.X > bounds.Right - 20 && point.Y < bounds.Top + 20) UnassignSlot?.Invoke(hit); else SelectSlot?.Invoke(hit);
     }
+    protected override bool IsInputKey(Keys keyData) => (keyData & Keys.KeyCode) is Keys.Left or Keys.Right or Keys.Up or Keys.Down || base.IsInputKey(keyData);
     protected override void OnKeyDown(KeyEventArgs e) { base.OnKeyDown(e); if (e.KeyCode is Keys.Right or Keys.Down or Keys.Left or Keys.Up) { var index = Math.Clamp(SelectedSlot + (e.KeyCode is Keys.Right or Keys.Down ? 1 : -1), 0, Page == "Home" ? 3 : 5); SelectSlot?.Invoke(index); e.Handled = true; } if (e.KeyCode == Keys.Delete && SelectedSlot >= 0) { UnassignSlot?.Invoke(SelectedSlot); e.Handled = true; } }
     private static GraphicsPath Rounded(RectangleF bounds, float radius) {
         var p = new GraphicsPath(); var d = radius * 2; p.AddArc(bounds.X, bounds.Y, d, d, 180, 90); p.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90); p.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90); p.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90); p.CloseFigure(); return p;
@@ -62,7 +94,7 @@ internal sealed class DesktopCanvas : Control
         if (Page == "Home") {
             Box(g, new RectangleF(8, 8, 148, 84), Color.FromArgb(28, 32, 40));
             if (Artwork is not null) { var saved = g.Save(); using var clip = Rounded(new RectangleF(8, 8, 148, 84), 12); g.SetClip(clip); g.DrawImage(Artwork, new Rectangle(8, 8, 148, 84)); using var scrim = new SolidBrush(Color.FromArgb(165, 0, 0, 0)); g.FillRectangle(scrim, 8, 8, 148, 84); g.Restore(saved); }
-            DrawText(g, Snapshot?.CurrentMedia?.Title ?? "Ready to Play", new RectangleF(16, 16, 130, 24), 17, Color.White, true); DrawText(g, Snapshot?.CurrentMedia?.Artist ?? "No media session", new RectangleF(16, 42, 130, 20), 12, Color.FromArgb(225, 228, 235));
+            DrawText(g, Snapshot?.CurrentMedia?.Title ?? UiText.Get("Deck.ReadyToPlay"), new RectangleF(16, 16, 130, 24), 17, Color.White, true); DrawText(g, Snapshot?.CurrentMedia?.Artist ?? UiText.Get("Deck.NoMedia"), new RectangleF(16, 42, 130, 20), 12, Color.FromArgb(225, 228, 235));
             DrawText(g, Snapshot?.CurrentMedia?.PlaybackState == MediaPlaybackState.Playing ? "Ⅱ" : "▶", new RectangleF(112, 62, 32, 24), 18, Color.White, true, true);
             Box(g, new RectangleF(164, 8, 148, 84), Color.FromArgb(28, 32, 40));
             DrawText(g, DateTime.Now.ToString(Clock24Hour ? "HH:mm" : "h:mm"), new RectangleF(172, 20, 132, 44), 40, Color.White, true, true); DrawText(g, DateTime.Now.ToString("ddd, MMM d", System.Globalization.CultureInfo.InvariantCulture), new RectangleF(172, 62, 132, 18), 14, Color.FromArgb(161, 161, 170), false, true);
@@ -77,7 +109,7 @@ internal sealed class DesktopCanvas : Control
         } else if (Page == "Media") {
             Box(g, new RectangleF(12, 12, 128, 128), Color.FromArgb(28, 32, 40));
             if (Artwork is not null) { var saved = g.Save(); using var clip = Rounded(new RectangleF(12, 12, 128, 128), 12); g.SetClip(clip); g.DrawImage(Artwork, new Rectangle(12, 12, 128, 128)); g.Restore(saved); } else DrawText(g, "♫", new RectangleF(12, 12, 128, 128), 42, Accent, false, true);
-            DrawText(g, Snapshot?.CurrentMedia?.Title ?? "Ready to Play", new RectangleF(152, 12, 156, 28), 20, Color.White, true); DrawText(g, Snapshot?.CurrentMedia?.Artist ?? "No media session", new RectangleF(152, 42, 156, 24), 14, Color.LightGray);
+            DrawText(g, Snapshot?.CurrentMedia?.Title ?? UiText.Get("Deck.ReadyToPlay"), new RectangleF(152, 12, 156, 28), 20, Color.White, true); DrawText(g, Snapshot?.CurrentMedia?.Artist ?? UiText.Get("Deck.NoMedia"), new RectangleF(152, 42, 156, 24), 14, Color.LightGray);
             DrawText(g, "◀     " + (Snapshot?.CurrentMedia?.PlaybackState == MediaPlaybackState.Playing ? "Ⅱ" : "▶") + "     ▶", new RectangleF(152, 112, 156, 38), 20, Color.White, true, true);
             Box(g, new RectangleF(76, 178, 174, 6), Color.FromArgb(50, 54, 62), 3); Box(g, new RectangleF(76, 178, Math.Max(6, 174 * (Snapshot?.CurrentAudio?.VolumePercent ?? 0) / 100f), 6), Accent, 3); DrawText(g, (Snapshot?.CurrentAudio?.VolumePercent ?? 0) + "%", new RectangleF(264, 164, 44, 30), 14, Color.White, false, true); DrawText(g, "♪", new RectangleF(12, 164, 48, 30), 20, Color.White, false, true);
         } else {
@@ -88,6 +120,7 @@ internal sealed class DesktopCanvas : Control
         var titles = new[] { DateTime.Now.ToString(Clock24Hour ? "HH:mm" : "h:mm"), "Deck", "Media", "PC", "⚙" }; var widths = new[] { 58, 54, 58, 38, 30 }; int x = 29;
         for (var i = 0; i < titles.Length; ++i) { bool selected = new[] { "Home", "Deck", "Media", "PC", "Info" }[i] == Page; if (selected) Box(g, new RectangleF(x, 205, widths[i], 28), Accent, 14); DrawText(g, titles[i], new RectangleF(x, 205, widths[i], 28), 14, Color.White, selected, true); x += widths[i] + 6; }
         g.ResetTransform();
+        if (Focused) ControlPaint.DrawFocusRectangle(g, Rectangle.Inflate(ClientRectangle, -3, -3), ForeColor, BackColor);
     }
     private void Tile(Graphics g, int index, RectangleF bounds, bool compact)
     {
@@ -97,7 +130,7 @@ internal sealed class DesktopCanvas : Control
         if (SelectedSlot == index || hovered == index) { using var path = Rounded(bounds, 12); using var pen = new Pen(Accent, SelectedSlot == index ? 2 : 1); g.DrawPath(pen, path); }
         bool icon = shortcut is not null && shortcut.DisplayMode != "label"; bool label = shortcut is null || shortcut.DisplayMode != "icon";
         if (icon) { var x = compact && label ? bounds.X + 12 : bounds.X + (bounds.Width - 24) / 2; var y = compact || !label ? bounds.Y + (bounds.Height - 24) / 2 : bounds.Y + (bounds.Height - 50) / 2; ShortcutIconCatalog.Draw(g, shortcut!.Icon, shortcut.IconData, Rectangle.Round(new RectangleF(x, y, 24, 24)), textColor); }
-        if (label) { var box = compact ? new RectangleF(bounds.X + (icon ? 42 : 8), bounds.Y + 5, bounds.Width - (icon ? 50 : 16), 34) : new RectangleF(bounds.X + 6, icon ? bounds.Y + bounds.Height / 2 + 4 : bounds.Y + (bounds.Height - 38) / 2, bounds.Width - 12, 38); DrawText(g, shortcut?.Name ?? "Assign Shortcut", box, 14, textColor, false, !compact); }
+        if (label) { var box = compact ? new RectangleF(bounds.X + (icon ? 42 : 8), bounds.Y + 5, bounds.Width - (icon ? 50 : 16), 34) : new RectangleF(bounds.X + 6, icon ? bounds.Y + bounds.Height / 2 + 4 : bounds.Y + (bounds.Height - 38) / 2, bounds.Width - 12, 38); DrawText(g, shortcut?.Name ?? UiText.Get("Deck.AssignShortcut"), box, 14, textColor, false, !compact); }
         if (hovered == index && shortcut is not null) { Box(g, new RectangleF(bounds.Right - 20, bounds.Top + 2, 18, 18), Color.FromArgb(50, 54, 62), 9); DrawText(g, "×", new RectangleF(bounds.Right - 20, bounds.Top + 2, 18, 18), 16, Color.White, false, true); }
     }
 }
