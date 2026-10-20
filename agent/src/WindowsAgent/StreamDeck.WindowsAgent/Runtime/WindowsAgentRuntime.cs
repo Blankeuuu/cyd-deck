@@ -55,6 +55,7 @@ public sealed class WindowsAgentRuntime(
         }
 
         var configuration = configurationStore.LoadOrDefault();
+        state.MarkConfigurationSaved(configuration.Server?.UsbPort, options.UsbPort);
         port = listenPortOverride ?? configuration.Server?.Port ?? 8765;
         var monitoringInterval = TimeSpan.FromMilliseconds(configuration.Monitoring?.IntervalMs ?? 1000);
         var coverCacheDirectory = GetCoverCacheDirectory();
@@ -254,6 +255,28 @@ public sealed class WindowsAgentRuntime(
         return appearance with { ShortcutsLayout = last < 1 ? "hero-1" : last < 2 ? "split-2" : last < 4 ? "quad-4" : "grid-6" };
     }
 
+    public Task<bool> SyncSavedConfigurationAsync(CancellationToken cancellationToken = default) => RetryConfigurationSyncAsync(cancellationToken);
+
+    public Task<bool> RetryConfigurationSyncAsync(CancellationToken cancellationToken = default)
+    {
+        var saved = configurationStore.LoadOrDefault();
+        var savedSlots = saved.Profiles.FirstOrDefault(p => p.Name == saved.ActiveProfile)?.AssignedShortcutIds;
+        var savedCatalog = ShortcutCatalog.Create(new ShortcutConfiguration { Shortcuts = saved.Shortcuts ?? [] });
+        shortcutCatalog = savedCatalog;
+        deviceSlots = savedSlots;
+        return new ConfigurationSynchronizer(state).SendAsync(async token =>
+        {
+            var shortcuts = ProtocolStateMapper.CreateShortcutsUpdate(BuildDeviceShortcuts(savedCatalog.DeviceConfiguration, savedSlots));
+            var settings = ProtocolStateMapper.CreateDeviceSettings(CreateRequestId("settings"),
+                ResolveAssignedLayout(saved.Appearance ?? new AppearanceConfiguration(), savedSlots), applyBrightness: true);
+            // Capture one transport for the whole attempt; never split a configuration across devices.
+            var usb = usbRuntime;
+            if (usb?.IsReady == true)
+                return await usb.SendConfigurationAsync(shortcuts, settings, token).ConfigureAwait(false);
+            var socket = webSocketServer;
+            return socket is not null && await socket.SendConfigurationAsync(shortcuts, settings, token).ConfigureAwait(false);
+        }, cancellationToken);
+    }
     public async Task ReconnectAsync()
     {
         reconnectCount++;

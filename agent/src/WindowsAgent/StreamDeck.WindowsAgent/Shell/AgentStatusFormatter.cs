@@ -17,6 +17,7 @@ internal static class AgentStatusFormatter
 
     public static string ToDeviceStatus(AgentStatusSnapshot snapshot)
     {
+        if (snapshot.Connection is { IsConnected: true }) return "Connected";
         return snapshot.HostStatus switch
         {
             "connected" => "Connected",

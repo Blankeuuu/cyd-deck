@@ -84,6 +84,15 @@ public sealed class WindowsAgentWebSocketServer(
         return true;
     }
 
+    public async Task<bool> SendConfigurationAsync(string shortcuts, string settings, CancellationToken token)
+    {
+        TrackingProtocolSink? sink;
+        lock (activeSinkGate) sink = activeSink;
+        if (sink is null) return false;
+        await sink.SendTextAsync(shortcuts, token).ConfigureAwait(false);
+        await sink.SendTextAsync(settings, token).ConfigureAwait(false);
+        lock (activeSinkGate) return ReferenceEquals(sink, activeSink);
+    }
     public async Task<bool> DisconnectActiveDeviceAsync(CancellationToken cancellationToken = default)
     {
         TrackingProtocolSink? sink;
@@ -113,7 +122,7 @@ public sealed class WindowsAgentWebSocketServer(
         var remoteAddress = FormatRemoteAddress(context);
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
         var sink = new TrackingProtocolSink(webSocket, new WebSocketProtocolSink(webSocket), state, remoteAddress, SetActiveSink);
-        var session = new DeviceProtocolSession(dispatcher, pairingService, sink, context.Request.Query["token"], remoteAddress, appearance ?? new AppearanceConfiguration(), shortcuts ?? new DeviceShortcutConfiguration([]), HandleDeviceInfoAsync, initialAudioProvider, shortcutsReportHandler, shortcutsProvider, appearanceProvider, initialMediaSender);
+        var session = new DeviceProtocolSession(dispatcher, pairingService, sink, context.Request.Query["token"], remoteAddress, appearance ?? new AppearanceConfiguration(), shortcuts ?? new DeviceShortcutConfiguration([]), (info, token) => { state.UpdateDeviceInfoForSession(sink.SessionId, info); return ValueTask.CompletedTask; }, initialAudioProvider, shortcutsReportHandler, shortcutsProvider, appearanceProvider, initialMediaSender);
 
         try
         {
@@ -124,7 +133,7 @@ public sealed class WindowsAgentWebSocketServer(
             ClearActiveSink(sink);
             if (sink.DeviceId is not null)
             {
-                state.MarkDeviceDisconnected(sink.DeviceId);
+                state.MarkDeviceDisconnected(sink.DeviceId, sink.SessionId);
             }
         }
     }
@@ -239,12 +248,6 @@ public sealed class WindowsAgentWebSocketServer(
         return Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Port : 0;
     }
 
-    private ValueTask HandleDeviceInfoAsync(DeviceInfoMessage info, CancellationToken cancellationToken)
-    {
-        state.UpdateDeviceInfo(info);
-        return ValueTask.CompletedTask;
-    }
-
     private async Task<IResult> GetCoverAsync(string coverId, CancellationToken cancellationToken)
     {
         if (!IsValidCoverId(coverId) || string.IsNullOrWhiteSpace(coverCacheDirectory))
@@ -274,8 +277,11 @@ public sealed class WindowsAgentWebSocketServer(
         string? remoteAddress,
         Action<TrackingProtocolSink> setActiveSink) : IProtocolSink
     {
+        private readonly InitialConfigurationTracker initialSync = new(state);
         private HelloMessage? hello;
+        private bool connected;
 
+        public string SessionId { get; } = Guid.NewGuid().ToString("N");
         public string? DeviceId => hello?.DeviceId;
 
         public void TrackIncoming(string message)
@@ -291,7 +297,8 @@ public sealed class WindowsAgentWebSocketServer(
 
         public async ValueTask SendTextAsync(string message, CancellationToken cancellationToken = default)
         {
-            await inner.SendTextAsync(message, cancellationToken).ConfigureAwait(false);
+            if (ProtocolSerializer.Parse(message).Envelope?.Type == ProtocolConstants.MessageTypes.ShortcutsUpdate) MarkAuthorizedConnection();
+            await initialSync.SendAsync(message, () => inner.SendTextAsync(message, cancellationToken), state.IsActiveDeviceSession(SessionId)).ConfigureAwait(false);
             TrackOutgoing(message);
         }
 
@@ -303,6 +310,14 @@ public sealed class WindowsAgentWebSocketServer(
             }
         }
 
+        private void MarkAuthorizedConnection()
+        {
+            if (hello is null || connected) return;
+            connected = true;
+            setActiveSink(this);
+            state.MarkDeviceConnected(hello.DeviceId, hello.Name, remoteAddress, DeviceTransport.WebSocket, sessionId: SessionId);
+            if (hello.DeviceInfo is not null) state.UpdateDeviceInfoForSession(SessionId, hello.DeviceInfo);
+        }
         private void TrackOutgoing(string message)
         {
             if (hello is null)
@@ -319,9 +334,7 @@ public sealed class WindowsAgentWebSocketServer(
             var connection = ProtocolSerializer.DeserializeData<ConnectionStateMessage>(parseResult.Envelope);
             if (string.Equals(connection.State, "connected", StringComparison.Ordinal))
             {
-                setActiveSink(this);
-                state.MarkDeviceConnected(hello.DeviceId, hello.Name, remoteAddress);
-                if (hello.DeviceInfo is not null) state.UpdateDeviceInfo(hello.DeviceInfo);
+                MarkAuthorizedConnection();
             }
         }
     }
