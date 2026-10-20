@@ -140,4 +140,11 @@ It will be detached from all tiles in this profile. Other profiles are unchanged
   <data name="PathPlaceholder" xml:space="preserve"><value>e.g. C:\Program Files\... or notepad.exe</value></data>
   <data name="KeysPlaceholder" xml:space="preserve"><value>e.g. Ctrl+Shift+R or Win+L (press keys)</value></data>
   <data name="ScriptPlaceholder" xml:space="preserve"><value>e.g. C:\Scripts\deploy.bat or .ps1</value></data>
+  <data name="SlotChoiceAccessible" xml:space="preserve"><value>Tile slot selection</value></data>
+  <data name="SlotLabel" xml:space="preserve"><value>Slot</value></data>
+  <data name="StatusLabel" xml:space="preserve"><value>Status</value></data>
+  <data name="ColorGraphite" xml:space="preserve"><value>Graphite</value></data>
+  <data name="ColorOcean" xml:space="preserve"><value>Ocean</value></data>
+  <data name="ColorCobalt" xml:space="preserve"><value>Cobalt</value></data>
+  <data name="ColorEmber" xml:space="preserve"><value>Ember</value></data>
 </root>

@@ -264,29 +264,6 @@ public sealed partial class SettingsWindow
         return segments;
     }
 
-    private sealed class CompactToggle : CheckBox
-    {
-        public CompactToggle()
-        {
-            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
-            Cursor = Cursors.Hand;
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var scale = DeviceDpi / 96F;
-            var track = new Rectangle(1, Math.Max(2, (Height - (int)(22 * scale)) / 2), (int)(38 * scale), (int)(22 * scale));
-            using var path = CreateRoundedRectPath(track, track.Height / 2);
-            using var fill = new SolidBrush(Checked ? Accent : Border);
-            e.Graphics.FillPath(fill, path);
-            var diameter = track.Height - 6;
-            using var knob = new SolidBrush(Color.White);
-            e.Graphics.FillEllipse(knob, Checked ? track.Right - diameter - 3 : track.Left + 3, track.Top + 3, diameter, diameter);
-            TextRenderer.DrawText(e.Graphics, $"{Text} · {(Checked ? "On" : "Off")}", Font, new Rectangle(track.Right + 8, 0, Math.Max(0, Width - track.Right - 8), Height), ForeColor, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-            if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, ClientRectangle, ForeColor, BackColor);
-        }
-    }
 
     private Control CompactColor(string current, Action<string> update)
     {

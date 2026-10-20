@@ -140,4 +140,11 @@ Zostanie odpięta od wszystkich jego kafelków. Inne profile pozostaną bez zmia
   <data name="PathPlaceholder" xml:space="preserve"><value>np. C:\Program Files\... lub notepad.exe</value></data>
   <data name="KeysPlaceholder" xml:space="preserve"><value>np. Ctrl+Shift+R lub Win+L (naciśnij klawisze)</value></data>
   <data name="ScriptPlaceholder" xml:space="preserve"><value>np. C:\Scripts\deploy.bat lub .ps1</value></data>
+  <data name="SlotChoiceAccessible" xml:space="preserve"><value>Wybór kafelka</value></data>
+  <data name="SlotLabel" xml:space="preserve"><value>Kafelek</value></data>
+  <data name="StatusLabel" xml:space="preserve"><value>Status</value></data>
+  <data name="ColorGraphite" xml:space="preserve"><value>Grafit</value></data>
+  <data name="ColorOcean" xml:space="preserve"><value>Ocean</value></data>
+  <data name="ColorCobalt" xml:space="preserve"><value>Kobalt</value></data>
+  <data name="ColorEmber" xml:space="preserve"><value>Bursztyn</value></data>
 </root>

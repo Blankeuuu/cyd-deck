@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="SummaryCardTitle" xml:space="preserve"><value>Podsumowanie telemetrii</value></data>
+  <data name="PreviewCardTitle" xml:space="preserve"><value>Podgląd monitora CYD</value></data>
+  <data name="SectionPc" xml:space="preserve"><value>Komputer PC</value></data>
+  <data name="SectionCyd" xml:space="preserve"><value>Urządzenie CYD (ESP32)</value></data>
+  <data name="RowNowPlaying" xml:space="preserve"><value>Utwór</value></data>
+  <data name="RowArtist" xml:space="preserve"><value>Wykonawca</value></data>
+  <data name="RowUptime" xml:space="preserve"><value>Czas pracy PC</value></data>
+  <data name="RowFirmware" xml:space="preserve"><value>Wersja softu</value></data>
+  <data name="RowFreeHeap" xml:space="preserve"><value>Wolna pamięć</value></data>
+  <data name="RowSamples" xml:space="preserve"><value>Próbki bufora</value></data>
+  <data name="Waiting" xml:space="preserve"><value>Oczekiwanie</value></data>
+  <data name="WaitingSamples" xml:space="preserve"><value>Oczekiwanie na próbki</value></data>
+  <data name="Unavailable" xml:space="preserve"><value>Niedostępne</value></data>
+  <data name="NoSession" xml:space="preserve"><value>Brak sesji</value></data>
+  <data name="DefaultCpu" xml:space="preserve"><value>Procesor Windows</value></data>
+  <data name="GpuEngine" xml:space="preserve"><value>Silnik Windows GPU</value></data>
+  <data name="GpuUnavailable" xml:space="preserve"><value>Licznik GPU niedostępny</value></data>
+  <data name="CpuTemp" xml:space="preserve"><value>Temperatura CPU</value></data>
+  <data name="NoSensor" xml:space="preserve"><value>Wymaga czujnika (opcjonalny)</value></data>
+  <data name="AcpiThermalZone" xml:space="preserve"><value>Strefa termiczna ACPI</value></data>
+  <data name="RamTooltip" xml:space="preserve"><value>Pamięć RAM: {0} (Norma: &lt;70%, Obciążenie: 70-85%, Krytyczne: &gt;85%). Ostatnie 30 próbek.</value></data>
+  <data name="TempTooltipUnavailable" xml:space="preserve"><value>Temperatura CPU jest opcjonalna i niedostępna w standardowym Windows bez zewnętrznego czujnika (np. LibreHardwareMonitor / OpenHardwareMonitor).</value></data>
+  <data name="TempTooltipFormat" xml:space="preserve"><value>{0}: {1:0}°C. Ostatnie 30 próbek.</value></data>
+  <data name="DefaultMetricTooltip" xml:space="preserve"><value>{0}. Ostatnie 30 próbek; interwał 1 sekunda.</value></data>
+</root>
