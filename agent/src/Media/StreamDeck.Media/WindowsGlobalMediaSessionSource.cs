@@ -23,6 +23,7 @@ public sealed class WindowsGlobalMediaSessionSource : IWindowsMediaSessionSource
 
         _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
         _manager.SessionsChanged += HandleSessionsChanged;
+        _manager.CurrentSessionChanged += HandleCurrentSessionChanged;
     }
 
     public IReadOnlyList<IWindowsMediaSession> GetSessions()
@@ -66,6 +67,7 @@ public sealed class WindowsGlobalMediaSessionSource : IWindowsMediaSessionSource
             if (_manager is not null)
         {
                 _manager.SessionsChanged -= HandleSessionsChanged;
+                _manager.CurrentSessionChanged -= HandleCurrentSessionChanged;
             }
 
             foreach (var session in _sessions.Values)
@@ -99,6 +101,11 @@ public sealed class WindowsGlobalMediaSessionSource : IWindowsMediaSessionSource
     }
 
     private void HandleSessionsChanged(GlobalSystemMediaTransportControlsSessionManager sender, SessionsChangedEventArgs args)
+    {
+        SessionsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void HandleCurrentSessionChanged(GlobalSystemMediaTransportControlsSessionManager sender, CurrentSessionChangedEventArgs args)
     {
         SessionsChanged?.Invoke(this, EventArgs.Empty);
     }

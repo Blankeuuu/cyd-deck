@@ -14,11 +14,12 @@
 The monitor is event-driven. It subscribes to:
 
 - manager `SessionsChanged`;
+- manager `CurrentSessionChanged` (forwarded through the source's `SessionsChanged` event);
 - session `MediaPropertiesChanged`;
 - session `PlaybackInfoChanged`;
 - session `TimelinePropertiesChanged`.
 
-Snapshots are refreshed when one of these events arrives or when `StartAsync` initializes the monitor. The module does not run a tight polling loop.
+Snapshots are refreshed when one of these events arrives, when `StartAsync` initializes the monitor, and after a native command returns. The module does not run a tight polling loop.
 
 ## Data exposed
 
@@ -27,6 +28,16 @@ Snapshots are refreshed when one of these events arrives or when `StartAsync` in
 ## Commands
 
 The monitor exposes previous, play, pause, toggle play/pause and next. Commands return `false` when no session is selected or the native Windows command fails/throws. Cancellation still propagates as `OperationCanceledException`.
+
+### Weryfikacja komend
+
+Sesja jest wybierana ponownie z bieżącego źródła Windows przy każdej komendzie: zmiana aktywnej sesji nie musi zmieniać listy sesji. Po powrocie komendy monitor ponownie odczytuje stan; nigdy nie przewiduje `Paused` ani `Playing`. Natywne `true` i odpowiadający mu ACK protokołu 1 oznaczają przyjęcie komendy, a nie potwierdzenie zatrzymania dźwięku. `false` pozostaje odrzuceniem. Błąd metadanych zachowuje ostatni dobry snapshot i nie zmienia wyniku przyjętej komendy; opóźniony stan odtwarzacza wymaga późniejszego zdarzenia SMTC.
+
+Izolowany test rzeczywistej ścieżki serializer → dispatcher → adapter Host → monitor → fake sesje (bez uruchamiania odtwarzacza):
+
+```powershell
+dotnet run --project agent/src/Media/StreamDeck.Media.CommandTests/StreamDeck.Media.CommandTests.csproj
+```
 
 ## Limitations
 

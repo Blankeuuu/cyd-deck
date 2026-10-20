@@ -48,10 +48,10 @@ internal static class DesktopBugRegressionTests
             EnumThreadWindows(GetCurrentThreadId(), (handle, _) => { if (Control.FromHandle(handle) is ContextMenuStrip menu && menu.Visible) active = menu; return true; }, IntPtr.Zero);
             if (active is null) throw new InvalidOperationException("Tools menu did not open");
             active.Close(); Application.DoEvents();
-            All(window).OfType<Button>().Single(b => b.Text == "Settings").PerformClick(); Application.DoEvents();
+            All(window).OfType<Button>().Single(b => b.Text is "Settings" or "Ustawienia" || b.AccessibleName is "Settings" or "Ustawienia").PerformClick(); Application.DoEvents();
             All(window).OfType<RadioButton>().Single(b => b.Visible && b.Text == (i % 2 == 0 ? "Light" : "Dark")).PerformClick();
             if (!window.SaveConfigurationDraftAsync().GetAwaiter().GetResult()) throw new InvalidOperationException("Theme save failed during menu regression");
-            All(window).OfType<Button>().Single(b => b.Text == "Deck Builder").PerformClick(); Application.DoEvents();
+            All(window).OfType<Button>().Single(b => b.Text is "Deck Builder" or "Edytor Deck" || b.AccessibleName is "Deck Builder" or "Edytor Deck").PerformClick(); Application.DoEvents();
         }
         window.CloseForExit(); SynchronizationContext.SetSynchronizationContext(null); runtime.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }

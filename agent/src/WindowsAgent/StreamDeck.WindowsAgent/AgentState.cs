@@ -18,7 +18,7 @@ public sealed record HostSystemTelemetrySnapshot(
     IReadOnlyList<double> GpuHistory,
     IReadOnlyList<double> TempHistory, bool GpuAvailable = true, bool TempAvailable = true, string? GpuSource = null, string? TemperatureSource = null);
 
-public sealed class AgentState
+public sealed partial class AgentState
 {
     private const int MaxHistorySamples = 30;
     private readonly object syncRoot = new();
@@ -58,7 +58,9 @@ public sealed class AgentState
                 deviceInfoUpdatedAtUtc,
                 currentMedia,
                 currentAudio,
-                systemTelemetry);
+                systemTelemetry,
+                BuildConnectionSnapshot(),
+                synchronization);
         }
     }
 
@@ -170,40 +172,31 @@ public sealed class AgentState
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public void MarkDeviceConnected(string id, string name, string? address)
+    public void MarkDeviceConnected(string id, string name, string? address,
+        DeviceTransport transport = DeviceTransport.None, string? activeUsbPort = null, string? sessionId = null)
     {
         lock (syncRoot)
         {
-            if (!string.Equals(deviceId, id, StringComparison.Ordinal))
-            {
-                deviceInfo = null;
-                deviceInfoUpdatedAtUtc = null;
-            }
-            deviceId = id;
-            deviceName = name;
-            remoteAddress = address;
-            hostStatus = "connected";
+            transport = transport == DeviceTransport.None ? (address == "USB" ? DeviceTransport.Usb : DeviceTransport.WebSocket) : transport;
+            connections[sessionId ?? id] = new(true, id, name, transport, activeUsbPort, savedUsbPort, cliUsbPortOverride, address);
+            SelectActiveConnection();
         }
-
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public void MarkDeviceDisconnected(string id)
+    public void MarkDeviceDisconnected(string id, string? sessionId = null)
     {
         lock (syncRoot)
         {
-            if (!string.Equals(deviceId, id, StringComparison.Ordinal) || hostStatus != "connected")
-            {
-                return;
-            }
-
-            remoteAddress = null;
-            hostStatus = "listening";
+            var key = sessionId ?? id;
+            if (!connections.TryGetValue(key, out var connection) || connection.DeviceId != id) return;
+            connections.Remove(key);
+            SelectActiveConnection();
+            if (connections.Count == 0 && synchronization is not null)
+                synchronization = synchronization with { Status = ConfigurationSyncStatus.Disconnected, Error = null };
         }
-
         Changed?.Invoke(this, EventArgs.Empty);
     }
-
     public void MarkDeviceForgotten(string id)
     {
         lock (syncRoot)
@@ -213,10 +206,14 @@ public sealed class AgentState
                 return;
             }
 
+            foreach (var key in connections.Where(pair => pair.Value.DeviceId == id).Select(pair => pair.Key).ToArray()) connections.Remove(key);
+            activeConnection = null;
+            deviceInfo = null;
+            deviceInfoUpdatedAtUtc = null;
             deviceId = null;
             deviceName = null;
             remoteAddress = null;
-            hostStatus = "listening";
+            SelectActiveConnection();
         }
 
         Changed?.Invoke(this, EventArgs.Empty);
@@ -226,6 +223,9 @@ public sealed class AgentState
     {
         lock (syncRoot)
         {
+            if (activeConnection is not null) return;
+            deviceInfo = null;
+            deviceInfoUpdatedAtUtc = null;
             deviceId = id;
             deviceName = name;
             remoteAddress = address;
@@ -276,5 +276,6 @@ public sealed record AgentStatusSnapshot(
     DateTimeOffset? DeviceInfoUpdatedAtUtc = null,
     MediaSnapshot? CurrentMedia = null,
     AudioSnapshot? CurrentAudio = null,
-    HostSystemTelemetrySnapshot? SystemTelemetry = null);
-
+    HostSystemTelemetrySnapshot? SystemTelemetry = null,
+    ConnectionSnapshot? Connection = null,
+    ConfigurationSyncSnapshot? Synchronization = null);
