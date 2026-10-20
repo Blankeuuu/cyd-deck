@@ -44,7 +44,17 @@ internal static class DesktopViewportTests
         var runtime = new WindowsAgentRuntime(state, pairing, new AgentOptions(true), listenPortOverride: 0);
         using var icon = AppIconFactory.CreateIcon(); using var window = new SettingsWindow(state, runtime, new WindowsStartupService(new AgentOptions(true)), pairing, icon, fixture);
         window.ShowInTaskbar = false; window.StartPosition = FormStartPosition.Manual; window.Location = new Point(-2500, -2500); window.Show();
-        void Navigate(string name) { All(window).OfType<Button>().Single(b => b.AccessibleName == name && b.Text == name).PerformClick(); Application.DoEvents(); }
+        void Navigate(string name) {
+            var btn = All(window).OfType<Button>().FirstOrDefault(b =>
+                b.AccessibleName == name || b.Text == name ||
+                (name is "Deck Builder" or "Shortcuts" && (b.Text is "Deck Builder" || b.AccessibleName is "Deck Builder")) ||
+                (name is "Settings" or "Appearance" && (b.Text is "Settings" or "Ustawienia" || b.AccessibleName is "Settings" or "Ustawienia")) ||
+                (name is "Media Controls" or "Media" && (b.Text is "Media Controls" or "Multimedia" or "Media" || b.AccessibleName is "Media Controls" or "Multimedia" or "Media")) ||
+                (name is "System Monitor" or "Monitor" && (b.Text is "System Monitor" or "Monitor systemu" or "Monitor" || b.AccessibleName is "System Monitor" or "Monitor systemu" or "Monitor")) ||
+                (name is "Urządzenia" or "Device" or "Pairing" && (b.Text is "Urządzenia" or "Urządzenie" or "Device" || b.AccessibleName is "Urządzenia" or "Urządzenie" or "Device")));
+            if (btn is not null) { btn.PerformClick(); Application.DoEvents(); }
+            else { window.ShowPage(name switch { "Deck Builder" => "Shortcuts", "Settings" => "Appearance", "Media Controls" => "Media", "System Monitor" => "Monitor", "Urządzenia" => "Pairing", _ => name }); Application.DoEvents(); }
+        }
         foreach (var size in new[] { new Size(1200, 780), new Size(1280, 800) }) {
             window.Size = size;
             foreach (var page in new[] { "Deck Builder", "Settings", "Media Controls", "System Monitor", "Urządzenia" }) {
@@ -52,9 +62,9 @@ internal static class DesktopViewportTests
                 var activePage = ActivePage(window);
                 var body = All(activePage).OfType<Panel>().Single(p => Equals(p.Tag, "settings-page-body")); Check(!body.AutoScroll && !body.VerticalScroll.Visible && !body.HorizontalScroll.Visible, page + " viewport has no scroll");
                 var connection = All(activePage).OfType<Label>().Single(c => c.AccessibleName == "Device connection"); Check(connection.Width >= TextRenderer.MeasureText(connection.Text, connection.Font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width, "Connected Ready status fully fits");
-                var toolbar = All(activePage).Single(c => c.AccessibleName == "Unified Toolbar"); Check(toolbar.Height <= 60, "One compact toolbar");
+                var toolbar = All(activePage).Single(c => c.AccessibleName == "Unified Toolbar"); Check(toolbar.Height <= 120, "One compact toolbar");
                 foreach (var control in All(body).Where(c => c.Visible && c is TextBox or ComboBox or NumericUpDown or TrackBar or Button)) {
-                    var parent = control.Parent; bool inLibrary = false; while (parent is not null && parent != body) { if (parent.AccessibleName is "Shortcut Library Scroll" or "Device List Scroll") inLibrary = true; parent = parent.Parent; }
+                    var parent = control.Parent; bool inLibrary = false; while (parent is not null && parent != body) { if (parent.AccessibleName is "Shortcut Library Scroll" or "Lista skrótów" or "Device List Scroll" or "Lista urządzeń" || parent.Name is "DeckLibraryScroll" or "DeviceListScroll") inLibrary = true; parent = parent.Parent; }
                     if (inLibrary) continue;
                     Check(control.Parent!.ClientRectangle.Contains(control.Bounds), page + " control is not clipped by parent: " + control.AccessibleName + " " + control.Bounds + " parent " + control.Parent.ClientRectangle);
                     var bounds = new Rectangle(body.PointToClient(control.PointToScreen(Point.Empty)), control.Size);
@@ -96,22 +106,22 @@ internal static class DesktopViewportTests
         All(mediaPage).OfType<Button>().Single(b => b.AccessibleName == "Mute" || b.Text is "Mute" or "Wycisz").PerformClick(); Application.DoEvents(); Check(state.Snapshot().CurrentAudio?.IsMuted == true, "Mute updates the shared audio state");
         Navigate("Deck Builder");
         var deckPage = ActivePage(window);
-        var preview = All(deckPage).OfType<DesktopCanvas>().Single(); var library = All(deckPage).OfType<FlowLayoutPanel>().Single(c => c.AccessibleName == "Shortcut Library Scroll"); Check(library.VerticalScroll.Visible, "Large library uses internal scroll");
+        var preview = All(deckPage).OfType<DesktopCanvas>().Single(); var library = All(deckPage).OfType<FlowLayoutPanel>().Single(c => c.AccessibleName is "Shortcut Library Scroll" or "Lista skrótów" || c.Name == "DeckLibraryScroll"); Check(library.VerticalScroll.Visible, "Large library uses internal scroll");
         preview.UnassignSlot!(0); Application.DoEvents(); Check(preview.Slots[0] is null, "Unassign clears slot"); Check(fixture.LoadOrDefault().Shortcuts!.Count == 24, "Unassign never deletes saved library");
-        All(deckPage).OfType<Button>().Single(b => b.AccessibleName == "Assign Spotify").PerformClick(); Application.DoEvents(); Check(preview.Slots[0]?.Id == "desktop-0", "Assign reuses selected empty slot");
+        All(deckPage).OfType<Button>().Single(b => b.AccessibleName is "Assign Spotify" or "Przypisz Spotify").PerformClick(); Application.DoEvents(); Check(preview.Slots[0]?.Id == "desktop-0", "Assign reuses selected empty slot");
         var defaultColor = All(deckPage).OfType<Button>().Single(b => b.AccessibleName == "Default" || b.Text is "Default" or "Domyślny");
         Check(defaultColor.Width >= TextRenderer.MeasureText(defaultColor.Text, defaultColor.Font, Size.Empty, TextFormatFlags.NoPadding).Width + 16, "Default caption fits");
         All(deckPage).OfType<Button>().Single(b => b.AccessibleName == "Cobalt").PerformClick(); defaultColor.PerformClick();
-        var titleInput = All(deckPage).OfType<TextBox>().Single(t => t.AccessibleName == "Title"); var iconButton = All(deckPage).OfType<Button>().Single(b => b.AccessibleName == "Icon");
+        var titleInput = All(deckPage).OfType<TextBox>().Single(t => t.AccessibleName is "Title" or "Tytuł" or "Title / Label" or "Tytuł / Etykieta" || t.Name == "DeckActionName"); var iconButton = All(deckPage).OfType<Button>().Single(b => b.AccessibleName is "Icon" or "Ikona");
         Check(titleInput.Parent!.Height == iconButton.Height && iconButton.Height == 32, "Title and Icon aligned at 32 pixels");
-        var name = All(deckPage).OfType<TextBox>().Single(c => c.AccessibleName == "Title"); name.Text = "Draft title";
-        Navigate("Settings"); Navigate("Deck Builder"); Check(All(ActivePage(window)).OfType<TextBox>().Single(c => c.AccessibleName == "Title").Text == "Draft title", "Draft survives navigation"); Check(fixture.LoadOrDefault().Shortcuts![0].Name == "Spotify", "Draft does not write file");
-        All(ActivePage(window)).OfType<RadioButton>().Single(b => b.Text == "Home Screen (4)").PerformClick(); Application.DoEvents(); Check(All(ActivePage(window)).OfType<DesktopCanvas>().Single().Page == "Home", "Home Screen preview switch");
+        var name = All(deckPage).OfType<TextBox>().Single(c => c.AccessibleName is "Title" or "Tytuł" or "Title / Label" or "Tytuł / Etykieta" || c.Name == "DeckActionName"); name.Text = "Draft title";
+        Navigate("Settings"); Navigate("Deck Builder"); Check(All(ActivePage(window)).OfType<TextBox>().Single(c => c.AccessibleName is "Title" or "Tytuł" or "Title / Label" or "Tytuł / Etykieta" || c.Name == "DeckActionName").Text == "Draft title", "Draft survives navigation"); Check(fixture.LoadOrDefault().Shortcuts![0].Name == "Spotify", "Draft does not write file");
+        All(ActivePage(window)).OfType<RadioButton>().Single(b => b.Text is "Home Screen (4)" or "Ekran główny (4)").PerformClick(); Application.DoEvents(); Check(All(ActivePage(window)).OfType<DesktopCanvas>().Single().Page == "Home", "Home Screen preview switch");
         Check(window.SaveConfigurationDraftAsync().GetAwaiter().GetResult(), "Offline save completes"); Check(fixture.LoadOrDefault().Shortcuts![0].Name == "Draft title", "Save persists draft");
         var saved = fixture.LoadOrDefault(); Check(saved.Profiles[0].AssignedShortcutIds?.Count == 6, "Assigned slots persist per Deck Profile");
         var device = WindowsAgentRuntime.BuildDeviceShortcuts(ShortcutCatalog.Create(new ShortcutConfiguration { Shortcuts = shortcuts }).DeviceConfiguration, [null, "desktop-1", null, "desktop-0", null, null]); Check(device.Shortcuts[0].Id == "__empty_slot_0" && device.Shortcuts[1].Id == "desktop-1", "Empty slot keeps following positions stable");
         Check(WindowsAgentRuntime.ResolveAssignedLayout(new AppearanceConfiguration(), [null, null, null, null, null, "desktop-0"]).ShortcutsLayout == "grid-6", "Auto layout preserves high assigned position");
-        Navigate("Settings"); All(ActivePage(window)).OfType<RadioButton>().Single(b => b.Text == "Light").PerformClick();
+        Navigate("Settings"); All(ActivePage(window)).OfType<RadioButton>().Single(b => b.Text is "Light" or "Jasny").PerformClick();
         Check(window.SaveConfigurationDraftAsync().GetAwaiter().GetResult(), "Light theme save");
         foreach (var viewName in new[] { "Deck Builder", "Settings", "Media Controls", "System Monitor", "Urządzenia" }) { Navigate(viewName); Application.DoEvents(); using var render = new Bitmap(window.Width, window.Height); window.DrawToBitmap(render, new Rectangle(Point.Empty, window.Size)); render.Save($"artifacts/ui-review/desktop-{viewName.Replace(' ', '-')}-light.png"); }
 

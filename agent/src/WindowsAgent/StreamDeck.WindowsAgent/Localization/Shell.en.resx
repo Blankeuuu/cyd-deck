@@ -57,7 +57,7 @@
   <data name="Dark" xml:space="preserve"><value>Dark</value></data>
   <data name="Light" xml:space="preserve"><value>Light</value></data>
   <data name="System" xml:space="preserve"><value>System</value></data>
-  <data name="CustomColor" xml:space="preserve"><value>Custom color…</value></data>
+  <data name="CustomColor" xml:space="preserve"><value>Custom…</value></data>
   <data name="Clock24" xml:space="preserve"><value>24-hour clock</value></data>
   <data name="Brightness" xml:space="preserve"><value>Brightness</value></data>
   <data name="TileTheme" xml:space="preserve"><value>Tile colors</value></data>

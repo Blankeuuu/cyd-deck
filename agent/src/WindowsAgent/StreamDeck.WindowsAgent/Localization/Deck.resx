@@ -120,7 +120,7 @@ Zostanie odpięta od wszystkich jego kafelków. Inne profile pozostaną bez zmia
   <data name="AssignHint" xml:space="preserve"><value>Przypisz „{0}” do: {1}</value></data>
   <data name="EditPrefix" xml:space="preserve"><value>Edytuj </value></data>
   <data name="AssignPrefix" xml:space="preserve"><value>Przypisz </value></data>
-  <data name="LaunchHelp" xml:space="preserve"><value>Wybierz pełną ścieżkę programu lub nazwę .exe. Argumenty są przekazywane osobno.</value></data>
+  <data name="LaunchHelp" xml:space="preserve"><value>Wybierz pełną ścieżkę programu lub samą nazwę .exe (bare .exe name) w katalogu Agent-side. Na ekranie głównym firmware wyświetla pierwszych 6 przypisanych skrótów. Argumenty są przekazywane osobno.</value></data>
   <data name="UrlHelp" xml:space="preserve"><value>Podaj pełny adres HTTP lub HTTPS.</value></data>
   <data name="HotkeyHelp" xml:space="preserve"><value>Podaj kombinację, np. Ctrl+Shift+R lub Win+L.</value></data>
   <data name="ScriptHelp" xml:space="preserve"><value>Podaj pełną lokalną ścieżkę skryptu. Argumenty są opcjonalne.</value></data>

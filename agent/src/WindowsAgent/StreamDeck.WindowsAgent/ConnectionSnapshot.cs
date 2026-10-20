@@ -33,7 +33,7 @@ public sealed partial class AgentState
         var next = connections.Values.LastOrDefault(value => value.Transport == DeviceTransport.Usb)
             ?? connections.Values.LastOrDefault();
         var nextSession = connections.LastOrDefault(pair => ReferenceEquals(pair.Value, next)).Key;
-        if (nextSession != activeSessionId)
+        if (nextSession is not null && nextSession != activeSessionId)
         {
             deviceInfo = null;
             deviceInfoUpdatedAtUtc = null;

@@ -230,9 +230,8 @@ public sealed partial class SettingsWindow
             }
             return Task.CompletedTask;
         });
-        custom.AutoSize = true;
-        custom.MinimumSize = new Size(96, 26);
-        custom.Height = 26;
+        custom.AutoSize = false;
+        custom.Size = new Size(76, 26);
         custom.Margin = new Padding(4, 1, 2, 1);
         custom.AccessibleName = "Custom color";
         custom.Paint += (_, e) => {

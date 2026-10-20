@@ -120,7 +120,7 @@ It will be detached from all tiles in this profile. Other profiles are unchanged
   <data name="AssignHint" xml:space="preserve"><value>Assign “{0}” to: {1}</value></data>
   <data name="EditPrefix" xml:space="preserve"><value>Edit </value></data>
   <data name="AssignPrefix" xml:space="preserve"><value>Assign </value></data>
-  <data name="LaunchHelp" xml:space="preserve"><value>Choose a full executable path or an .exe name. Arguments are passed separately.</value></data>
+  <data name="LaunchHelp" xml:space="preserve"><value>Choose a full executable path or a bare .exe name in the Agent-side catalog; the firmware displays only the first 6 assigned shortcuts on the Home screen. Arguments are passed separately.</value></data>
   <data name="UrlHelp" xml:space="preserve"><value>Enter an absolute HTTP or HTTPS URL.</value></data>
   <data name="HotkeyHelp" xml:space="preserve"><value>Enter keys, e.g. Ctrl+Shift+R or Win+L.</value></data>
   <data name="ScriptHelp" xml:space="preserve"><value>Enter a full local script path. Arguments are optional.</value></data>

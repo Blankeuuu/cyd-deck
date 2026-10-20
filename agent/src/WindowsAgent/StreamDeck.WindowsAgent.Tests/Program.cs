@@ -354,10 +354,10 @@ AssertTrue(!shortcutActionChoices.Any(choice => choice.Contains("PowerShell", St
 AssertTrue(!shortcutActionChoices.Contains(ShortcutActionTypes.LaunchApplication), "shortcut editor hides raw launch action type from display choices");
 AssertEqual(ShortcutActionTypes.LaunchApplication, ShortcutEditorDialog.NormalizeActionChoice(ShortcutEditorDialog.LaunchApplicationChoice), "shortcut editor launch choice maps to supported launch action");
 var launchHints = ShortcutEditorDialog.GetActionFieldHints(ShortcutEditorDialog.LaunchApplicationChoice);
-AssertEqual("Executable", launchHints.TargetLabel, "launch editor labels executable path field");
+AssertTrue(launchHints.TargetLabel is "Executable" or "Aplikacja", "launch editor labels executable path field");
 AssertTrue(launchHints.ArgumentsEnabled, "launch editor has action-specific arguments field");
-AssertContains("Agent-side", launchHints.HelpText, "shortcut editor explains Agent-side catalog");
-AssertContains("first 6", launchHints.HelpText, "shortcut editor explains firmware visible shortcut limit");
+AssertTrue(launchHints.HelpText.Contains("Agent-side") || launchHints.HelpText.Contains("katalog"), "shortcut editor explains Agent-side catalog");
+AssertTrue(launchHints.HelpText.Contains("first 6") || launchHints.HelpText.Contains("pierwszych 6"), "shortcut editor explains firmware visible shortcut limit");
 var urlAction = ShortcutEditorDialog.CreateActionForInputs(ShortcutEditorDialog.OpenUrlChoice, "https://example.com", "--ignored");
 AssertEqual(ShortcutActionTypes.OpenUrl, urlAction.Type, "URL panel creates URL action");
 AssertEqual("https://example.com", urlAction.Url, "URL panel stores URL target");
@@ -370,7 +370,7 @@ var predefinedAction = ShortcutEditorDialog.CreateActionForInputs(ShortcutEditor
 AssertEqual(ShortcutEditorDialog.ToggleMicrophoneAdapterKey, predefinedAction.AdapterKey, "built-in panel maps known choice to adapter key");
 AssertTrue(shortcutActionChoices.All(choice => !choice.Contains("OBS", StringComparison.OrdinalIgnoreCase)), "shortcut editor does not expose redundant app-specific hotkey presets");
 AssertContains("Win+L", ShortcutEditorDialog.GetActionFieldHints(ShortcutEditorDialog.SendHotkeyChoice).HelpText, "hotkey help documents reserved Windows shortcuts");
-AssertEqual("Script", ShortcutEditorDialog.GetActionFieldHints(ShortcutActionTypes.PowerShell).TargetLabel, "legacy PowerShell shortcut types are edited through generic Script UI");
+AssertTrue(ShortcutEditorDialog.GetActionFieldHints(ShortcutActionTypes.PowerShell).TargetLabel is "Script" or "Skrypt", "legacy PowerShell shortcut types are edited through generic Script UI");
 var quotedLaunchAction = ShortcutEditorDialog.CreateActionForInputs(ShortcutEditorDialog.LaunchApplicationChoice, "notepad.exe", "--name \"Two Words\" --flag");
 AssertEqual(3, quotedLaunchAction.Arguments.Count, "quote-aware argument parser preserves argument count");
 AssertEqual("--name", quotedLaunchAction.Arguments[0], "quote-aware argument parser keeps leading option");
@@ -400,7 +400,7 @@ AssertTrue(ShortcutEditorDialog.TryValidateShortcutDraft(new ShortcutDefinition
     }
 }, out var bareLaunchError), "shortcut editor accepts bare executable names before save");
 AssertEqual(string.Empty, bareLaunchError, "bare executable validation does not report an error");
-AssertContains("bare .exe name", launchHints.HelpText, "launch editor explains bare executable policy");
+AssertTrue(launchHints.HelpText.Contains("bare .exe name") || launchHints.HelpText.Contains("samą nazwę .exe"), "launch editor explains bare executable policy");
 AssertTrue(!ShortcutEditorDialog.TryValidateShortcutDraft(new ShortcutDefinition
 {
     Id = "bad-url",
@@ -664,25 +664,25 @@ AssertTrue(ShortcutEditorDialog.GetPrimaryButtonSizeForTests().Height >= 38, "sh
 var previousShortcutEditorContext = SynchronizationContext.Current;
 using (var shortcutEditor = new ShortcutEditorDialog())
 {
-    AssertEqual(new Size(620, 540), shortcutEditor.MinimumSize, "shortcut editor enforces its tested minimum size");
-    AssertEqual("Add shortcut", shortcutEditor.AccessibleName, "shortcut editor exposes an accessible dialog name");
-    AssertContains("Agent-side shortcut", shortcutEditor.AccessibleDescription ?? string.Empty, "shortcut editor describes Agent-side shortcut semantics for assistive tech");
+    AssertEqual(ShortcutEditorDialog.GetMinimumDialogSizeForTests(), shortcutEditor.MinimumSize, "shortcut editor enforces its tested minimum size");
+    AssertTrue(shortcutEditor.AccessibleName is "Add shortcut" or "Dodaj skrót", "shortcut editor exposes an accessible dialog name");
+    AssertTrue((shortcutEditor.AccessibleDescription ?? string.Empty).Contains("Agent-side shortcut") || (shortcutEditor.AccessibleDescription ?? string.Empty).Contains("Skonfiguruj"), "shortcut editor describes Agent-side shortcut semantics for assistive tech");
     var editorControls = FlattenControls(shortcutEditor).ToArray();
     AssertTrue(editorControls.OfType<System.Windows.Forms.TextBox>().All(control => !string.IsNullOrWhiteSpace(control.AccessibleName)), "shortcut editor text inputs have accessible names");
     AssertTrue(editorControls.OfType<System.Windows.Forms.ComboBox>().All(control => !string.IsNullOrWhiteSpace(control.AccessibleName)), "shortcut editor combo inputs have accessible names");
-    AssertTrue(editorControls.OfType<System.Windows.Forms.Button>().Any(button => button.Text == "Save" && button.DialogResult == DialogResult.OK), "shortcut editor keeps Save as the OK action");
-    AssertTrue(editorControls.OfType<System.Windows.Forms.Button>().Any(button => button.Text == "Cancel" && button.DialogResult == DialogResult.Cancel), "shortcut editor keeps Cancel as the cancel action");
-    AssertTrue(ReferenceEquals(shortcutEditor.AcceptButton, editorControls.OfType<System.Windows.Forms.Button>().First(button => button.Text == "Save")), "shortcut editor Enter key activates Save");
-    AssertTrue(ReferenceEquals(shortcutEditor.CancelButton, editorControls.OfType<System.Windows.Forms.Button>().First(button => button.Text == "Cancel")), "shortcut editor Escape key activates Cancel");
-    AssertShortcutEditorLayout(shortcutEditor, new Size(620, 540), "minimum");
-    AssertShortcutEditorLayout(shortcutEditor, new Size(720, 600), "regular");
+    AssertTrue(editorControls.OfType<System.Windows.Forms.Button>().Any(button => (button.Text is "Save" or "Dodaj do szkicu" or "Zapisz") && button.DialogResult == DialogResult.OK), "shortcut editor keeps Save as the OK action");
+    AssertTrue(editorControls.OfType<System.Windows.Forms.Button>().Any(button => (button.Text is "Cancel" or "Anuluj") && button.DialogResult == DialogResult.Cancel), "shortcut editor keeps Cancel as the cancel action");
+    AssertTrue(ReferenceEquals(shortcutEditor.AcceptButton, editorControls.OfType<System.Windows.Forms.Button>().First(button => button.Text is "Save" or "Dodaj do szkicu" or "Zapisz")), "shortcut editor Enter key activates Save");
+    AssertTrue(ReferenceEquals(shortcutEditor.CancelButton, editorControls.OfType<System.Windows.Forms.Button>().First(button => button.Text is "Cancel" or "Anuluj")), "shortcut editor Escape key activates Cancel");
+    AssertShortcutEditorLayout(shortcutEditor, ShortcutEditorDialog.GetMinimumDialogSizeForTests(), "minimum");
+    AssertShortcutEditorLayout(shortcutEditor, new Size(720, 640), "regular");
 }
 using (var hotkeyEditor = new ShortcutEditorDialog(new ShortcutDefinition { Action = new ShortcutActionDefinition { Type = ShortcutActionTypes.Hotkey, Keys = ["CTRL", "SHIFT", "R"] } }))
 {
     var hotkeyControls = FlattenControls(hotkeyEditor).ToArray();
-    var hotkeyTarget = hotkeyControls.OfType<System.Windows.Forms.TextBox>().First(t => t.AccessibleName == "Shortcut target");
+    var hotkeyTarget = hotkeyControls.OfType<System.Windows.Forms.TextBox>().First(t => t.AccessibleName is "Shortcut target" or "Cel skrótu");
     AssertEqual("CTRL+SHIFT+R", hotkeyTarget.Text, "hotkey target is populated from keys");
-    var clearBtn = hotkeyControls.OfType<System.Windows.Forms.Button>().First(b => b.AccessibleName == "Clear hotkey combination");
+    var clearBtn = hotkeyControls.OfType<System.Windows.Forms.Button>().First(b => b.AccessibleName is "Clear hotkey combination" or "Wyczyść kombinację klawiszy" or "Wyczyść skrót");
     hotkeyEditor.ClearHotkey();
     AssertEqual("", hotkeyTarget.Text, "Clear button clears hotkey combination");
 }
@@ -707,8 +707,8 @@ using (var picker = new ShortcutIconPicker("lock", null, null))
     AssertEqual("terminal", picker.IconKey, "picker switches to terminal built-in icon");
 
     // Test failed URL download preserves previous icon state
-    var urlBox = FlattenControls(picker).OfType<TextBox>().Single(t => t.AccessibleName == "Image URL");
-    var loadButton = FlattenControls(picker).OfType<Button>().Single(b => b.Text == "Load preview");
+    var urlBox = FlattenControls(picker).OfType<TextBox>().Single(t => t.AccessibleName is "Image URL" or "Adres URL obrazu");
+    var loadButton = FlattenControls(picker).OfType<Button>().Single(b => b.Text is "Load preview" or "Pobierz podgląd");
     urlBox.Text = "https://invalid-non-existent-domain-test.local/icon.png";
     loadButton.PerformClick();
     while (!loadButton.Enabled) Application.DoEvents();
@@ -1667,16 +1667,16 @@ static void AssertShortcutEditorLayout(ShortcutEditorDialog dialog, Size size, s
     var controls = FlattenControls(dialog).Where(control => control.Visible).ToArray();
     var essentials = new System.Windows.Forms.Control[]
     {
-        controls.Single(control => control.AccessibleName == "Shortcut ID"),
-        controls.Single(control => control.AccessibleName == "Shortcut name"),
-        controls.Single(control => control.AccessibleName == "Shortcut icon"),
-        controls.Single(control => control.AccessibleName == "Shortcut action"),
-        controls.Single(control => control.AccessibleName == "Shortcut target"),
-        controls.Single(control => control.AccessibleName == "Shortcut arguments"),
-        controls.Single(control => control.AccessibleName == "Browse for shortcut target"),
-        controls.Single(control => control.AccessibleName == "Shortcut action help"),
-        controls.OfType<System.Windows.Forms.Button>().Single(button => button.Text == "Save"),
-        controls.OfType<System.Windows.Forms.Button>().Single(button => button.Text == "Cancel")
+        controls.Single(control => control.AccessibleName is "Shortcut ID" or "Identyfikator skrótu"),
+        controls.Single(control => control.AccessibleName is "Shortcut name" or "Nazwa skrótu"),
+        controls.Single(control => control.AccessibleName is "Shortcut icon" or "Ikona skrótu"),
+        controls.Single(control => control.AccessibleName is "Shortcut action" or "Akcja skrótu"),
+        controls.Single(control => control.AccessibleName is "Shortcut target" or "Cel skrótu"),
+        controls.Single(control => control.AccessibleName is "Shortcut arguments" or "Argumenty skrótu"),
+        controls.Single(control => control.AccessibleName is "Browse for shortcut target" or "Wybierz cel skrótu"),
+        controls.Single(control => control.AccessibleName is "Shortcut action help" or "Pomoc akcji skrótu"),
+        controls.OfType<System.Windows.Forms.Button>().Single(button => button.Text is "Save" or "Dodaj do szkicu" or "Zapisz"),
+        controls.OfType<System.Windows.Forms.Button>().Single(button => button.Text is "Cancel" or "Anuluj")
     };
 
     var bounds = essentials.ToDictionary(control => control, control => BoundsInClient(dialog, control));
@@ -2080,8 +2080,10 @@ static async Task TestSaveFailureDoesNotTriggerReconnectAndPreservesDraftAsync()
             var updateStarted = false;
             AssertTrue(!ResolveUpdateDraft(window, DialogResult.Cancel, () => updateStarted = true), "Cancel blocks update continuation");
             AssertTrue(window.IsConfigurationDirtyForTests && !updateStarted, "Cancel preserves draft and does not install");
+            var secondSaveFailed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            SettingsWindow.DialogMessageHookForTests = (title, msg) => { capturedDialogTitle = title; capturedDialogMessage = msg; secondSaveFailed.TrySetResult(); };
             AssertTrue(!ResolveUpdateDraft(window, DialogResult.Yes, () => updateStarted = true), "Save defers installation until persistence succeeds");
-            await Task.Delay(100);
+            await secondSaveFailed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             AssertTrue(!updateStarted && window.IsConfigurationDirtyForTests, "Failed save preserves draft and blocks installation");
         }
         finally
@@ -2163,7 +2165,7 @@ static bool ResolveUpdateDraft(SettingsWindow window, DialogResult choice, Actio
     using var timer = new System.Windows.Forms.Timer { Interval = 30 };
     timer.Tick += (_, _) =>
     {
-        var dialog = Application.OpenForms.Cast<Form>().FirstOrDefault(form => form.Text == "Unsaved changes");
+        var dialog = Application.OpenForms.Cast<Form>().FirstOrDefault(form => form.Text == "Unsaved changes" || form.Name == "UnsavedChangesDialog");
         if (dialog is null) return;
         timer.Stop();
         dialog.DialogResult = choice;
