@@ -94,6 +94,15 @@ public sealed class UsbDeviceRuntime(
         return true;
     }
 
+    public async Task<bool> SendConfigurationAsync(string shortcuts, string settings, CancellationToken token)
+    {
+        ActiveUsbSink? sink;
+        lock (activeGate) sink = activeSink;
+        if (sink is null) return false;
+        await sink.SendTextAsync(shortcuts, token).ConfigureAwait(false);
+        await sink.SendTextAsync(settings, token).ConfigureAwait(false);
+        lock (activeGate) return ReferenceEquals(sink, activeSink);
+    }
     private async Task RunReconnectLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -115,7 +124,7 @@ public sealed class UsbDeviceRuntime(
                             ? new PrefixedUsbDuplexStream(stream, probeResult.Leftover)
                             : stream;
 
-                        await RunConnectedStreamAsync(effectiveStream, probeResult.Hello, connectedSink => sink = connectedSink, cancellationToken).ConfigureAwait(false);
+                        await RunConnectedStreamAsync(effectiveStream, probeResult.Hello, port, connectedSink => sink = connectedSink, cancellationToken).ConfigureAwait(false);
                         break;
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -149,9 +158,9 @@ public sealed class UsbDeviceRuntime(
                 if (sink is not null)
                 {
                     ClearActiveSink(sink);
-                    if (sink.DeviceId is not null && string.Equals(state.Snapshot().RemoteAddress, "USB", StringComparison.Ordinal))
+                    if (sink.DeviceId is not null)
                     {
-                        state.MarkDeviceDisconnected(sink.DeviceId);
+                        state.MarkDeviceDisconnected(sink.DeviceId, sink.SessionId);
                     }
                 }
             }
@@ -159,7 +168,7 @@ public sealed class UsbDeviceRuntime(
             await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
         }
 
-        async Task RunConnectedStreamAsync(IUsbDuplexStream stream, string helloFrame, Action<ActiveUsbSink> setCurrentSink, CancellationToken cancellationToken)
+        async Task RunConnectedStreamAsync(IUsbDuplexStream stream, string helloFrame, string port, Action<ActiveUsbSink> setCurrentSink, CancellationToken cancellationToken)
         {
                 if (waitingForUsbPortLogged)
                 {
@@ -167,9 +176,9 @@ public sealed class UsbDeviceRuntime(
                     waitingForUsbPortLogged = false;
                 }
                 UsbLineProtocolTransport? transport = null;
-                var connectedSink = new ActiveUsbSink(state, coverCacheDirectory, message => transport!.SendFrameAsync(message, cancellationToken), SetActiveSink);
+                var connectedSink = new ActiveUsbSink(state, coverCacheDirectory, message => transport!.SendFrameAsync(message, cancellationToken), SetActiveSink, port, (message, token) => transport!.SendFrameAsync(message, token));
                 setCurrentSink(connectedSink);
-                var session = new DeviceProtocolSession(dispatcher, pairingService, connectedSink, null, "USB", appearance, shortcuts, HandleDeviceInfoAsync, initialAudioProvider, shortcutsReportHandler, shortcutsProvider, appearanceProvider, initialMediaSender, connectedSink.SendRequestedCoverAsync);
+                var session = new DeviceProtocolSession(dispatcher, pairingService, connectedSink, null, "USB", appearance, shortcuts, (info, token) => { state.UpdateDeviceInfoForSession(connectedSink.SessionId, info); return ValueTask.CompletedTask; }, initialAudioProvider, shortcutsReportHandler, shortcutsProvider, appearanceProvider, initialMediaSender, connectedSink.SendRequestedCoverAsync);
                 transport = new UsbLineProtocolTransport(stream, session, connectedSink);
                 connectedSink.TrackIncoming(helloFrame);
                 await session.HandleTextMessageAsync(helloFrame, cancellationToken).ConfigureAwait(false);
@@ -326,12 +335,6 @@ public sealed class UsbDeviceRuntime(
             && !string.IsNullOrWhiteSpace(hello.DeviceId);
     }
 
-    private ValueTask HandleDeviceInfoAsync(DeviceInfoMessage info, CancellationToken cancellationToken)
-    {
-        state.UpdateDeviceInfo(info);
-        return ValueTask.CompletedTask;
-    }
-
     private void SetActiveSink(ActiveUsbSink sink)
     {
         lock (activeGate) activeSink = sink;
@@ -362,8 +365,10 @@ public sealed class UsbDeviceRuntime(
         AgentState state,
         string coverCacheDirectory,
         Func<string, ValueTask> send,
-        Action<ActiveUsbSink> setActiveSink) : IProtocolSink, IUsbIncomingObserver
+        Action<ActiveUsbSink> setActiveSink, string? activeUsbPort = null,
+        Func<string, CancellationToken, ValueTask>? sendWithCancellation = null) : IProtocolSink, IUsbIncomingObserver
     {
+        private readonly InitialConfigurationTracker initialSync = new(state);
         private readonly UsbCoverSender coverSender = new(coverCacheDirectory);
         private readonly object gate = new();
         private HelloMessage? hello;
@@ -374,11 +379,13 @@ public sealed class UsbDeviceRuntime(
         private string? currentCoverId;
         private bool requestsCachedCovers;
 
+        public string SessionId { get; } = Guid.NewGuid().ToString("N");
         public string? DeviceId => hello?.DeviceId;
 
         public async ValueTask SendTextAsync(string message, CancellationToken cancellationToken = default)
         {
-            await send(message).ConfigureAwait(false);
+            if (ProtocolSerializer.Parse(message).Envelope?.Type == ProtocolConstants.MessageTypes.ShortcutsUpdate) MarkAuthorizedConnection();
+            await initialSync.SendAsync(message, () => sendWithCancellation is null ? send(message) : sendWithCancellation(message, cancellationToken), state.IsActiveDeviceSession(SessionId)).ConfigureAwait(false);
             TrackOutgoing(message);
         }
 
@@ -452,35 +459,25 @@ public sealed class UsbDeviceRuntime(
 
         private void TrackOutgoing(string message)
         {
-            HelloMessage? currentHello;
-            lock (gate) currentHello = hello;
-            if (currentHello is null) return;
-            var parseResult = Protocol.ProtocolSerializer.Parse(message);
-            if (parseResult.IsSuccess && parseResult.Envelope?.Type == Protocol.ProtocolConstants.MessageTypes.ConnectionState)
-            {
-                var connection = Protocol.ProtocolSerializer.DeserializeData<ConnectionStateMessage>(parseResult.Envelope);
-                if (string.Equals(connection.State, "connected", StringComparison.Ordinal))
-                {
-                    var becameConnected = false;
-                    lock (gate)
-                    {
-                        if (!connected)
-                        {
-                            connected = true;
-                            becameConnected = true;
-                        }
-                    }
-
-                    if (becameConnected)
-                    {
-                        setActiveSink(this);
-                        state.MarkDeviceConnected(currentHello.DeviceId, currentHello.Name, "USB");
-                        if (currentHello.DeviceInfo is not null) state.UpdateDeviceInfo(currentHello.DeviceInfo);
-                    }
-                }
-            }
+            var parsed = ProtocolSerializer.Parse(message);
+            if (parsed.IsSuccess && parsed.Envelope?.Type == ProtocolConstants.MessageTypes.ConnectionState
+                && ProtocolSerializer.DeserializeData<ConnectionStateMessage>(parsed.Envelope).State == "connected")
+                MarkAuthorizedConnection();
         }
 
+        private void MarkAuthorizedConnection()
+        {
+            HelloMessage? currentHello;
+            lock (gate)
+            {
+                currentHello = hello;
+                if (currentHello is null || connected) return;
+                connected = true;
+            }
+            setActiveSink(this);
+            state.MarkDeviceConnected(currentHello.DeviceId, currentHello.Name, "USB", DeviceTransport.Usb, activeUsbPort, SessionId);
+            if (currentHello.DeviceInfo is not null) state.UpdateDeviceInfoForSession(SessionId, currentHello.DeviceInfo);
+        }
         private static string? TryReadMediaCoverId(string message)
         {
             var parseResult = Protocol.ProtocolSerializer.Parse(message);
