@@ -19,14 +19,12 @@ public sealed partial class SettingsWindow
     private bool isCheckingUpdates;
     private bool isDownloadingUpdate;
 
-    private Control CreateUpdatesPage()
+    private Control CreateUpdatesView()
     {
         var snapshot = state.Snapshot();
         var isConnected = string.Equals(snapshot.HostStatus, "connected", StringComparison.OrdinalIgnoreCase);
         var fwVersion = isConnected ? snapshot.DeviceInfo?.FirmwareVersion : null;
         updateDeviceIp = isConnected ? snapshot.DeviceInfo?.Wifi.Ip : null;
-
-        var panel = CreatePage("Updates");
 
         var mainLayout = new TableLayoutPanel
         {
@@ -74,7 +72,7 @@ public sealed partial class SettingsWindow
         var agentActions = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 44,
+            Height = 48,
             FlowDirection = FlowDirection.LeftToRight,
             BackColor = Surface,
             Margin = Padding.Empty
@@ -126,7 +124,7 @@ public sealed partial class SettingsWindow
         var fwActions = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 44,
+            Height = 48,
             FlowDirection = FlowDirection.LeftToRight,
             BackColor = Surface,
             Margin = Padding.Empty
@@ -165,7 +163,13 @@ public sealed partial class SettingsWindow
         firmwareCard.Controls.Add(fwActions);
         mainLayout.Controls.Add(firmwareCard, 0, 1);
 
-        AddPageBodyControl(panel, mainLayout);
+        return mainLayout;
+    }
+
+    private Control CreateUpdatesPage()
+    {
+        var panel = CreatePage("Updates");
+        AddPageBodyControl(panel, CreateUpdatesView());
         return panel;
     }
 

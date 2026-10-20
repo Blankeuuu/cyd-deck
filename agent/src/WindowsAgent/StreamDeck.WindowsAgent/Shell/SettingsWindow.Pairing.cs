@@ -13,9 +13,8 @@ public sealed partial class SettingsWindow
     private Label? pairingConnectionBadge;
     private bool isPairingRefreshing;
 
-    private Control CreateDesktopPairingPage()
+    private Control CreatePairingView()
     {
-        var page = CreatePage("Pairing");
         var grid = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -245,11 +244,9 @@ public sealed partial class SettingsWindow
         grid.Controls.Add(leftColumn, 0, 0);
         grid.Controls.Add(rightColumn, 1, 0);
 
-        AddPageBodyControl(page, grid);
-
         refreshPairingLists = () =>
         {
-            if (!IsDisposed && currentPage == "Pairing")
+            if (!IsDisposed && (currentPage == "Pairing" || (currentPage == "Device" && string.Equals(activeDeviceSubTab, "Pairing", StringComparison.OrdinalIgnoreCase))))
             {
                 _ = RefreshPairingViewAsync();
             }
@@ -258,6 +255,13 @@ public sealed partial class SettingsWindow
         UpdateConnectionBadge();
         _ = RefreshPairingViewAsync();
 
+        return grid;
+    }
+
+    private Control CreateDesktopPairingPage()
+    {
+        var page = CreatePage("Pairing");
+        AddPageBodyControl(page, CreatePairingView());
         return page;
     }
 

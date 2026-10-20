@@ -166,6 +166,11 @@ public sealed partial class SettingsWindow : Form
     private bool deviceTelemetryVisible;
     private string? updateDeviceIp;
     private Action? refreshPairingLists;
+    private Action? refreshLogsView;
+    private string activeDeviceSubTab = "Pairing";
+    private readonly Dictionary<string, RoundedSegment> deviceSubTabButtons = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Control> deviceSubTabPanels = new(StringComparer.OrdinalIgnoreCase);
+    private SegmentedGroup? deviceSubTabSegments;
 
     public SettingsWindow(
         AgentState state,
@@ -298,7 +303,9 @@ public sealed partial class SettingsWindow : Form
         button.Paint += (_, e) =>
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            var selected = string.Equals(currentPage, page, StringComparison.Ordinal);
+            var isCurrentDevice = currentPage is "Device" or "Pairing" or "Updates" or "Logs" or "Overview";
+            var selected = string.Equals(currentPage, page, StringComparison.Ordinal)
+                || ((page is "Device" or "Pairing") && isCurrentDevice);
             var bg = selected
                 ? (clientLightTheme ? Color.FromArgb(226, 234, 246) : Color.FromArgb(34, 40, 52))
                 : button.BackColor;
@@ -341,11 +348,11 @@ public sealed partial class SettingsWindow : Form
     }
 
     private static bool IsCacheableDesktopPage(string page) =>
-        page is "Shortcuts" or "Appearance" or "Media" or "Monitor" or "Pairing";
+        page is "Shortcuts" or "Appearance" or "Media" or "Monitor" or "Pairing" or "Device" or "Updates" or "Logs" or "Overview";
 
     internal void InvalidatePageCache()
     {
-        foreach (var cached in pageCache.Values.ToArray())
+        foreach (var cached in pageCache.Values.Distinct().ToArray())
         {
             if (contentPanel is { IsDisposed: false } && contentPanel.Controls.Contains(cached))
             {
@@ -356,6 +363,9 @@ public sealed partial class SettingsWindow : Form
         pageCache.Clear();
         pageRefreshCache.Clear();
         pageToolbarCache.Clear();
+        deviceSubTabPanels.Clear();
+        deviceSubTabButtons.Clear();
+        deviceSubTabSegments = null;
         unifiedSave = null;
         unifiedConnection = null;
         unifiedFeedback = null;
@@ -365,9 +375,15 @@ public sealed partial class SettingsWindow : Form
     internal void ShowPage(string page)
     {
         currentPage = page;
+        var activeNavKey = page switch
+        {
+            "Device" or "Pairing" or "Updates" or "Logs" or "Overview" => "Device",
+            _ => page
+        };
         foreach (var (name, button) in navButtons)
         {
-            var selected = string.Equals(name, page, StringComparison.Ordinal);
+            var selected = string.Equals(name, activeNavKey, StringComparison.Ordinal)
+                || (activeNavKey == "Device" && name is "Device" or "Pairing");
             button.BackColor = selected ? SurfaceAlt : Surface;
             button.ForeColor = selected ? TextPrimary : TextMuted;
             button.Font = new Font(Font.FontFamily, 9.75F, selected ? FontStyle.Bold : FontStyle.Regular);
@@ -378,6 +394,9 @@ public sealed partial class SettingsWindow : Form
 
         desktopViewLifetime ??= new();
 
+        var isDeviceRoute = page is "Device" or "Pairing" or "Updates" or "Logs" or "Overview";
+        var cacheKey = isDeviceRoute ? "Device" : page;
+
         if (IsCacheableDesktopPage(page))
         {
             foreach (Control control in contentPanel.Controls.Cast<Control>().ToArray())
@@ -387,16 +406,25 @@ public sealed partial class SettingsWindow : Form
                     contentPanel.Controls.Remove(control);
                     control.Dispose();
                 }
-                else if (control.Visible && (!pageCache.TryGetValue(page, out var target) || !ReferenceEquals(control, target)))
+                else if (control.Visible && (!pageCache.TryGetValue(cacheKey, out var target) || !ReferenceEquals(control, target)))
                 {
                     control.Visible = false;
                 }
             }
 
-            if (pageCache.TryGetValue(page, out var cachedPage) && !cachedPage.IsDisposed)
+            var targetSubTab = page switch
             {
-                pageRefreshCache.TryGetValue(page, out desktopRefresh);
-                if (pageToolbarCache.TryGetValue(page, out var toolbarRefs))
+                "Pairing" => "Pairing",
+                "Updates" => "Updates",
+                "Logs" => "Logs",
+                "Overview" => "Overview",
+                _ => null
+            };
+
+            if (pageCache.TryGetValue(cacheKey, out var cachedPage) && !cachedPage.IsDisposed)
+            {
+                pageRefreshCache.TryGetValue(cacheKey, out desktopRefresh);
+                if (pageToolbarCache.TryGetValue(cacheKey, out var toolbarRefs))
                 {
                     unifiedSave = toolbarRefs.Save;
                     unifiedConnection = toolbarRefs.Connection;
@@ -406,35 +434,42 @@ public sealed partial class SettingsWindow : Form
                 UpdateSidebarConnectionPill();
                 if (!cachedPage.Visible) cachedPage.Visible = true;
                 cachedPage.BringToFront();
-                desktopRefresh?.Invoke();
-                if (string.Equals(page, "Pairing", StringComparison.Ordinal))
+
+                if (isDeviceRoute)
                 {
-                    refreshPairingLists?.Invoke();
-                    UpdateConnectionBadge();
+                    SelectDeviceSubTab(targetSubTab ?? activeDeviceSubTab);
                 }
+
+                desktopRefresh?.Invoke();
                 FitDesktopRows(contentPanel);
                 UpdateShortcutImportRefreshTimer(page);
                 return;
             }
 
             desktopRefresh = null;
-            var created = page switch
+            var created = cacheKey switch
             {
                 "Shortcuts" => CreateDesktopDeckPage(),
                 "Appearance" => CreateDesktopSettingsPage(),
                 "Media" => CreateDesktopMediaPage(),
                 "Monitor" => CreateDesktopMonitorPage(),
-                "Pairing" => CreatePairingPage(),
+                "Device" => CreateDesktopDevicePage(),
                 _ => CreateDesktopDeckPage()
             };
 
             WrapDesktopInputs(created);
             FitDesktopRows(created);
-            pageCache[page] = created;
-            pageRefreshCache[page] = desktopRefresh;
-            pageToolbarCache[page] = (unifiedSave, unifiedConnection, unifiedFeedback, unifiedProfilePicker);
+            pageCache[cacheKey] = created;
+            pageRefreshCache[cacheKey] = desktopRefresh;
+            pageToolbarCache[cacheKey] = (unifiedSave, unifiedConnection, unifiedFeedback, unifiedProfilePicker);
             contentPanel.Controls.Add(created);
             created.BringToFront();
+
+            if (isDeviceRoute)
+            {
+                SelectDeviceSubTab(targetSubTab ?? activeDeviceSubTab);
+            }
+
             UpdateSidebarConnectionPill();
             FitDesktopRows(contentPanel);
             UpdateShortcutImportRefreshTimer(page);
@@ -1489,9 +1524,9 @@ public sealed partial class SettingsWindow : Form
         return pendingAppearance ?? LoadAppearanceConfiguration();
     }
 
-    private Control CreateLogsPage()
+    private Control CreateLogsView()
     {
-        var panel = CreatePage("Logs");
+        var view = new Panel { Dock = DockStyle.Fill, BackColor = Background };
         var recentLines = AgentDiagnosticLog.ReadRecentLines().ToList();
         var text = new TextBox
         {
@@ -1554,9 +1589,16 @@ public sealed partial class SettingsWindow : Form
 
         void RefreshFilteredLogs()
         {
+            if (text.IsDisposed) return;
             var level = errorsOnly.Checked ? "Errors only" : (levelCombo.SelectedItem?.ToString() ?? "All levels");
             text.Lines = FilterDiagnosticLines(recentLines, search.Text, level).ToArray();
         }
+
+        refreshLogsView = () =>
+        {
+            recentLines = AgentDiagnosticLog.ReadRecentLines().ToList();
+            RefreshFilteredLogs();
+        };
 
         search.TextChanged += (_, _) => RefreshFilteredLogs();
         errorsOnly.CheckedChanged += (_, _) =>
@@ -1578,12 +1620,8 @@ public sealed partial class SettingsWindow : Form
         };
         RefreshFilteredLogs();
 
-        var content = new Panel { Dock = DockStyle.Fill, BackColor = Background };
-        content.Controls.Add(text);
-        content.Controls.Add(filterBar);
-        AddPageBodyControl(panel, content);
-        AddPageFooter(panel, CreateActionsBar(
-            ("Copy logs", () => Clipboard.SetText(text.Text)),
+        var actionsBar = CreateActionsBar(
+            ("Copy logs", () => { if (!string.IsNullOrEmpty(text.Text)) Clipboard.SetText(text.Text); }),
             ("Export logs…", () => ExportLogsToFile(text.Text)),
             ("Open log folder", OpenLogFolder),
             ("Clear view", () =>
@@ -1591,7 +1629,19 @@ public sealed partial class SettingsWindow : Form
                 AgentDiagnosticLog.ClearView();
                 recentLines.Clear();
                 RefreshFilteredLogs();
-            })));
+            }));
+        actionsBar.Dock = DockStyle.Bottom;
+
+        view.Controls.Add(text);
+        view.Controls.Add(filterBar);
+        view.Controls.Add(actionsBar);
+        return view;
+    }
+
+    private Control CreateLogsPage()
+    {
+        var panel = CreatePage("Logs");
+        AddPageBodyControl(panel, CreateLogsView());
         return panel;
     }
 
@@ -3594,12 +3644,24 @@ public sealed partial class SettingsWindow : Form
 
     private void HandlePairingChanged(object? sender, EventArgs args)
     {
-        if (IsDisposed || !IsHandleCreated || currentPage != "Pairing") return;
+        var isPairingActive = currentPage == "Pairing" || (currentPage == "Device" && string.Equals(activeDeviceSubTab, "Pairing", StringComparison.OrdinalIgnoreCase));
+        if (IsDisposed || !IsHandleCreated || !isPairingActive) return;
         if (InvokeRequired)
         {
-            BeginInvoke((Action)(() => { if (currentPage == "Pairing") refreshPairingLists?.Invoke(); }));
+            BeginInvoke((Action)(() => {
+                var active = currentPage == "Pairing" || (currentPage == "Device" && string.Equals(activeDeviceSubTab, "Pairing", StringComparison.OrdinalIgnoreCase));
+                if (active)
+                {
+                    refreshPairingLists?.Invoke();
+                    UpdateConnectionBadge();
+                }
+            }));
         }
-        else refreshPairingLists?.Invoke();
+        else
+        {
+            refreshPairingLists?.Invoke();
+            UpdateConnectionBadge();
+        }
     }
 
     private static string FormatRemoteHost(string? remoteAddress)

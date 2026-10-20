@@ -23,21 +23,12 @@ public sealed partial class SettingsWindow
         var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12, 20, 12, 16), BackColor = Surface };
         var brand = new Label { Text = "CYD-DECK", Dock = DockStyle.Top, Height = 56, Font = new Font(Font.FontFamily, 17, FontStyle.Bold), ForeColor = TextPrimary };
         var nav = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(0, 8, 0, 0), Margin = Padding.Empty };
-        foreach (var name in new[] { "Shortcuts", "Media", "Monitor", "Appearance", "Pairing" }) {
+        foreach (var name in new[] { "Shortcuts", "Media", "Monitor", "Appearance", "Device" }) {
             var button = CreateNavButton(name); button.AccessibleName = DisplayPageName(name); navButtons[name] = button; nav.Controls.Add(button);
         }
-        var footer = new Panel { Dock = DockStyle.Bottom, Height = 74, Margin = Padding.Empty };
-        var tools = CompactButton(T("Tools"), () => {
-            if (desktopToolsMenu is null || desktopToolsMenu.IsDisposed) {
-                desktopToolsMenu = new ContextMenuStrip { BackColor = Surface, ForeColor = TextPrimary };
-                foreach (var name in new[] { "Device", "Pairing", "Updates", "Logs" }) desktopToolsMenu.Items.Add(DisplayPageName(name), null, (_, _) => ShowPage(name));
-            }
-            desktopToolsMenu.BackColor = Surface; desktopToolsMenu.ForeColor = TextPrimary;
-            desktopToolsMenu.Show(footer, new Point(0, 0)); return Task.CompletedTask;
-        });
-        tools.AccessibleName = "Device & Tools";
-        tools.Dock = DockStyle.Top; tools.Width = 180; tools.Margin = Padding.Empty;
-        footer.Controls.Add(new Label { Text = "Windows Agent · " + typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3), Dock = DockStyle.Bottom, Height = 26, ForeColor = TextMuted, Font = new Font(Font.FontFamily, 10) }); footer.Controls.Add(tools);
+        navButtons["Pairing"] = navButtons["Device"];
+        var footer = new Panel { Dock = DockStyle.Bottom, Height = 40, Margin = Padding.Empty };
+        footer.Controls.Add(new Label { Text = "Windows Agent · " + typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = TextMuted, Font = new Font(Font.FontFamily, 10) });
         panel.Controls.Add(nav); panel.Controls.Add(brand); panel.Controls.Add(footer);
         return panel;
     }
@@ -335,5 +326,259 @@ public sealed partial class SettingsWindow
         FinishCard(hardware);
 
         grid.Controls.Add(windows, 0, 0); grid.Controls.Add(cyd, 1, 0); grid.Controls.Add(hardware, 2, 0); AddPageBodyControl(page, grid); return page;
+    }
+
+    private static string SubTabTitle(string tab) => tab switch
+    {
+        "Overview" => UiText.Language == "pl" ? "Przegląd" : "Overview",
+        "Pairing" => UiText.Language == "pl" ? "Połączenie" : "Connection",
+        "Updates" => UiText.Language == "pl" ? "Aktualizacje" : "Updates",
+        "Logs" => UiText.Language == "pl" ? "Diagnostyka" : "Diagnostics",
+        _ => tab
+    };
+
+    internal void SelectDeviceSubTab(string targetTab)
+    {
+        var normalized = targetTab switch
+        {
+            "Pairing" or "Połączenie" => "Pairing",
+            "Updates" or "Aktualizacje" => "Updates",
+            "Logs" or "Diagnostyka" => "Logs",
+            _ => "Overview"
+        };
+        var tabChanged = !string.Equals(activeDeviceSubTab, normalized, StringComparison.OrdinalIgnoreCase);
+        activeDeviceSubTab = normalized;
+        currentPage = normalized switch
+        {
+            "Pairing" => "Pairing",
+            "Updates" => "Updates",
+            "Logs" => "Logs",
+            _ => "Device"
+        };
+
+        if (deviceSubTabButtons.TryGetValue(normalized, out var segmentButton))
+        {
+            if (!segmentButton.Checked)
+            {
+                segmentButton.Checked = true;
+            }
+        }
+
+        foreach (var (name, panel) in deviceSubTabPanels)
+        {
+            var isTarget = string.Equals(name, normalized, StringComparison.OrdinalIgnoreCase);
+            if (panel.Visible != isTarget)
+            {
+                panel.Visible = isTarget;
+            }
+            if (isTarget)
+            {
+                panel.BringToFront();
+            }
+        }
+
+        if (true)
+        {
+            switch (normalized)
+            {
+                case "Pairing":
+                    refreshPairingLists?.Invoke();
+                    UpdateConnectionBadge();
+                    break;
+                case "Overview":
+                    refreshOverviewWidgets?.Invoke();
+                    break;
+                case "Updates":
+                    if (updateStatusLabel is { IsDisposed: false } && !isCheckingUpdates && !isDownloadingUpdate)
+                    {
+                        updateStatusLabel.Text = GetInitialUpdateStatusText();
+                    }
+                    break;
+                case "Logs":
+                    refreshLogsView?.Invoke();
+                    break;
+            }
+        }
+    }
+
+    private Control CreateDeviceOverviewView()
+    {
+        var container = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Background
+        };
+        container.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        container.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        container.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+
+        var card = DesktopCard(UiText.Language == "pl" ? "Informacje o urządzeniu" : "Device telemetry", "Device telemetry");
+
+        var values = new ListView
+        {
+            Dock = DockStyle.Fill,
+            View = View.Details,
+            FullRowSelect = true,
+            BackColor = Surface,
+            ForeColor = TextPrimary,
+            BorderStyle = BorderStyle.None,
+            HeaderStyle = ColumnHeaderStyle.None,
+            Margin = Padding.Empty,
+            AccessibleName = "Device Properties"
+        };
+        values.Columns.Add("Property", 220);
+        values.Columns.Add("Value", 520);
+
+        void Refresh()
+        {
+            if (values.IsDisposed) return;
+            values.BeginUpdate();
+            values.Items.Clear();
+            var snapshot = state.Snapshot();
+            var redundant = new HashSet<string> { "Connection headline", "Connection detail", "Status", "Agent service", "Remote IP", "Remote endpoint", "Agent port", "Dashboard port", "Last seen" };
+            foreach (var (label, value) in CreateLiveInfoValues("Device", snapshot))
+            {
+                if (redundant.Contains(label) || (label == "Telemetry" && snapshot.DeviceInfo is not null && snapshot.HostStatus == "connected")) continue;
+                values.Items.Add(new ListViewItem([label, value]));
+            }
+            values.EndUpdate();
+        }
+
+        refreshOverviewWidgets = Refresh;
+        Refresh();
+
+        card.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        card.Controls.Add(values, 0, card.RowCount++);
+        FinishCard(card);
+        container.Controls.Add(card, 0, 0);
+
+        var actions = CreateDeviceActionsBar(
+            !string.IsNullOrWhiteSpace(state.Snapshot().DeviceId),
+            state.Snapshot().HostStatus == "connected",
+            ("Restart", RestartDeviceAsync),
+            ("Factory reset", FactoryResetDeviceAsync),
+            ("Forget device", ForgetDeviceAsync));
+        actions.Dock = DockStyle.Fill;
+        actions.Margin = Padding.Empty;
+        container.Controls.Add(actions, 0, 1);
+
+        return container;
+    }
+
+    private Control CreateDesktopDevicePage()
+    {
+        var page = CreatePage("Device");
+
+        deviceSubTabButtons.Clear();
+        deviceSubTabPanels.Clear();
+
+        var tabsContainer = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Background
+        };
+        tabsContainer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        tabsContainer.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        tabsContainer.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+        var subTabsGroup = new SegmentedGroup
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 4,
+            RowCount = 1,
+            Margin = new Padding(6, 0, 6, 6)
+        };
+        for (var i = 0; i < 4; i++)
+        {
+            subTabsGroup.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
+        }
+
+        var tabDefinitions = new (string Key, string Label)[]
+        {
+            ("Overview", SubTabTitle("Overview")),
+            ("Pairing", SubTabTitle("Pairing")),
+            ("Updates", SubTabTitle("Updates")),
+            ("Logs", SubTabTitle("Logs"))
+        };
+
+        foreach (var (key, label) in tabDefinitions)
+        {
+            var segment = new RoundedSegment
+            {
+                Appearance = Appearance.Button,
+                Text = label,
+                AccessibleName = label,
+                Checked = string.Equals(activeDeviceSubTab, key, StringComparison.OrdinalIgnoreCase),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(1, 0, 1, 0),
+                ForeColor = TextPrimary,
+                BackColor = SurfaceAlt,
+                Font = new Font(Font.FontFamily, 9.5f)
+            };
+            segment.FlatAppearance.BorderColor = Border;
+            segment.FlatAppearance.CheckedBackColor = clientLightTheme ? Color.FromArgb(216, 232, 252) : Color.FromArgb(42, 57, 76);
+            segment.CheckedChanged += (_, _) =>
+            {
+                if (segment.Checked)
+                {
+                    SelectDeviceSubTab(key);
+                }
+            };
+            deviceSubTabButtons[key] = segment;
+            subTabsGroup.Controls.Add(segment);
+        }
+
+        deviceSubTabSegments = subTabsGroup;
+        tabsContainer.Controls.Add(subTabsGroup, 0, 0);
+
+        var contentHost = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Background
+        };
+
+        var overviewView = CreateDeviceOverviewView();
+        var pairingView = CreatePairingView();
+        var updatesView = CreateUpdatesView();
+        var logsView = CreateLogsView();
+
+        overviewView.Dock = DockStyle.Fill;
+        pairingView.Dock = DockStyle.Fill;
+        updatesView.Dock = DockStyle.Fill;
+        logsView.Dock = DockStyle.Fill;
+
+        deviceSubTabPanels["Overview"] = overviewView;
+        deviceSubTabPanels["Pairing"] = pairingView;
+        deviceSubTabPanels["Updates"] = updatesView;
+        deviceSubTabPanels["Logs"] = logsView;
+
+        overviewView.Visible = false;
+        pairingView.Visible = false;
+        updatesView.Visible = false;
+        logsView.Visible = false;
+
+        contentHost.Controls.Add(overviewView);
+        contentHost.Controls.Add(pairingView);
+        contentHost.Controls.Add(updatesView);
+        contentHost.Controls.Add(logsView);
+
+        tabsContainer.Controls.Add(contentHost, 0, 1);
+        AddPageBodyControl(page, tabsContainer);
+
+        SelectDeviceSubTab(activeDeviceSubTab ?? "Pairing");
+
+        return page;
     }
 }
