@@ -38,7 +38,7 @@ public sealed partial class SettingsWindow
     private sealed class ArtworkView : Control
     {
         internal Image? Artwork;
-        internal ArtworkView() { DoubleBuffered = true; ResizeRedraw = true; AccessibleName = "Album artwork"; }
+        internal ArtworkView() { DoubleBuffered = true; ResizeRedraw = true; AccessibleName = UiText.GetOrDefault("Media.ArtworkAccessible", "Okładka albumu"); }
         protected override void OnPaint(PaintEventArgs e) {
             base.OnPaint(e); var side = Math.Min(Width, Height) - 4; if (side <= 0) return; var box = new Rectangle((Width - side) / 2, (Height - side) / 2, side, side); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using var path = CreateRoundedRectPath(box, 16); var saved = e.Graphics.Save(); e.Graphics.SetClip(path);
@@ -65,7 +65,7 @@ public sealed partial class SettingsWindow
         left.RowStyles.Add(new RowStyle(SizeType.Absolute, 164));
         left.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        var now = DesktopCard("Odtwarzacz multimediów (Now Playing)");
+        var now = DesktopCard(UiText.GetOrDefault("Media.CardTitle", "Odtwarzacz multimediów (Now Playing)"));
         var player = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
         player.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 156));
         player.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -74,19 +74,19 @@ public sealed partial class SettingsWindow
 
         var details = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(12, 0, 0, 0) };
         foreach (var height in new[] { 62, 32, 28, 46, 64 }) details.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
-        var title = new Label { Dock = DockStyle.Fill, Text = "Gotowy do odtwarzania", AutoEllipsis = true, Font = new Font(Font.FontFamily, 16, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
+        var title = new Label { Dock = DockStyle.Fill, Text = UiText.GetOrDefault("Media.ReadyToPlay", "Gotowy do odtwarzania"), AutoEllipsis = true, Font = new Font(Font.FontFamily, 16, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
         var artist = new Label { Dock = DockStyle.Fill, ForeColor = TextMuted, AutoEllipsis = true, Font = new Font(Font.FontFamily, 11) };
         var status = new Label { Dock = DockStyle.Fill, ForeColor = TextMuted, AutoEllipsis = true };
-        var progress = new DarkProgressBar { Dock = DockStyle.Top, Height = 6, Maximum = 1000, AccessibleName = "Track progress" };
+        var progress = new DarkProgressBar { Dock = DockStyle.Top, Height = 6, Maximum = 1000, AccessibleName = UiText.GetOrDefault("Media.TrackProgress", "Postęp utworu") };
         var elapsed = new Label { Dock = DockStyle.Bottom, Height = 24, ForeColor = TextMuted, AutoEllipsis = true };
         var timeline = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 10, 0, 0) };
         timeline.Controls.Add(progress);
         timeline.Controls.Add(elapsed);
 
         var controls = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty, Padding = new Padding(0, 4, 0, 0) };
-        var previous = TransportButton("prev", "Poprzedni utwór", async () => await runtime.ExecuteHostMediaCommandAsync(MediaCommand.Previous));
-        var play = TransportButton("play", "Odtwórz / Wstrzymaj", async () => await runtime.ExecuteHostMediaCommandAsync(MediaCommand.PlayPause), true);
-        var next = TransportButton("next", "Następny utwór", async () => await runtime.ExecuteHostMediaCommandAsync(MediaCommand.Next));
+        var previous = TransportButton("prev", UiText.GetOrDefault("Media.Previous", "Poprzedni utwór"), async () => await runtime.ExecuteHostMediaCommandAsync(MediaCommand.Previous));
+        var play = TransportButton("play", UiText.GetOrDefault("Media.PlayPause", "Odtwórz / Wstrzymaj"), async () => await runtime.ExecuteHostMediaCommandAsync(MediaCommand.PlayPause), true);
+        var next = TransportButton("next", UiText.GetOrDefault("Media.Next", "Następny utwór"), async () => await runtime.ExecuteHostMediaCommandAsync(MediaCommand.Next));
         controls.Controls.Add(previous);
         controls.Controls.Add(play);
         controls.Controls.Add(next);
@@ -101,19 +101,25 @@ public sealed partial class SettingsWindow
         now.Controls.Add(player, 0, now.RowCount++);
         left.Controls.Add(now, 0, 0);
 
-        var audio = DesktopCard("Sterowanie głośnością audio");
+        var audio = DesktopCard(UiText.GetOrDefault("Media.VolumeCardTitle", "Sterowanie głośnością audio"));
         var audioRow = new TableLayoutPanel { ColumnCount = 3, Dock = DockStyle.Fill };
         audioRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 40));
         audioRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         audioRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
         var speaker = new Panel { Dock = DockStyle.Fill };
-        speaker.Paint += (_, e) => ShortcutIconCatalog.Draw(e.Graphics, "volume", null, new Rectangle(4, 8, 24, 24), TextPrimary);
+        speaker.Paint += (_, e) => {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var iconSize = Math.Min(22, Math.Min(speaker.Width - 4, speaker.Height - 4));
+            if (iconSize <= 0) return;
+            var iconRect = new Rectangle((speaker.Width - iconSize) / 2, (speaker.Height - iconSize) / 2, iconSize, iconSize);
+            ShortcutIconCatalog.Draw(e.Graphics, "volume", null, iconRect, TextPrimary);
+        };
 
         var volume = new DarkSlider { Dock = DockStyle.Fill, Minimum = 0, Maximum = 100, AccessibleName = "System volume" };
-        var mute = CompactButton("Wycisz", async () => await runtime.ToggleHostMuteAsync());
+        var mute = CompactButton(UiText.GetOrDefault("Media.Mute", "Wycisz"), async () => await runtime.ToggleHostMuteAsync());
         mute.AccessibleName = "Mute";
         mute.Dock = DockStyle.Fill;
-        var volumeLabel = new Label { Text = "Głośność systemowa", Dock = DockStyle.Fill, ForeColor = TextMuted, AutoEllipsis = true };
+        var volumeLabel = new Label { Text = UiText.GetOrDefault("Media.SystemVolume", "Głośność systemowa"), Dock = DockStyle.Fill, ForeColor = TextMuted, AutoEllipsis = true };
         bool updatingVolume = false;
         bool dragging = false;
         int? pendingVolume = null;
@@ -125,14 +131,14 @@ public sealed partial class SettingsWindow
             pendingVolume = null;
             sendingVolume = true;
             try { await runtime.SetHostVolumeAsync(value); }
-            catch (Exception error) { AgentDiagnosticLog.Write($"Volume change failed: {error.GetType().Name}"); if (!volumeLabel.IsDisposed) volumeLabel.Text = "Dźwięk niedostępny"; }
+            catch (Exception error) { AgentDiagnosticLog.Write($"Volume change failed: {error.GetType().Name}"); if (!volumeLabel.IsDisposed) volumeLabel.Text = UiText.GetOrDefault("Media.AudioUnavailable", "Dźwięk niedostępny"); }
             finally { sendingVolume = false; }
         };
         volume.MouseDown += (_, _) => dragging = true;
         volume.MouseUp += (_, _) => dragging = false;
         volume.ValueChanged += (_, _) => {
-            var dev = state.Snapshot().CurrentAudio?.DeviceName ?? "Domyślne wyjście audio";
-            volumeLabel.Text = $"Głośność systemowa: {volume.Value}% · {dev}";
+            var dev = state.Snapshot().CurrentAudio?.DeviceName ?? UiText.GetOrDefault("Media.DefaultDevice", "Domyślne wyjście audio");
+            volumeLabel.Text = UiText.Format("Media.VolumeFormat", "Głośność systemowa: {0}% · {1}", volume.Value, dev);
             if (!updatingVolume) { pendingVolume = volume.Value; volumeTimer.Start(); }
         };
         page.Disposed += (_, _) => volumeTimer.Dispose();
@@ -140,13 +146,13 @@ public sealed partial class SettingsWindow
         audioRow.Controls.Add(speaker, 0, 0);
         audioRow.Controls.Add(volume, 1, 0);
         audioRow.Controls.Add(mute, 2, 0);
-        CompactField(audio, "Poziom głośności", audioRow);
+        CompactField(audio, UiText.GetOrDefault("Media.VolumeLevel", "Poziom głośności"), audioRow);
         audio.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         audio.Controls.Add(volumeLabel, 0, audio.RowCount++);
         FinishCard(audio);
         left.Controls.Add(audio, 0, 1);
 
-        var previewCard = DesktopCard("CYD Media Page Preview");
+        var previewCard = DesktopCard(UiText.GetOrDefault("Media.PreviewCardTitle", "Podgląd strony multimediów CYD"));
         var preview = new DesktopCanvas { Dock = DockStyle.Fill, Page = "Media", TabStop = false, BackColor = Surface };
         var initialApp = pendingAppearance ?? LoadAppearanceConfiguration();
         preview.Accent = ColorTranslator.FromHtml(initialApp.Accent);
@@ -166,15 +172,15 @@ public sealed partial class SettingsWindow
             if (media?.PlaybackState == MediaPlaybackState.Playing) position += Stopwatch.GetElapsedTime(anchorTime);
             if (duration > TimeSpan.Zero) position = position > duration ? duration : position;
             progress.Value = duration.TotalSeconds > 0 ? (int)Math.Clamp(position.TotalSeconds / duration.TotalSeconds * 1000, 0, 1000) : 0;
-            elapsed.Text = duration.TotalSeconds > 0 ? $"{position:m\\:ss}                                      {duration:m\\:ss}" : "Odtwarzanie na żywo / czas niedostępny";
+            elapsed.Text = duration.TotalSeconds > 0 ? $"{position:m\\:ss}                                      {duration:m\\:ss}" : UiText.GetOrDefault("Media.LiveOrUnavailable", "Odtwarzanie na żywo / czas niedostępny");
         }
 
         desktopRefresh = () => {
             var snapshot = state.Snapshot();
             var media = snapshot.CurrentMedia;
-            title.Text = media?.Title ?? "Gotowy do odtwarzania";
-            artist.Text = media?.Artist ?? "Brak aktywnej sesji multimediów";
-            status.Text = media?.PlaybackState == MediaPlaybackState.Playing ? "● Odtwarzanie" : media is null ? "Brak sesji" : "Ⅱ Wstrzymano";
+            title.Text = media?.Title ?? UiText.GetOrDefault("Media.ReadyToPlay", "Gotowy do odtwarzania");
+            artist.Text = media?.Artist ?? UiText.GetOrDefault("Media.NoSession", "Brak aktywnej sesji multimediów");
+            status.Text = media?.PlaybackState == MediaPlaybackState.Playing ? UiText.GetOrDefault("Media.Playing", "● Odtwarzanie") : media is null ? UiText.GetOrDefault("Media.Stopped", "Brak sesji") : UiText.GetOrDefault("Media.Paused", "Ⅱ Wstrzymano");
             desktopTips.SetToolTip(title, title.Text);
             desktopTips.SetToolTip(artist, artist.Text);
 
@@ -188,9 +194,9 @@ public sealed partial class SettingsWindow
                 volume.Value = Math.Clamp(snapshot.CurrentAudio?.VolumePercent ?? 0, 0, 100);
             updatingVolume = false;
 
-            var dev = snapshot.CurrentAudio?.DeviceName ?? "Domyślne wyjście audio";
-            volumeLabel.Text = $"Głośność systemowa: {volume.Value}% · {dev}";
-            mute.Text = snapshot.CurrentAudio?.IsMuted == true ? "Wyciszono (Włącz)" : "Wycisz";
+            var dev = snapshot.CurrentAudio?.DeviceName ?? UiText.GetOrDefault("Media.DefaultDevice", "Domyślne wyjście audio");
+            volumeLabel.Text = UiText.Format("Media.VolumeFormat", "Głośność systemowa: {0}% · {1}", volume.Value, dev);
+            mute.Text = snapshot.CurrentAudio?.IsMuted == true ? UiText.GetOrDefault("Media.Unmute", "Wyciszono (Włącz)") : UiText.GetOrDefault("Media.Mute", "Wycisz");
             volume.Enabled = mute.Enabled = snapshot.CurrentAudio is not null;
 
             artwork.Artwork = desktopArtwork;
@@ -224,7 +230,8 @@ public sealed partial class SettingsWindow
     {
         internal string Title = "";
         internal string Detail = "";
-        internal double? Value;
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        internal double? Value { get; set; }
         internal string Unit = "%";
         internal IReadOnlyList<double> History = [];
         internal Color AccentColor;
@@ -315,7 +322,7 @@ public sealed partial class SettingsWindow
     }
 
     private static readonly Lazy<string> CachedCpuName = new(() =>
-        Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString", null)?.ToString()?.Trim() ?? "Procesor Windows");
+        Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString", null)?.ToString()?.Trim() ?? UiText.GetOrDefault("Monitor.DefaultCpu", "Procesor Windows"));
 
     private Control CreateDesktopMonitorPage()
     {
@@ -352,7 +359,7 @@ public sealed partial class SettingsWindow
         right.RowStyles.Add(new RowStyle(SizeType.Absolute, 330));
         right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        var summary = DesktopCard("Podsumowanie telemetrii");
+        var summary = DesktopCard(UiText.GetOrDefault("Monitor.SummaryCardTitle", "Podsumowanie telemetrii"));
         var values = new Dictionary<string, Label>();
 
         void AddTelemetrySection(string title) {
@@ -373,20 +380,20 @@ public sealed partial class SettingsWindow
             summary.Controls.Add(row, 0, summary.RowCount++);
         }
 
-        AddTelemetrySection("Komputer PC");
-        AddTelemetryRow("Now Playing", "Utwór");
-        AddTelemetryRow("Artist", "Wykonawca");
-        AddTelemetryRow("Uptime", "Czas pracy PC");
+        AddTelemetrySection(UiText.GetOrDefault("Monitor.SectionPc", "Komputer PC"));
+        AddTelemetryRow("Now Playing", UiText.GetOrDefault("Monitor.RowNowPlaying", "Utwór"));
+        AddTelemetryRow("Artist", UiText.GetOrDefault("Monitor.RowArtist", "Wykonawca"));
+        AddTelemetryRow("Uptime", UiText.GetOrDefault("Monitor.RowUptime", "Czas pracy PC"));
 
-        AddTelemetrySection("Urządzenie CYD (ESP32)");
-        AddTelemetryRow("Firmware", "Wersja softu");
-        AddTelemetryRow("Free Heap", "Wolna pamięć");
-        AddTelemetryRow("Samples", "Próbki bufora");
+        AddTelemetrySection(UiText.GetOrDefault("Monitor.SectionCyd", "Urządzenie CYD (ESP32)"));
+        AddTelemetryRow("Firmware", UiText.GetOrDefault("Monitor.RowFirmware", "Wersja softu"));
+        AddTelemetryRow("Free Heap", UiText.GetOrDefault("Monitor.RowFreeHeap", "Wolna pamięć"));
+        AddTelemetryRow("Samples", UiText.GetOrDefault("Monitor.RowSamples", "Próbki bufora"));
 
         FinishCard(summary);
         right.Controls.Add(summary, 0, 0);
 
-        var previewCard = DesktopCard("CYD Monitor Preview");
+        var previewCard = DesktopCard(UiText.GetOrDefault("Monitor.PreviewCardTitle", "Podgląd monitora CYD"));
         var preview = new DesktopCanvas { Dock = DockStyle.Fill, Page = "PC", TabStop = false, BackColor = Surface };
         var initialApp = pendingAppearance ?? LoadAppearanceConfiguration();
         preview.Accent = ColorTranslator.FromHtml(initialApp.Accent);
@@ -405,38 +412,47 @@ public sealed partial class SettingsWindow
             views[0].History = stats?.CpuHistory ?? [];
 
             views[1].Value = stats?.RamPercent;
-            views[1].Detail = stats is null ? "Oczekiwanie na próbki" : $"{stats.RamUsedBytes / 1073741824.0:0.0} / {stats.RamTotalBytes / 1073741824.0:0.0} GB";
+            views[1].Detail = stats is null ? UiText.GetOrDefault("Monitor.WaitingSamples", "Oczekiwanie na próbki") : $"{stats.RamUsedBytes / 1073741824.0:0.0} / {stats.RamTotalBytes / 1073741824.0:0.0} GB";
             views[1].History = stats?.RamHistory ?? [];
 
             views[2].Value = stats?.GpuAvailable == true ? stats.GpuPercent : null;
-            views[2].Detail = stats?.GpuSource ?? (stats?.GpuAvailable == true ? "Silnik Windows GPU" : "Licznik GPU niedostępny");
+            views[2].Detail = stats?.GpuSource ?? (stats?.GpuAvailable == true ? UiText.GetOrDefault("Monitor.GpuEngine", "Silnik Windows GPU") : UiText.GetOrDefault("Monitor.GpuUnavailable", "Licznik GPU niedostępny"));
             views[2].History = stats?.GpuHistory ?? [];
 
             views[3].Value = stats?.TempAvailable == true ? stats.TempCelsius : null;
             views[3].Unit = "°C";
-            views[3].Detail = stats?.TemperatureSource ?? (stats?.TempAvailable == true ? "Temperatura CPU" : "Brak czujnika WMI");
+            if (stats?.TempAvailable == true)
+            {
+                views[3].Detail = stats.TemperatureSource == "ACPI thermal zone"
+                    ? UiText.GetOrDefault("Monitor.AcpiThermalZone", "Strefa termiczna ACPI")
+                    : (stats.TemperatureSource ?? UiText.GetOrDefault("Monitor.CpuTemp", "Temperatura CPU"));
+            }
+            else
+            {
+                views[3].Detail = UiText.GetOrDefault("Monitor.NoSensor", "Wymaga czujnika (opcjonalny)");
+            }
             views[3].History = stats?.TempHistory ?? [];
 
             foreach (var view in views) {
                 view.Invalidate();
                 if (view.Title == "RAM") {
-                    desktopTips.SetToolTip(view, $"Pamięć RAM: {view.Detail} (Norma: <70%, Obciążenie: 70-85%, Krytyczne: >85%). Ostatnie 30 próbek.");
+                    desktopTips.SetToolTip(view, UiText.Format("Monitor.RamTooltip", "Pamięć RAM: {0} (Norma: <70%, Obciążenie: 70-85%, Krytyczne: >85%). Ostatnie 30 próbek.", view.Detail));
                 } else if (view.Title == "TEMP") {
                     desktopTips.SetToolTip(view, view.Value is null
-                        ? "Temperatura CPU niedostępna. Uruchom LibreHardwareMonitor lub OpenHardwareMonitor jako Administrator z włączonym WMI Provider."
-                        : $"{view.Detail}: {view.Value:0}°C. Ostatnie 30 próbek.");
+                        ? UiText.GetOrDefault("Monitor.TempTooltipUnavailable", "Temperatura CPU jest opcjonalna i niedostępna w standardowym Windows bez zewnętrznego czujnika (np. LibreHardwareMonitor / OpenHardwareMonitor).")
+                        : UiText.Format("Monitor.TempTooltipFormat", "{0}: {1:0}°C. Ostatnie 30 próbek.", view.Detail, view.Value.Value));
                 } else {
-                    desktopTips.SetToolTip(view, $"{view.Detail}. Ostatnie 30 próbek; interwał 1 sekunda.");
+                    desktopTips.SetToolTip(view, UiText.Format("Monitor.DefaultMetricTooltip", "{0}. Ostatnie 30 próbek; interwał 1 sekunda.", view.Detail));
                 }
             }
 
             var uptime = TimeSpan.FromMilliseconds(Environment.TickCount64);
-            values["Now Playing"].Text = snapshot.CurrentMedia?.Title ?? "Brak sesji";
+            values["Now Playing"].Text = snapshot.CurrentMedia?.Title ?? UiText.GetOrDefault("Monitor.NoSession", "Brak sesji");
             values["Artist"].Text = snapshot.CurrentMedia?.Artist ?? "—";
             values["Uptime"].Text = $"{uptime.Days}d {uptime.Hours}h {uptime.Minutes}m";
-            values["Firmware"].Text = snapshot.DeviceInfo?.FirmwareVersion ?? "Niedostępne";
-            values["Free Heap"].Text = snapshot.DeviceInfo?.Heap is { } heap ? $"{heap.FreeBytes / 1024} KB" : "Niedostępne";
-            values["Samples"].Text = stats is null ? "Oczekiwanie" : $"{stats.CpuHistory.Count} / 30";
+            values["Firmware"].Text = snapshot.DeviceInfo?.FirmwareVersion ?? UiText.GetOrDefault("Monitor.Unavailable", "Niedostępne");
+            values["Free Heap"].Text = snapshot.DeviceInfo?.Heap is { } heap ? $"{heap.FreeBytes / 1024} KB" : UiText.GetOrDefault("Monitor.Unavailable", "Niedostępne");
+            values["Samples"].Text = stats is null ? UiText.GetOrDefault("Monitor.Waiting", "Oczekiwanie") : $"{stats.CpuHistory.Count} / 30";
 
             foreach (var value in values.Values) desktopTips.SetToolTip(value, value.Text);
             var appConfig = pendingAppearance ?? LoadAppearanceConfiguration();

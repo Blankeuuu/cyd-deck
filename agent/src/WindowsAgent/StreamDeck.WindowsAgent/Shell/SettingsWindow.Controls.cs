@@ -137,13 +137,21 @@ public sealed partial class SettingsWindow
 
         protected override void OnDrawItem(DrawItemEventArgs e)
         {
-            if (e.Index < 0 || e.Index >= Items.Count) return;
+            var isEdit = (e.State & DrawItemState.ComboBoxEdit) != 0;
+            if (e.Index < 0 || e.Index >= Items.Count)
+            {
+                using var emptyBrush = new SolidBrush(SurfaceAlt);
+                e.Graphics.FillRectangle(emptyBrush, e.Bounds);
+                return;
+            }
+
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
             var isSelected = (e.State & DrawItemState.Selected) != 0;
-            var bg = isSelected ? Accent : SurfaceAlt;
-            var fg = isSelected ? Color.White : TextPrimary;
+            // The closed combobox header must never show Win32 blue selection highlight
+            var bg = isEdit ? SurfaceAlt : (isSelected ? Accent : SurfaceAlt);
+            var fg = isEdit ? (Enabled ? TextPrimary : TextMuted) : (isSelected ? Color.White : (Enabled ? TextPrimary : TextMuted));
 
             using (var brush = new SolidBrush(bg))
             {
@@ -158,6 +166,12 @@ public sealed partial class SettingsWindow
 
         protected override void WndProc(ref Message m)
         {
+            if (m.Msg == 0x0014) // WM_ERASEBKGND
+            {
+                m.Result = (IntPtr)1;
+                return;
+            }
+
             base.WndProc(ref m);
             // WM_PAINT = 0x000F, WM_PRINT = 0x0317, WM_PRINTCLIENT = 0x0318
             if (m.Msg is 0x000F or 0x0317 or 0x0318 && IsHandleCreated)
@@ -199,6 +213,67 @@ public sealed partial class SettingsWindow
                 // Smooth outer border covering all 4 edges cleanly
                 using var borderPen = new Pen(Focused ? Accent : (hovered ? Color.FromArgb(140, Accent) : Border), Focused ? 1.5f : 1f);
                 g.DrawRectangle(borderPen, 0, 0, Width - 1, Height - 1);
+            }
+        }
+    }
+
+    internal sealed class CompactToggle : CheckBox
+    {
+        internal CompactToggle()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            Cursor = Cursors.Hand;
+            Size = new Size(44, 24);
+            MinimumSize = new Size(44, 24);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Parent?.BackColor ?? Surface);
+
+            var scale = DeviceDpi / 96f;
+            var trackWidth = (int)Math.Round(44 * scale);
+            var trackHeight = (int)Math.Round(24 * scale);
+            var trackX = Math.Max(0, (Width - trackWidth) / 2);
+            var trackY = Math.Max(0, (Height - trackHeight) / 2);
+            var track = new Rectangle(trackX, trackY, trackWidth, trackHeight);
+
+            using (var trackPath = CreateRoundedRectPath(track, trackHeight / 2))
+            {
+                using var fill = new SolidBrush(Checked ? Accent : SurfaceAlt);
+                g.FillPath(fill, trackPath);
+
+                using var borderPen = new Pen(Checked ? Accent : Border, 1f);
+                g.DrawPath(borderPen, trackPath);
+            }
+
+            // Knob: vertically and horizontally centered with symmetric margin
+            var diameter = trackHeight - (int)Math.Round(6 * scale);
+            var margin = (trackHeight - diameter) / 2;
+            var knobY = track.Top + margin;
+            var knobX = Checked ? (track.Right - margin - diameter) : (track.Left + margin);
+            var knobRect = new Rectangle(knobX, knobY, diameter, diameter);
+
+            using (var knobBrush = new SolidBrush(Color.White))
+            {
+                g.FillEllipse(knobBrush, knobRect);
+            }
+
+            if (Focused)
+            {
+                using var focusPen = new Pen(Accent, 1.5f);
+                using var focusPath = CreateRoundedRectPath(Rectangle.Inflate(track, 2, 2), (trackHeight + 4) / 2);
+                g.DrawPath(focusPen, focusPath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(Text))
+            {
+                var statusText = Checked ? UiText.GetOrDefault("Shell.On", "Wł.") : UiText.GetOrDefault("Shell.Off", "Wył.");
+                var textRect = new Rectangle(track.Right + 8, 0, Math.Max(0, Width - track.Right - 8), Height);
+                TextRenderer.DrawText(g, $"{Text} · {statusText}", Font, textRect, ForeColor,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
             }
         }
     }

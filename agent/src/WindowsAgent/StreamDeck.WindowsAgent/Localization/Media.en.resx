@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="CardTitle" xml:space="preserve"><value>Now Playing Media Player</value></data>
+  <data name="VolumeCardTitle" xml:space="preserve"><value>Audio Volume Controls</value></data>
+  <data name="PreviewCardTitle" xml:space="preserve"><value>CYD Media Page Preview</value></data>
+  <data name="ReadyToPlay" xml:space="preserve"><value>Ready to play</value></data>
+  <data name="NoSession" xml:space="preserve"><value>No active media session</value></data>
+  <data name="Playing" xml:space="preserve"><value>● Playing</value></data>
+  <data name="Paused" xml:space="preserve"><value>Ⅱ Paused</value></data>
+  <data name="Stopped" xml:space="preserve"><value>No session</value></data>
+  <data name="Previous" xml:space="preserve"><value>Previous track</value></data>
+  <data name="PlayPause" xml:space="preserve"><value>Play / Pause</value></data>
+  <data name="Next" xml:space="preserve"><value>Next track</value></data>
+  <data name="VolumeLevel" xml:space="preserve"><value>Volume level</value></data>
+  <data name="SystemVolume" xml:space="preserve"><value>System volume</value></data>
+  <data name="VolumeFormat" xml:space="preserve"><value>System volume: {0}% · {1}</value></data>
+  <data name="DefaultDevice" xml:space="preserve"><value>Default audio device</value></data>
+  <data name="AudioUnavailable" xml:space="preserve"><value>Audio unavailable</value></data>
+  <data name="Mute" xml:space="preserve"><value>Mute</value></data>
+  <data name="Unmute" xml:space="preserve"><value>Muted (Unmute)</value></data>
+  <data name="LiveOrUnavailable" xml:space="preserve"><value>Live playback / time unavailable</value></data>
+  <data name="ArtworkAccessible" xml:space="preserve"><value>Album artwork</value></data>
+  <data name="TrackProgress" xml:space="preserve"><value>Track progress</value></data>
+</root>
