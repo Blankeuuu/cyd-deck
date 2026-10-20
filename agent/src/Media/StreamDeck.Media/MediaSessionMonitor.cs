@@ -98,27 +98,27 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
 
     public Task<bool> PreviousAsync(CancellationToken cancellationToken = default)
     {
-        return ExecuteCommandAsync(session => session.TrySkipPreviousAsync(cancellationToken));
+        return ExecuteCommandAsync(session => session.TrySkipPreviousAsync(cancellationToken), cancellationToken);
     }
 
     public Task<bool> PlayAsync(CancellationToken cancellationToken = default)
     {
-        return ExecuteCommandAsync(session => session.TryPlayAsync(cancellationToken));
+        return ExecuteCommandAsync(session => session.TryPlayAsync(cancellationToken), cancellationToken);
     }
 
     public Task<bool> PauseAsync(CancellationToken cancellationToken = default)
     {
-        return ExecuteCommandAsync(session => session.TryPauseAsync(cancellationToken));
+        return ExecuteCommandAsync(session => session.TryPauseAsync(cancellationToken), cancellationToken);
     }
 
     public Task<bool> TogglePlayPauseAsync(CancellationToken cancellationToken = default)
     {
-        return ExecuteCommandAsync(session => session.TryTogglePlayPauseAsync(cancellationToken));
+        return ExecuteCommandAsync(session => session.TryTogglePlayPauseAsync(cancellationToken), cancellationToken);
     }
 
     public Task<bool> NextAsync(CancellationToken cancellationToken = default)
     {
-        return ExecuteCommandAsync(session => session.TrySkipNextAsync(cancellationToken));
+        return ExecuteCommandAsync(session => session.TrySkipNextAsync(cancellationToken), cancellationToken);
     }
 
     public bool TryRefreshTimeline()
@@ -237,17 +237,26 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
         _cts.Dispose();
     }
 
-    private async Task<bool> ExecuteCommandAsync(Func<IWindowsMediaSession, Task<bool>> command)
+    private async Task<bool> ExecuteCommandAsync(Func<IWindowsMediaSession, Task<bool>> command, CancellationToken cancellationToken)
     {
-        var selectedSession = GetSelectedSession();
-        if (selectedSession is null)
-        {
-            return false;
-        }
-
         try
         {
-            return await command(selectedSession).ConfigureAwait(false);
+            // CurrentSession can change without a sessions-list notification.
+            // Resolve it at the command boundary rather than controlling a cached session.
+            lock (_gate)
+            {
+                if (_disposed) return false;
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            var sessions = _source.GetSessions();
+            var selectedSession = _selector.Select(_source.GetCurrentSession(), sessions);
+            if (selectedSession is null) return false;
+
+            var accepted = await command(selectedSession).ConfigureAwait(false);
+            // Native acceptance is not playback confirmation. Publish only a new read,
+            // also after rejection, because SMTC events can be delayed or omitted.
+            await RefreshSafelyAsync(cancellationToken).ConfigureAwait(false);
+            return accepted;
         }
         catch (OperationCanceledException)
         {
@@ -256,14 +265,6 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
         catch
         {
             return false;
-        }
-    }
-
-    private IWindowsMediaSession? GetSelectedSession()
-    {
-        lock (_gate)
-        {
-            return _selectedSession;
         }
     }
 
