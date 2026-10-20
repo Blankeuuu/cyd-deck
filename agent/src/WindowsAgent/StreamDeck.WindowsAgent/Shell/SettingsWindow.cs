@@ -173,8 +173,11 @@ public sealed partial class SettingsWindow : Form
         WindowsStartupService startup,
         IPairingApprovalService pairing,
         Icon shellIcon,
-        AgentConfigurationStore? configurationOverride = null)
+        AgentConfigurationStore? configurationOverride = null,
+        StreamDeck.WindowsAgent.Updates.UpdateManager? sharedUpdateManager = null)
     {
+        updateManager = sharedUpdateManager ?? new();
+        ownsUpdateManager = sharedUpdateManager is null;
         this.state = state;
         this.runtime = runtime;
         this.startup = startup;
@@ -204,6 +207,7 @@ public sealed partial class SettingsWindow : Form
         state.Changed += HandleStateChanged;
         pairing.PairingChanged += HandlePairingChanged;
         ShowPage(currentPage);
+
     }
 
     public void ShowAndActivateWindow()
@@ -227,7 +231,7 @@ public sealed partial class SettingsWindow : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { InvalidatePageCache(); desktopViewLifetime?.Cancel(); desktopViewLifetime?.Dispose(); desktopViewLifetime = null; desktopArtwork?.Dispose(); desktopArtwork = null; desktopToolsMenu?.Dispose(); desktopToolsMenu = null; desktopTips.Dispose(); }
+        if (disposing) { InvalidatePageCache(); if (ownsUpdateManager) updateManager.Dispose(); desktopViewLifetime?.Cancel(); desktopViewLifetime?.Dispose(); desktopViewLifetime = null; desktopArtwork?.Dispose(); desktopArtwork = null; desktopToolsMenu?.Dispose(); desktopToolsMenu = null; desktopTips.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -1484,30 +1488,6 @@ public sealed partial class SettingsWindow : Form
         return pendingAppearance ?? LoadAppearanceConfiguration();
     }
 
-    private Control CreateUpdatesPage()
-    {
-        var snapshot = state.Snapshot();
-        var panel = CreatePage("Updates");
-        var grid = CreateInfoGrid();
-
-        AddSectionHeader(grid, "WINDOWS AGENT UPDATES");
-        AddInfoRow(grid, "Agent version", GetAgentVersion());
-        AddInfoRow(grid, "Protocol version", ProtocolConstants.CurrentVersion.ToString());
-        AddInfoRow(grid, "Discovery status", "Not checked — no release source configured");
-
-        AddSectionHeader(grid, "CYD FIRMWARE UPDATES");
-        var isConnected = string.Equals(snapshot.HostStatus, "connected", StringComparison.OrdinalIgnoreCase);
-        var fwVersion = isConnected ? snapshot.DeviceInfo?.FirmwareVersion : null;
-        updateDeviceIp = isConnected ? snapshot.DeviceInfo?.Wifi.Ip : null;
-        AddInfoRow(grid, "Firmware version", fwVersion is not null ? fwVersion : (isConnected ? "Waiting for device report…" : "Device offline"));
-        AddInfoRow(grid, "Device IP", FormatUnavailable(updateDeviceIp));
-        AddInfoRow(grid, "OTA method", "Network / ArduinoOTA");
-
-        AddPageBodyControl(panel, grid);
-        AddPageFooter(panel, CreateUpdateActionsBar(updateDeviceIp));
-        return panel;
-    }
-
     private Control CreateLogsPage()
     {
         var panel = CreatePage("Logs");
@@ -1620,6 +1600,10 @@ public sealed partial class SettingsWindow : Form
         var body = CreatePageBodyPanel();
         var toolbar = CreateUnifiedToolbar(title);
         panel.Controls.Add(body);
+        if (title != "Updates" && updateManager.LastCheckResult?.Status == UpdateCheckStatus.UpdateAvailable)
+        {
+            panel.Controls.Add(CreateUpdateAvailableBanner());
+        }
         panel.Controls.Add(toolbar);
         RefreshUnifiedToolbar();
         return panel;
@@ -1997,31 +1981,6 @@ public sealed partial class SettingsWindow : Form
             button.AccessibleDescription = button.Enabled ? action : action == "Forget device"
                 ? "No paired device to forget." : "Connect the device to use this action.";
         }
-    }
-
-    private Control CreateUpdateActionsBar(string? deviceIp)
-    {
-        var bar = (FlowLayoutPanel)CreateActionsBar(
-            ("Check for updates", () =>
-            {
-                MessageBox.Show(
-                    this,
-                    "Automatic release checking is not configured. No online version check was performed. Use a trusted firmware file to install an update.",
-                    "Check for updates",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                return Task.CompletedTask;
-            }),
-            ("Install firmware from file (.bin)", InstallFirmwareFromFileAsync));
-
-        if (string.IsNullOrWhiteSpace(deviceIp) && bar.Controls.Count > 1 && bar.Controls[1] is Button button)
-        {
-            button.Enabled = false;
-            button.Text = "Install firmware (device offline)";
-            button.Cursor = Cursors.Default;
-        }
-
-        return bar;
     }
 
     private Control CreateActionsBar(params (string Text, Action Action)[] actions)

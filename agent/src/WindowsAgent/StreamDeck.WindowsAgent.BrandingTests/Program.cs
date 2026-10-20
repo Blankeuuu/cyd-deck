@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.Reflection;
 using StreamDeck.WindowsAgent;
 using StreamDeck.WindowsAgent.Tray;
@@ -11,9 +12,19 @@ internal static class Program
     private static int testsRun;
     private static int testsPassed;
 
-    private static void Main()
+    private static void Main(string[] args)
     {
         Console.WriteLine("=== CYD-DECK Windows Agent Branding & Identity Tests ===");
+
+        var repoRoot = ResolveRepoRoot();
+        var assetsDir = Path.Combine(repoRoot, "agent", "assets");
+
+        if (args != null && args.Any(a => a.Equals("--generate", StringComparison.OrdinalIgnoreCase) || a.Equals("--generate-icons", StringComparison.OrdinalIgnoreCase)))
+        {
+            Console.WriteLine("Generating icon assets (cyd-deck.png and cyd-deck.ico)...");
+            IconGenerator.GenerateAll(assetsDir);
+            Console.WriteLine("Icons generated successfully.");
+        }
 
         TestAppIdentityConstants();
         TestAumidConfiguration();
@@ -215,9 +226,55 @@ internal static class Program
         AssertTrue(svgContent.Contains("#dd3127", StringComparison.OrdinalIgnoreCase), "cyd-deck.svg contains primary tile color #dd3127");
         AssertTrue(svgContent.Contains("#4eab41", StringComparison.OrdinalIgnoreCase), "cyd-deck.svg contains accent tile color #4eab41");
 
+        // Regression test: SVG contains new geometry (outer radius 40, background 50..250, tiles x/y 84 and 156)
+        AssertTrue(svgContent.Contains("M90 50 L210 50", StringComparison.OrdinalIgnoreCase), "cyd-deck.svg outer body uses radius 40 (M90 50 L210 50)");
+        AssertTrue(svgContent.Contains("M96 84 L132 84", StringComparison.OrdinalIgnoreCase), "cyd-deck.svg contains top-left tile at (84, 84)");
+        AssertTrue(svgContent.Contains("M168 84 L204 84", StringComparison.OrdinalIgnoreCase), "cyd-deck.svg contains top-right tile at (156, 84)");
+        AssertTrue(svgContent.Contains("M96 156 L132 156", StringComparison.OrdinalIgnoreCase), "cyd-deck.svg contains bottom-left tile at (84, 156)");
+        AssertTrue(svgContent.Contains("M168 156 L204 156", StringComparison.OrdinalIgnoreCase), "cyd-deck.svg contains bottom-right tile at (156, 156)");
+
+        // Obsolete geometries must NOT be present
+        AssertTrue(!svgContent.Contains("M75 50", StringComparison.OrdinalIgnoreCase), "cyd-deck.svg does NOT contain obsolete radius 25 (M75 50)");
+        AssertTrue(!svgContent.Contains("M99 87", StringComparison.OrdinalIgnoreCase), "cyd-deck.svg does NOT contain obsolete tile offset 87");
+        AssertTrue(!svgContent.Contains("M165 87", StringComparison.OrdinalIgnoreCase), "cyd-deck.svg does NOT contain obsolete tile offset 153");
+
         var pngBytes = File.ReadAllBytes(pngPath);
         AssertTrue(pngBytes.Length > 100, "cyd-deck.png is non-empty");
         AssertTrue(HasPngSignature(pngBytes, 0), "cyd-deck.png has valid PNG signature");
+
+        using (var pngBitmap = new Bitmap(pngPath))
+        {
+            AssertEqual(300, pngBitmap.Width, "cyd-deck.png width is 300");
+            AssertEqual(300, pngBitmap.Height, "cyd-deck.png height is 300");
+
+            // Corners outside rounded rect must be transparent
+            AssertEqual(0, pngBitmap.GetPixel(0, 0).A, "cyd-deck.png corner (0,0) is transparent");
+            AssertEqual(0, pngBitmap.GetPixel(50, 50).A, "cyd-deck.png corner (50,50) is transparent (radius 40)");
+            AssertEqual(0, pngBitmap.GetPixel(250, 50).A, "cyd-deck.png corner (250,50) is transparent (radius 40)");
+
+            // Background points
+            var expectedBg = Color.FromArgb(255, 0x16, 0x16, 0x16);
+            var expectedRed = Color.FromArgb(255, 0xDD, 0x31, 0x27);
+            var expectedGreen = Color.FromArgb(255, 0x4E, 0xAB, 0x41);
+
+            AssertColorMatches(expectedBg, pngBitmap.GetPixel(90, 50), "cyd-deck.png body top arc boundary (90,50) is #161616");
+            AssertColorMatches(expectedBg, pngBitmap.GetPixel(150, 150), "cyd-deck.png central tile gap (150,150) is #161616");
+
+            // Tile interiors
+            AssertColorMatches(expectedRed, pngBitmap.GetPixel(100, 100), "cyd-deck.png top-left tile (100,100) is #dd3127");
+            AssertColorMatches(expectedRed, pngBitmap.GetPixel(180, 100), "cyd-deck.png top-right tile (180,100) is #dd3127");
+            AssertColorMatches(expectedRed, pngBitmap.GetPixel(100, 180), "cyd-deck.png bottom-left tile (100,180) is #dd3127");
+            AssertColorMatches(expectedGreen, pngBitmap.GetPixel(180, 180), "cyd-deck.png bottom-right tile (180,180) is #4eab41");
+
+            // Geometry regression: x=85 is inside new tile 1 (84..144), was background in old (87..147)
+            AssertColorMatches(expectedRed, pngBitmap.GetPixel(85, 114), "cyd-deck.png pixel (85,114) is inside new tile 1 #dd3127");
+            // Geometry regression: x=145 is in new gap (144..156), was inside tile in old (87..147)
+            AssertColorMatches(expectedBg, pngBitmap.GetPixel(145, 114), "cyd-deck.png pixel (145,114) is inside new 12px gap #161616");
+            // Geometry regression: x=157 is inside new tile 2 (156..216)
+            AssertColorMatches(expectedRed, pngBitmap.GetPixel(157, 114), "cyd-deck.png pixel (157,114) is inside new tile 2 #dd3127");
+            // Geometry regression: x=217 is outside new tile 2 (156..216)
+            AssertColorMatches(expectedBg, pngBitmap.GetPixel(217, 114), "cyd-deck.png pixel (217,114) is outside new tile 2 #161616");
+        }
 
         var icoBytes = File.ReadAllBytes(icoPath);
         AssertTrue(icoBytes.Length > 200, "cyd-deck.ico has valid size");
@@ -265,22 +322,38 @@ internal static class Program
         AssertEqual(32, icon.Height, "AppIconFactory.CreateIcon() height is 32");
 
         using var bitmap = AppIconFactory.CreateBitmap(32);
-        var expectedBg = Color.FromArgb(255, 0x16, 0x16, 0x16);
-        var expectedRed = Color.FromArgb(255, 0xDD, 0x31, 0x27);
-        var expectedGreen = Color.FromArgb(255, 0x4E, 0xAB, 0x41);
+        var expectedBgColor = Color.FromArgb(255, 0x16, 0x16, 0x16);
+        var expectedRedColor = Color.FromArgb(255, 0xDD, 0x31, 0x27);
+        var expectedGreenColor = Color.FromArgb(255, 0x4E, 0xAB, 0x41);
 
-        AssertColorMatches(expectedBg, bitmap.GetPixel(3, 16), "AppIconFactory background pixel (3,16) is #161616");
-        AssertColorMatches(expectedRed, bitmap.GetPixel(11, 11), "AppIconFactory top-left tile pixel (11,11) is #dd3127");
-        AssertColorMatches(expectedRed, bitmap.GetPixel(21, 11), "AppIconFactory top-right tile pixel (21,11) is #dd3127");
-        AssertColorMatches(expectedRed, bitmap.GetPixel(11, 21), "AppIconFactory bottom-left tile pixel (11,21) is #dd3127");
-        AssertColorMatches(expectedGreen, bitmap.GetPixel(21, 21), "AppIconFactory bottom-right tile pixel (21,21) is #4eab41");
+        AssertColorMatches(expectedBgColor, bitmap.GetPixel(3, 16), "AppIconFactory background pixel (3,16) is #161616");
+        AssertColorMatches(expectedRedColor, bitmap.GetPixel(11, 11), "AppIconFactory top-left tile pixel (11,11) is #dd3127");
+        AssertColorMatches(expectedRedColor, bitmap.GetPixel(21, 11), "AppIconFactory top-right tile pixel (21,11) is #dd3127");
+        AssertColorMatches(expectedRedColor, bitmap.GetPixel(11, 21), "AppIconFactory bottom-left tile pixel (11,21) is #dd3127");
+        AssertColorMatches(expectedGreenColor, bitmap.GetPixel(21, 21), "AppIconFactory bottom-right tile pixel (21,21) is #4eab41");
+        AssertColorMatches(expectedBgColor, bitmap.GetPixel(16, 16), "AppIconFactory central tile gap (16,16) is #161616");
 
         using var iconBitmap = icon.ToBitmap();
-        AssertColorMatches(expectedBg, iconBitmap.GetPixel(3, 16), "Icon.ToBitmap() background pixel (3,16) is #161616");
-        AssertColorMatches(expectedRed, iconBitmap.GetPixel(11, 11), "Icon.ToBitmap() top-left tile pixel (11,11) is #dd3127");
-        AssertColorMatches(expectedRed, iconBitmap.GetPixel(21, 11), "Icon.ToBitmap() top-right tile pixel (21,11) is #dd3127");
-        AssertColorMatches(expectedRed, iconBitmap.GetPixel(11, 21), "Icon.ToBitmap() bottom-left tile pixel (11,21) is #dd3127");
-        AssertColorMatches(expectedGreen, iconBitmap.GetPixel(21, 21), "Icon.ToBitmap() bottom-right tile pixel (21,21) is #4eab41");
+        AssertColorMatches(expectedBgColor, iconBitmap.GetPixel(3, 16), "Icon.ToBitmap() background pixel (3,16) is #161616");
+        AssertColorMatches(expectedRedColor, iconBitmap.GetPixel(11, 11), "Icon.ToBitmap() top-left tile pixel (11,11) is #dd3127");
+        AssertColorMatches(expectedRedColor, iconBitmap.GetPixel(21, 11), "Icon.ToBitmap() top-right tile pixel (21,11) is #dd3127");
+        AssertColorMatches(expectedRedColor, iconBitmap.GetPixel(11, 21), "Icon.ToBitmap() bottom-left tile pixel (11,21) is #dd3127");
+        AssertColorMatches(expectedGreenColor, iconBitmap.GetPixel(21, 21), "Icon.ToBitmap() bottom-right tile pixel (21,21) is #4eab41");
+        AssertColorMatches(expectedBgColor, iconBitmap.GetPixel(16, 16), "Icon.ToBitmap() central tile gap (16,16) is #161616");
+
+        // Verify AppIconFactory.CreateCanvasBitmap(300)
+        using var canvasBitmap = AppIconFactory.CreateCanvasBitmap(300);
+        AssertEqual(300, canvasBitmap.Width, "AppIconFactory.CreateCanvasBitmap width is 300");
+        AssertEqual(300, canvasBitmap.Height, "AppIconFactory.CreateCanvasBitmap height is 300");
+        AssertEqual(0, canvasBitmap.GetPixel(0, 0).A, "AppIconFactory canvas (0,0) is transparent");
+        AssertEqual(0, canvasBitmap.GetPixel(50, 50).A, "AppIconFactory canvas (50,50) is transparent");
+        AssertColorMatches(expectedBgColor, canvasBitmap.GetPixel(90, 50), "AppIconFactory canvas (90,50) is #161616");
+        AssertColorMatches(expectedBgColor, canvasBitmap.GetPixel(150, 150), "AppIconFactory canvas center gap (150,150) is #161616");
+        AssertColorMatches(expectedRedColor, canvasBitmap.GetPixel(85, 114), "AppIconFactory canvas tile 1 (85,114) is #dd3127");
+        AssertColorMatches(expectedBgColor, canvasBitmap.GetPixel(145, 114), "AppIconFactory canvas gap (145,114) is #161616");
+        AssertColorMatches(expectedRedColor, canvasBitmap.GetPixel(157, 114), "AppIconFactory canvas tile 2 (157,114) is #dd3127");
+        AssertColorMatches(expectedBgColor, canvasBitmap.GetPixel(217, 114), "AppIconFactory canvas outside tile 2 (217,114) is #161616");
+        AssertColorMatches(expectedGreenColor, canvasBitmap.GetPixel(180, 180), "AppIconFactory canvas tile 4 (180,180) is #4eab41");
     }
 
     private static bool HasPngSignature(byte[] data, int offset)

@@ -30,6 +30,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="StreamDeck.WindowsAgent.Tests" />
     <InternalsVisibleTo Include="StreamDeck.WindowsAgent.BrandingTests" />
+    <InternalsVisibleTo Include="StreamDeck.WindowsAgent.UpdateTests" />
   </ItemGroup>
 
   <ItemGroup>

@@ -45,7 +45,7 @@ internal sealed class WindowsGlobalMediaSession : IWindowsMediaSession
             ? MediaPlaybackState.Unknown
             : MapPlaybackState(playbackInfo.PlaybackStatus);
 
-        return new NativePlaybackInfo(playbackState);
+        return new NativePlaybackInfo(playbackState, playbackInfo?.PlaybackRate);
     }
 
     public NativeTimelineProperties GetTimelineProperties()
@@ -57,7 +57,8 @@ internal sealed class WindowsGlobalMediaSession : IWindowsMediaSession
             timeline.EndTime,
             timeline.Position,
             timeline.MinSeekTime,
-            timeline.MaxSeekTime);
+            timeline.MaxSeekTime,
+            timeline.LastUpdatedTime);
     }
 
     public async Task<bool> TrySkipPreviousAsync(CancellationToken cancellationToken = default)

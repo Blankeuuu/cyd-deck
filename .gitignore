@@ -42,3 +42,43 @@ Desktop.ini
 agent/publish-release/
 serial_out.txt
 serial_*.txt
+
+# Local Orca worktrees (source changes are integrated into the main checkout).
+/agent-navigation-perf/
+/agent-pairing-ui/
+/agent-product-identity/
+/onboarding-agent-audit/
+/onboarding-usb-agent-fix/
+/onboarding-usb-wifi/
+/roadmap-auto-updates/
+/roadmap-free-signing/
+/roadmap-icon-refresh/
+/roadmap-media-reliability/
+/roadmap-software-docs/
+/roadmap-software-integration/
+/.worktrees/
+
+# Machine-local agent state, scratch notes and artwork inbox.
+/.codex/
+/.claude/
+/.orca/
+/AGENTS.md
+/MCP-TEST-*.md
+/HANDOFF.md
+/STREAMDECK_HANDOFF.md
+/docs/HANDOFF.md
+/docs/wiki/
+/TODO.txt
+/prompt.txt
+/icon/
+/ikona-cyd-deck.svg
+
+# Temporary files, crash dumps and additional private signing keys.
+*.tmp
+*.bak
+*.dmp
+*.snk
+*.jks
+*.keystore
+__pycache__/
+*.pyc

@@ -155,6 +155,9 @@ dotnet run --project agent/src/WindowsAgent/StreamDeck.WindowsAgent.Tests/Stream
 - [Agent <-> CYD Protocol Specification](docs/protocol.md)
 - [User Interface Architecture](docs/ui.md)
 - [Hardware & Display Guide (ST7789 vs ILI9341)](docs/hardware.md)
+- [Windows Authenticode Code Signing & SmartScreen Guide](docs/code-signing-smartscreen.md)
+- [Media Synchronization & Artwork Reliability Guide](docs/media-reliability.md)
+- [In-App Software & Firmware Updates Guide](docs/software-updates.md)
 - [Troubleshooting Guide](docs/troubleshooting.md)
 - [Release Notes](docs/releases/)
 
@@ -163,10 +166,15 @@ dotnet run --project agent/src/WindowsAgent/StreamDeck.WindowsAgent.Tests/Stream
 ## Roadmap / TODO
 
 - [ ] **Windows SmartScreen & Code Signing** — Eliminate the *"Windows protected your PC"* SmartScreen warning when launching the Windows installer and `CYD-DECK.exe` binary through Authenticode code signing and trusted distribution.
-- [ ] **Seamless In-App Auto-Updates (Agent & Firmware)** — Automatic detection, download, and installation of updates for both the Windows Agent application and the CYD ESP32 firmware directly from GitHub Releases without requiring manual reinstallation.
+  - *Status: In Progress / Blocked externally.* Verification and signing script (`scripts/sign-windows-artifacts.ps1`) and strict validation tests (19/19 PASS) implemented; live signing blocked pending maintainer SignPath Foundation application and foundation review. See [Code Signing Guide](docs/code-signing-smartscreen.md).
+- [x] **Seamless In-App Auto-Updates (Agent & Firmware)** — Detect updates from GitHub Releases at startup or on request, then download and install with user confirmation. Firmware installation uses Wi-Fi OTA; USB-only devices use the Web Installer.
+  - *Status: Implemented & Regression-Tested.* 136/136 updater assertions and Windows Agent smoke tests PASS, including minimized startup, unsaved changes, stale staging and tampering checks. Live installation and physical OTA remain pending; not yet released. See [Software Updates Guide](docs/software-updates.md).
 - [ ] **Custom 3D-Printable CYD-DECK Enclosure** — Dedicated 3D-printable desktop enclosure and angled stand designed specifically for the ESP32-2432S028R (CYD-DECK) board.
-- [ ] **Album Artwork Reliability (Spotify & Brave)** — Fix recurring cover art extraction and display failures for media sessions originating from desktop Spotify and Chromium/Brave browsers.
-- [ ] **Media Timeline & Progress Bar Synchronization** — Eliminate timeline jitter and stutter loops (e.g., rubberbanding 01s → 02s → 01s → 02s → 06s on CYD display) and resolve missing timeline progress (stuck at 00:00 on YouTube and web video playback) by stabilizing Windows Agent GSMTC timeline polling and CYD local interpolation.
+  - *Out of scope for this software roadmap task, per maintainer decision.*
+- [x] **Album Artwork Reliability (Spotify & Brave)** — Fix recurring cover art extraction and display failures for media sessions originating from desktop Spotify and Chromium/Brave browsers.
+  - *Status: Implemented & Regression-Tested.* 3-attempt linear backoff retry (100/200 ms), 0-byte stream protection, and thumbnail reference cache invalidation verified in automated test suite (15/15 Covers, 3/3 Runtime regressions PASS). Note: Controlled mock/fixture validation only; physical streaming validation on CYD hardware pending. See [Media Reliability Guide](docs/media-reliability.md).
+- [x] **Media Timeline & Progress Bar Synchronization** — Eliminate timeline jitter and stutter loops (e.g., rubberbanding 01s → 02s → 01s → 02s → 06s on CYD display) and resolve missing timeline progress (stuck at 00:00 on YouTube and web video playback) by stabilizing Windows Agent GSMTC timeline polling and CYD local interpolation.
+  - *Status: Implemented & Regression-Tested.* WinRT GSMTC LastUpdatedTime/PlaybackRate extrapolation, active refresh counter with finally recovery, and atomic poll commit revalidation to prevent race conditions verified (22/22 Media, review probe PASS; protocol: 1 unchanged, no firmware clamp). Note: Controlled fixture testing; physical hardware validation pending. See [Media Reliability Guide](docs/media-reliability.md).
 
 ---
 

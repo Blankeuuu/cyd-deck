@@ -37,7 +37,7 @@ public sealed partial class SettingsWindow
     private Control CreateUnifiedToolbar(string title) => CreateDesktopToolbar(title);
     private void RefreshUnifiedToolbar() => RefreshDesktopToolbar();
 
-    private bool ResolveUnsavedChanges()
+    private bool ResolveUnsavedChanges(Action? afterSave = null)
     {
         if (!configurationDirty) return true;
         using var dialog = new Form { Text = "Unsaved changes", ClientSize = new Size(420, 130), StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, BackColor = Surface, ForeColor = TextPrimary, Font = Font };
@@ -57,7 +57,7 @@ public sealed partial class SettingsWindow
         if (result == DialogResult.Yes)
         {
             // Keep the window open while the async save runs; close on success only.
-            _ = SaveThenHideAsync();
+            _ = SaveThenContinueAsync(afterSave);
             return false;
         }
         configurationDraft = null;
@@ -72,9 +72,11 @@ public sealed partial class SettingsWindow
         return true;
     }
 
-    private async Task SaveThenHideAsync()
+    private async Task SaveThenContinueAsync(Action? afterSave)
     {
-        if (await SaveConfigurationDraftAsync()) Hide();
+        if (!await SaveConfigurationDraftAsync() || IsDisposed || Disposing) return;
+        if (afterSave is null) Hide();
+        else afterSave();
     }
 
     internal async Task<bool> SaveConfigurationDraftAsync()

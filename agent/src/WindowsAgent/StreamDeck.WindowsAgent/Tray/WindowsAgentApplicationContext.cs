@@ -1,3 +1,4 @@
+using StreamDeck.WindowsAgent.Updates;
 using StreamDeck.WindowsAgent.Runtime;
 using StreamDeck.WindowsAgent.Shell;
 using StreamDeck.Host;
@@ -28,6 +29,9 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
     private readonly RegisteredWaitHandle singleInstanceWait;
     private SettingsWindow? mainWindow;
     private bool exiting;
+    private bool resourcesDisposed;
+    private readonly UpdateManager updateManager;
+    private readonly CancellationTokenSource updateLifetime = new();
     private string? lastKnownHostStatus;
     private string? balloonTipTargetPage;
 
@@ -37,8 +41,10 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
         WindowsStartupService startup,
         IPairingApprovalService pairing,
         SingleInstanceGuard singleInstance,
-        AgentOptions options)
+        AgentOptions options,
+        UpdateManager? updateManager = null)
     {
+        this.updateManager = updateManager ?? new UpdateManager();
         this.state = state;
         this.runtime = runtime;
         this.startup = startup;
@@ -80,6 +86,8 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
             executeOnlyOnce: false);
         AgentDiagnosticLog.Write("ApplicationContext constructed");
         _ = Task.Run(StartAsync);
+        // Mock fixtures remain offline unless explicitly supplied a fake update manager.
+        if (!options.MockMode || updateManager is not null) _ = RunAutomaticUpdateCheckAsync();
         if (!options.StartMinimized)
         {
             PostShowMainWindow();
@@ -88,9 +96,13 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
+        if (disposing && !resourcesDisposed)
         {
+            resourcesDisposed = true;
             exiting = true;
+            updateLifetime.Cancel();
+            updateManager.Dispose();
+            updateLifetime.Dispose();
             singleInstanceWait.Unregister(null);
             mainWindow?.Dispose();
             notifyIcon.Visible = false;
@@ -104,6 +116,25 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
         base.Dispose(disposing);
     }
 
+    private async Task RunAutomaticUpdateCheckAsync()
+    {
+        try
+        {
+            await updateManager.CheckAutomaticallyAsync(
+                () => state.Snapshot().DeviceInfo?.FirmwareVersion,
+                TimeSpan.FromSeconds(3), updateLifetime.Token).ConfigureAwait(false);
+            if (exiting) return;
+            uiControl.BeginInvoke(new Action(() =>
+            {
+                if (!exiting) mainWindow?.RefreshUpdateStatus();
+            }));
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            AgentDiagnosticLog.Write($"Background auto-update check error: {ex.Message}");
+        }
+    }
     private ContextMenuStrip BuildMenu()
     {
         statusItem.Enabled = false;
@@ -178,6 +209,7 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
         }
 
         exiting = true;
+        updateLifetime.Cancel();
         singleInstanceWait.Unregister(null);
         notifyIcon.Visible = false;
 
@@ -204,7 +236,7 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
             AgentDiagnosticLog.Write("ShowMainWindow executing");
             if (mainWindow is null || mainWindow.IsDisposed)
             {
-                mainWindow = new SettingsWindow(state, runtime, startup, pairing, appIcon);
+                mainWindow = new SettingsWindow(state, runtime, startup, pairing, appIcon, sharedUpdateManager: updateManager);
             }
 
             if (!mainWindow.Visible)

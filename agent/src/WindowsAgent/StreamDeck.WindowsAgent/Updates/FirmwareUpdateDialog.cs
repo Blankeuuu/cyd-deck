@@ -9,37 +9,48 @@ public sealed class FirmwareUpdateDialog : Form
     private static readonly Color TextPrimary = Color.FromArgb(238, 241, 245);
     private static readonly Color TextMuted = Color.FromArgb(150, 158, 170);
     private static readonly Color Accent = Color.FromArgb(212, 59, 72);
+    private static readonly Color Danger = Color.FromArgb(255, 69, 58);
+    private static readonly Color SuccessColor = Color.FromArgb(48, 209, 88);
 
     private readonly AgentState state;
     private readonly string firmwarePath;
-    private readonly IPAddress deviceAddress;
+    private readonly IPAddress? deviceAddress;
     private readonly string? previousVersion;
+    private readonly string? expectedVersion;
+    private readonly string? expectedSha256;
     private readonly Label statusLabel;
     private readonly ProgressBar progressBar;
     private readonly TextBox passwordBox;
     private readonly Button installButton;
     private readonly Button closeButton;
+    private bool isUpdating;
 
-    public FirmwareUpdateDialog(AgentState state, string firmwarePath, string deviceIp, string? previousVersion)
+    public FirmwareUpdateDialog(
+        AgentState state,
+        string firmwarePath,
+        string? deviceIp,
+        string? previousVersion,
+        string? expectedVersion = null,
+        string? expectedSha256 = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentException.ThrowIfNullOrWhiteSpace(firmwarePath);
-        ArgumentException.ThrowIfNullOrWhiteSpace(deviceIp);
-
-        if (!IPAddress.TryParse(deviceIp, out var parsedAddress))
-        {
-            throw new ArgumentException("Device IP address is invalid.", nameof(deviceIp));
-        }
 
         this.state = state;
         this.firmwarePath = firmwarePath;
-        deviceAddress = parsedAddress;
         this.previousVersion = previousVersion;
+        this.expectedVersion = expectedVersion;
+        this.expectedSha256 = expectedSha256;
 
-        Text = "Install firmware";
-        Width = 520;
-        Height = 300;
-        MinimumSize = new Size(520, 300);
+        if (!string.IsNullOrWhiteSpace(deviceIp) && IPAddress.TryParse(deviceIp, out var parsedAddress))
+        {
+            deviceAddress = parsedAddress;
+        }
+
+        Text = "Aktualizacja oprogramowania CYD";
+        Width = 540;
+        Height = 360;
+        MinimumSize = new Size(540, 360);
         StartPosition = FormStartPosition.CenterParent;
         BackColor = Background;
         ForeColor = TextPrimary;
@@ -52,7 +63,7 @@ public sealed class FirmwareUpdateDialog : Form
         {
             Dock = DockStyle.Fill,
             Padding = new Padding(18),
-            RowCount = 6,
+            RowCount = 7,
             ColumnCount = 1,
             BackColor = Background
         };
@@ -62,18 +73,22 @@ public sealed class FirmwareUpdateDialog : Form
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        var targetVerText = !string.IsNullOrWhiteSpace(expectedVersion) ? expectedVersion : "Z pliku binarnego";
+        var deviceText = deviceAddress is not null ? deviceAddress.ToString() : "Brak adresu IP Wi-Fi (połączenie USB)";
 
         panel.Controls.Add(new Label
         {
-            Text = $"Firmware: {Path.GetFileName(firmwarePath)}\nSelected firmware version: Unavailable\nDevice: {deviceAddress}\nCurrent firmware: {FormatUnavailable(previousVersion)}",
+            Text = $"Plik obrazu: {Path.GetFileName(firmwarePath)}\nDocelowa wersja firmware: {targetVerText}\nUrządzenie: {deviceText}\nBieżąca wersja na urządzeniu: {FormatUnavailable(previousVersion)}",
             AutoSize = true,
             ForeColor = TextPrimary,
-            Padding = new Padding(0, 0, 0, 12)
+            Padding = new Padding(0, 0, 0, 10)
         });
 
         panel.Controls.Add(new Label
         {
-            Text = "Setup password",
+            Text = "Hasło konfiguracyjne urządzenia (setup password):",
             AutoSize = true,
             ForeColor = TextMuted,
             Padding = new Padding(0, 0, 0, 4)
@@ -85,7 +100,8 @@ public sealed class FirmwareUpdateDialog : Form
             UseSystemPasswordChar = true,
             BackColor = Surface,
             ForeColor = TextPrimary,
-            BorderStyle = BorderStyle.FixedSingle
+            BorderStyle = BorderStyle.FixedSingle,
+            Enabled = deviceAddress is not null
         };
         panel.Controls.Add(passwordBox);
 
@@ -96,16 +112,20 @@ public sealed class FirmwareUpdateDialog : Form
             Minimum = 0,
             Maximum = 100,
             Style = ProgressBarStyle.Continuous,
-            Margin = new Padding(0, 14, 0, 8)
+            Margin = new Padding(0, 12, 0, 8)
         };
         panel.Controls.Add(progressBar);
 
+        var initialStatus = deviceAddress is not null
+            ? "Wprowadź hasło konfiguracyjne, aby rozpocząć bezprzewodową aktualizację (OTA). Hasło jest jednorazowe i nie jest zapisywane."
+            : "UWAGA: Urządzenie jest połączone wyłącznie przez USB (brak IP Wi-Fi). Aktualizacja bezprzewodowa (OTA) wymaga połączenia z siecią Wi-Fi. Skorzystaj z Web Installera w przeglądarce lub skonfiguruj Wi-Fi na urządzeniu.";
+
         statusLabel = new Label
         {
-            Text = "Enter the setup password to start. The password is used once and is not saved.",
+            Text = initialStatus,
             AutoSize = false,
             Dock = DockStyle.Fill,
-            ForeColor = TextMuted
+            ForeColor = deviceAddress is not null ? TextMuted : Danger
         };
         panel.Controls.Add(statusLabel);
 
@@ -117,10 +137,13 @@ public sealed class FirmwareUpdateDialog : Form
             BackColor = Background
         };
 
-        installButton = CreateButton("Update board");
+        installButton = CreateButton("Zaktualizuj CYD");
+        installButton.Enabled = deviceAddress is not null;
         installButton.Click += async (_, _) => await RunUpdateAsync().ConfigureAwait(true);
-        closeButton = CreateButton("Close");
+
+        closeButton = CreateButton("Zamknij");
         closeButton.Click += (_, _) => Close();
+
         actions.Controls.Add(closeButton);
         actions.Controls.Add(installButton);
         panel.Controls.Add(actions);
@@ -128,67 +151,114 @@ public sealed class FirmwareUpdateDialog : Form
         Controls.Add(panel);
     }
 
+    internal bool GetIsUpdatingForTests() => isUpdating;
+    internal void SetIsUpdatingForTests(bool value) => isUpdating = value;
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (isUpdating)
+        {
+            e.Cancel = true;
+            if (Visible)
+            {
+                MessageBox.Show(
+                    this,
+                    "Trwa przesyłanie oprogramowania układowego. Nie można zamknąć okna przed zakończeniem lub anulowaniem operacji.",
+                    "Aktualizacja w toku",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+            return;
+        }
+
+        base.OnFormClosing(e);
+    }
+
     private async Task RunUpdateAsync()
     {
+        if (deviceAddress is null)
+        {
+            statusLabel.ForeColor = Danger;
+            statusLabel.Text = "Brak adresu IP urządzenia. Aktualizacja OTA przez kabel USB nie jest obsługiwana.";
+            return;
+        }
+
         var password = passwordBox.Text;
         passwordBox.Clear();
         if (string.IsNullOrWhiteSpace(password))
         {
-            statusLabel.Text = "Setup password is required for firmware update.";
+            statusLabel.ForeColor = Danger;
+            statusLabel.Text = "Wymagane jest hasło konfiguracyjne urządzenia.";
             return;
         }
 
+        isUpdating = true;
         installButton.Enabled = false;
         closeButton.Enabled = false;
         passwordBox.Enabled = false;
+        statusLabel.ForeColor = TextMuted;
 
         try
         {
             var updateStartedAtUtc = DateTimeOffset.UtcNow;
             var progress = new Progress<FirmwareUpdateProgress>(UpdateProgress);
             var updater = new ArduinoOtaFirmwareUpdater();
-            statusLabel.Text = "Uploading firmware…";
+            statusLabel.Text = "Nawiązywanie połączenia i przesyłanie obrazu…";
+
             var result = await updater.UploadAsync(
-                new FirmwareUpdateFileRequest(deviceAddress, password, firmwarePath, timeout: TimeSpan.FromSeconds(10)),
+                new FirmwareUpdateFileRequest(deviceAddress, password, firmwarePath, timeout: TimeSpan.FromSeconds(15), expectedSha256: expectedSha256),
                 progress).ConfigureAwait(true);
 
             password = string.Empty;
             if (!result.Success)
             {
-                statusLabel.Text = result.SafeError ?? "Firmware update failed.";
+                statusLabel.ForeColor = Danger;
+                statusLabel.Text = result.SafeError ?? "Błąd przesyłania oprogramowania układowego.";
                 closeButton.Enabled = true;
                 return;
             }
 
-            statusLabel.Text = "Upload complete. Waiting for reconnect and fresh firmware telemetry…";
+            statusLabel.Text = "Przesłano obraz. Oczekiwanie na restart CYD i potwierdzenie telemetrii…";
             progressBar.Style = ProgressBarStyle.Marquee;
-            var verifiedVersion = await WaitForVersionChangeAsync(previousVersion, updateStartedAtUtc, TimeSpan.FromMinutes(2)).ConfigureAwait(true);
+            var verifiedVersion = await FirmwareTelemetryVerifier.WaitForVersionVerificationAsync(state, updateStartedAtUtc, expectedVersion, previousVersion, TimeSpan.FromMinutes(2)).ConfigureAwait(true);
             progressBar.Style = ProgressBarStyle.Continuous;
             progressBar.Value = 100;
 
-            statusLabel.Text = verifiedVersion is null
-                ? "Upload finished, but no changed firmware version telemetry was received before timeout. A physical device check may be required."
-                : $"Firmware update verified. Reported version changed to {verifiedVersion}.";
+            if (verifiedVersion is not null)
+            {
+                statusLabel.ForeColor = SuccessColor;
+                statusLabel.Text = $"Aktualizacja zakończona i zweryfikowana pomyślnie. Nowa wersja: {verifiedVersion}.";
+            }
+            else
+            {
+                statusLabel.ForeColor = Danger;
+                statusLabel.Text = !string.IsNullOrWhiteSpace(expectedVersion)
+                    ? $"Obraz został przesłany, lecz w wyznaczonym czasie urządzenie nie zgłosiło oczekiwanej wersji {expectedVersion} w telemetrii."
+                    : "Obraz został przesłany, lecz w wyznaczonym czasie nie odebrano potwierdzenia zmiany wersji z urządzenia.";
+            }
         }
         catch (OperationCanceledException)
         {
-            statusLabel.Text = "Firmware update cancelled.";
+            statusLabel.ForeColor = Danger;
+            statusLabel.Text = "Aktualizacja oprogramowania została anulowana.";
         }
         catch (Exception exception)
         {
-            AgentDiagnosticLog.Write($"Firmware update failed in dialog: {exception.GetType().Name}");
-            statusLabel.Text = "Firmware update failed. Check the selected image, network connection, and setup password, then try again.";
+            AgentDiagnosticLog.Write($"Firmware update failed in dialog: {exception.GetType().Name} - {exception.Message}");
+            statusLabel.ForeColor = Danger;
+            statusLabel.Text = "Wgrywanie nie powiodło się. Sprawdź połączenie Wi-Fi, hasło konfiguracyjne i spróbuj ponownie.";
         }
         finally
         {
             password = string.Empty;
+            isUpdating = false;
             closeButton.Enabled = true;
         }
     }
 
     private void UpdateProgress(FirmwareUpdateProgress progress)
     {
-        statusLabel.Text = progress.Stage;
+        statusLabel.Text = $"{progress.Stage} ({progress.BytesSent} / {progress.TotalBytes} B)";
         if (progress.TotalBytes <= 0)
         {
             progressBar.Value = 0;
@@ -199,25 +269,20 @@ public sealed class FirmwareUpdateDialog : Form
         progressBar.Value = percent;
     }
 
-    private async Task<string?> WaitForVersionChangeAsync(string? oldVersion, DateTimeOffset updateStartedAtUtc, TimeSpan timeout)
+    internal Task<string?> WaitForVersionVerificationAsync(
+        DateTimeOffset updateStartedAtUtc,
+        string? targetExpectedVersion,
+        string? oldVersion,
+        TimeSpan timeout,
+        TimeSpan? pollInterval = null)
     {
-        var deadline = DateTimeOffset.UtcNow.Add(timeout);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            var snapshot = state.Snapshot();
-            var version = snapshot.DeviceInfo?.FirmwareVersion;
-            if (!string.IsNullOrWhiteSpace(version)
-                && !string.Equals(version, oldVersion, StringComparison.Ordinal)
-                && snapshot.DeviceInfoUpdatedAtUtc is not null
-                && snapshot.DeviceInfoUpdatedAtUtc >= updateStartedAtUtc)
-            {
-                return version;
-            }
-
-            await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(true);
-        }
-
-        return null;
+        return FirmwareTelemetryVerifier.WaitForVersionVerificationAsync(
+            state,
+            updateStartedAtUtc,
+            targetExpectedVersion,
+            oldVersion,
+            timeout,
+            pollInterval);
     }
 
     private static Button CreateButton(string text)
@@ -226,7 +291,7 @@ public sealed class FirmwareUpdateDialog : Form
         {
             Text = text,
             AutoSize = true,
-            MinimumSize = new Size(110, 34),
+            MinimumSize = new Size(130, 36),
             FlatStyle = FlatStyle.Flat,
             BackColor = Accent,
             ForeColor = Color.White,
@@ -239,6 +304,54 @@ public sealed class FirmwareUpdateDialog : Form
 
     private static string FormatUnavailable(string? value)
     {
-        return string.IsNullOrWhiteSpace(value) ? "Unavailable" : value;
+        return string.IsNullOrWhiteSpace(value) ? "Brak informacji" : value;
+    }
+}
+
+public static class FirmwareTelemetryVerifier
+{
+    public static async Task<string?> WaitForVersionVerificationAsync(
+        AgentState state,
+        DateTimeOffset updateStartedAtUtc,
+        string? targetExpectedVersion,
+        string? oldVersion,
+        TimeSpan timeout,
+        TimeSpan? pollInterval = null)
+    {
+        var interval = pollInterval ?? TimeSpan.FromMilliseconds(500);
+        var deadline = DateTimeOffset.UtcNow.Add(timeout);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var snapshot = state.Snapshot();
+            var currentVersion = snapshot.DeviceInfo?.FirmwareVersion;
+            var isFresh = snapshot.DeviceInfoUpdatedAtUtc is not null && snapshot.DeviceInfoUpdatedAtUtc >= updateStartedAtUtc;
+
+            if (!string.IsNullOrWhiteSpace(currentVersion) && isFresh)
+            {
+                // Strict expected version match if expectedVersion is provided
+                if (!string.IsNullOrWhiteSpace(targetExpectedVersion))
+                {
+                    if (string.Equals(currentVersion, targetExpectedVersion, StringComparison.Ordinal))
+                    {
+                        return currentVersion;
+                    }
+                }
+                else if (!string.Equals(currentVersion, oldVersion, StringComparison.Ordinal))
+                {
+                    return currentVersion;
+                }
+            }
+
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                break;
+            }
+
+            var delay = remaining < interval ? remaining : interval;
+            await Task.Delay(delay).ConfigureAwait(false);
+        }
+
+        return null;
     }
 }

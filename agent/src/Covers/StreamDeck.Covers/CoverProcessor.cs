@@ -30,6 +30,11 @@ public sealed class CoverProcessor
             return null;
         }
 
+        if (thumbnailStream.CanSeek && thumbnailStream.Length == 0)
+        {
+            return null;
+        }
+
         Directory.CreateDirectory(coversDirectory);
         Directory.CreateDirectory(indexDirectory);
         Directory.CreateDirectory(temporaryDirectory);
@@ -63,11 +68,11 @@ public sealed class CoverProcessor
             var coverId = Convert.ToHexString(SHA256.HashData(jpegBytes)).ToLowerInvariant();
             var finalPath = GetCoverPath(coverId);
 
-            if (!File.Exists(finalPath))
+            if (!File.Exists(finalPath) || new FileInfo(finalPath).Length == 0)
             {
                 var tempPath = Path.Combine(temporaryDirectory, $"{Guid.NewGuid():N}.jpg");
                 await File.WriteAllBytesAsync(tempPath, jpegBytes, cancellationToken).ConfigureAwait(false);
-                File.Move(tempPath, finalPath);
+                File.Move(tempPath, finalPath, overwrite: true);
             }
 
             var result = new CoverProcessResult(coverId, finalPath, accentHex, jpegBytes.Length, WasCacheHit: false);
@@ -164,10 +169,27 @@ public sealed class CoverProcessor
             return null;
         }
 
-        await using var stream = File.OpenRead(indexPath);
-        var entry = await JsonSerializer.DeserializeAsync<CoverCacheIndexEntry>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-        if (entry is null)
+        CoverCacheIndexEntry? entry = null;
+        try
         {
+            await using var stream = File.OpenRead(indexPath);
+            if (stream.Length == 0)
+            {
+                try { File.Delete(indexPath); } catch { }
+                return null;
+            }
+
+            entry = await JsonSerializer.DeserializeAsync<CoverCacheIndexEntry>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException)
+        {
+            try { File.Delete(indexPath); } catch { }
+            return null;
+        }
+
+        if (entry is null || string.IsNullOrWhiteSpace(entry.CoverId))
+        {
+            try { File.Delete(indexPath); } catch { }
             return null;
         }
 
@@ -177,11 +199,19 @@ public sealed class CoverProcessor
             return null;
         }
 
+        var fileInfo = new FileInfo(coverPath);
+        if (fileInfo.Length == 0)
+        {
+            try { File.Delete(coverPath); } catch { }
+            try { File.Delete(indexPath); } catch { }
+            return null;
+        }
+
         return new CoverProcessResult(
             entry.CoverId,
             coverPath,
             entry.AccentHex,
-            new FileInfo(coverPath).Length,
+            fileInfo.Length,
             WasCacheHit: true);
     }
 

@@ -31,6 +31,11 @@ public sealed class WindowsAgentRuntime(
     private ShortcutCatalog? shortcutCatalog;
     private IReadOnlyList<string?>? deviceSlots;
     private string? lastPublishedMedia;
+    private string? lastTrackKey;
+    private string? lastTrackAndPlayState;
+    private string? cachedCoverId;
+    private string? cachedAccent;
+    private IMediaThumbnailReference? lastThumbnailRef;
     private readonly SemaphoreSlim mediaPublishGate = new(1, 1);
     private UsbDeviceRuntime? usbRuntime;
     private WindowsSystemMetricsProvider? systemMetricsProvider;
@@ -362,6 +367,11 @@ public sealed class WindowsAgentRuntime(
         }
 
         coverProcessor = null;
+        cachedCoverId = null;
+        cachedAccent = null;
+        lastThumbnailRef = null;
+        lastTrackKey = null;
+        lastTrackAndPlayState = null;
 
         mediaSource = null;
         if (volumeService is not null) volumeService.AudioChanged -= HandleAudioChanged;
@@ -480,23 +490,26 @@ public sealed class WindowsAgentRuntime(
         await mediaPublishGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            string? coverId = null;
-            string? accent = null;
-
-            if (snapshot?.Thumbnail is not null && coverProcessor is not null)
+            var trackKey = $"{snapshot?.SourceAppUserModelId}|{snapshot?.Title}|{snapshot?.Artist}|{snapshot?.AlbumTitle}";
+            var thumbnailChanged = !ReferenceEquals(snapshot?.Thumbnail, lastThumbnailRef);
+            if (trackKey != lastTrackKey || thumbnailChanged)
             {
-                try
-                {
-                    await using var thumbnailStream = await snapshot.Thumbnail.OpenReadAsync(cancellationToken).ConfigureAwait(false);
-                    var cover = await coverProcessor.ProcessAsync(thumbnailStream, cancellationToken).ConfigureAwait(false);
-                    coverId = cover?.CoverId;
-                    accent = cover?.AccentHex;
-                }
-                catch (Exception exception) when (exception is not OperationCanceledException)
-                {
-                    AgentDiagnosticLog.Write($"Artwork processing failed: {exception.GetType().Name}; publishing track metadata.");
-                }
+                lastTrackKey = trackKey;
+                lastThumbnailRef = snapshot?.Thumbnail;
+                cachedCoverId = null;
+                cachedAccent = null;
+                lastTrackAndPlayState = null;
             }
+
+            if (cachedCoverId is null && snapshot?.Thumbnail is not null && coverProcessor is not null)
+            {
+                var cover = await TryProcessCoverWithRetryAsync(snapshot.Thumbnail, cancellationToken).ConfigureAwait(false);
+                cachedCoverId = cover?.CoverId;
+                cachedAccent = cover?.AccentHex;
+            }
+
+            var coverId = cachedCoverId;
+            var accent = cachedAccent;
 
             if (volumeService?.CurrentSnapshot is { } audioSnapshot)
             {
@@ -504,16 +517,42 @@ public sealed class WindowsAgentRuntime(
                 if (target is not null) await target.SendTextAsync(audioMessage, cancellationToken).ConfigureAwait(false);
                 else await SendDeviceCommandAsync(audioMessage, cancellationToken).ConfigureAwait(false);
             }
-            var message = ProtocolStateMapper.CreateMediaUpdate(snapshot, coverId, accent);
+
+            var trackAndPlayState = $"{trackKey}|{snapshot?.PlaybackState}|{coverId}";
+            var isTimelineOnly = target is null &&
+                                 trackAndPlayState == lastTrackAndPlayState &&
+                                 snapshot is not null;
+
+            string message;
+            if (isTimelineOnly)
+            {
+                message = ProtocolSerializer.Serialize(
+                    ProtocolConstants.MessageTypes.MediaTimeline,
+                    requestId: null,
+                    new MediaTimelineMessage(
+                        (long)snapshot!.Timeline.Position.TotalMilliseconds,
+                        snapshot.Timeline.EndTime > TimeSpan.Zero ? (long)snapshot.Timeline.EndTime.TotalMilliseconds : null,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            }
+            else
+            {
+                message = ProtocolStateMapper.CreateMediaUpdate(snapshot, coverId, accent);
+            }
+
             var sent = true;
             if (target is UsbDeviceRuntime.ActiveUsbSink usbSink) await usbSink.SendUpdateAsync(message, cancellationToken).ConfigureAwait(false);
             else if (target is not null) await target.SendTextAsync(message, cancellationToken).ConfigureAwait(false);
             else sent = await SendDeviceCommandAsync(message, cancellationToken).ConfigureAwait(false);
-            var signature = $"{snapshot?.SourceAppUserModelId}|{snapshot?.Title}|{snapshot?.PlaybackState}|{coverId}";
-            if (sent && signature != lastPublishedMedia)
+
+            if (sent && !isTimelineOnly)
             {
-                lastPublishedMedia = signature;
-                AgentDiagnosticLog.Write($"Media sent playing={snapshot?.PlaybackState == MediaPlaybackState.Playing} metadata={!string.IsNullOrWhiteSpace(snapshot?.Title)} artwork={coverId is not null}");
+                lastTrackAndPlayState = trackAndPlayState;
+                var signature = $"{snapshot?.SourceAppUserModelId}|{snapshot?.Title}|{snapshot?.PlaybackState}|{coverId}";
+                if (signature != lastPublishedMedia)
+                {
+                    lastPublishedMedia = signature;
+                    AgentDiagnosticLog.Write($"Media sent playing={snapshot?.PlaybackState == MediaPlaybackState.Playing} metadata={!string.IsNullOrWhiteSpace(snapshot?.Title)} artwork={coverId is not null}");
+                }
             }
         }
         catch (OperationCanceledException)
@@ -525,6 +564,48 @@ public sealed class WindowsAgentRuntime(
             AgentDiagnosticLog.Write($"Media update publish failed: {ex.GetType().Name}");
         }
         finally { mediaPublishGate.Release(); }
+    }
+
+    private async Task<CoverProcessResult?> TryProcessCoverWithRetryAsync(
+        IMediaThumbnailReference thumbnail,
+        CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                await using var thumbnailStream = await thumbnail.OpenReadAsync(cancellationToken).ConfigureAwait(false);
+                if (thumbnailStream is null || (thumbnailStream.CanSeek && thumbnailStream.Length == 0))
+                {
+                    if (attempt < maxAttempts)
+                    {
+                        await Task.Delay(100 * attempt, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+                    return null;
+                }
+
+                var cover = await coverProcessor!.ProcessAsync(thumbnailStream, cancellationToken).ConfigureAwait(false);
+                if (cover is not null)
+                {
+                    return cover;
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                if (attempt < maxAttempts)
+                {
+                    AgentDiagnosticLog.Write($"Artwork attempt {attempt} failed ({exception.GetType().Name}), retrying in {100 * attempt}ms...");
+                    await Task.Delay(100 * attempt, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                AgentDiagnosticLog.Write($"Artwork processing failed after {maxAttempts} attempts: {exception.GetType().Name}; publishing track metadata.");
+            }
+        }
+
+        return null;
     }
 
     private static string GetCoverCacheDirectory()
@@ -576,6 +657,18 @@ public sealed class WindowsAgentRuntime(
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
                     AgentDiagnosticLog.Write($"System stats publish failed: {exception.GetType().Name}");
+                }
+            }
+
+            if (mediaMonitor is not null)
+            {
+                try
+                {
+                    mediaMonitor.TryRefreshTimeline();
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    AgentDiagnosticLog.Write($"Media timeline poll failed: {exception.GetType().Name}");
                 }
             }
         }

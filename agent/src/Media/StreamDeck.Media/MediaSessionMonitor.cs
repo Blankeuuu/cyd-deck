@@ -54,9 +54,18 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
     private readonly IMediaSessionSelector _selector;
     private readonly IMediaSessionMapper _mapper;
     private readonly object _gate = new();
+    private readonly object _publishGate = new();
+    private readonly CancellationTokenSource _cts = new();
     private readonly HashSet<IWindowsMediaSession> _subscribedSessions = [];
     private IWindowsMediaSession? _selectedSession;
+    private IWindowsMediaSession? _currentSnapshotSession;
     private bool _started;
+    private bool _disposed;
+    private int _activeRefreshCount;
+    private long _refreshSequence;
+    private long _lastAppliedSequence;
+    private long _snapshotVersion;
+    private long _lastEmittedVersion;
 
     public MediaSessionMonitor(
         IWindowsMediaSessionSource source,
@@ -112,8 +121,104 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
         return ExecuteCommandAsync(session => session.TrySkipNextAsync(cancellationToken));
     }
 
+    public bool TryRefreshTimeline()
+    {
+        IWindowsMediaSession? selectedSession;
+        MediaSnapshot? currentSnapshot;
+        long capturedRefreshSequence;
+        long capturedSnapshotVersion;
+
+        lock (_gate)
+        {
+            if (_disposed || _selectedSession is null || CurrentSnapshot is null)
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(_selectedSession, _currentSnapshotSession))
+            {
+                return false;
+            }
+
+            if (_activeRefreshCount > 0)
+            {
+                return false;
+            }
+
+            selectedSession = _selectedSession;
+            currentSnapshot = CurrentSnapshot;
+            capturedRefreshSequence = _refreshSequence;
+            capturedSnapshotVersion = _snapshotVersion;
+        }
+
+        if (currentSnapshot.PlaybackState != MediaPlaybackState.Playing)
+        {
+            return false;
+        }
+
+        var timeline = selectedSession.GetTimelineProperties();
+        var playbackInfo = selectedSession.GetPlaybackInfo();
+        var position = WindowsMediaSessionMapper.CalculateLivePosition(timeline, playbackInfo, DateTimeOffset.UtcNow);
+
+        if (position == currentSnapshot.Timeline.Position &&
+            (timeline.EndTime == TimeSpan.Zero || timeline.EndTime == currentSnapshot.Timeline.EndTime))
+        {
+            return false;
+        }
+
+        var updatedTimeline = currentSnapshot.Timeline with
+        {
+            Position = position,
+            EndTime = timeline.EndTime > TimeSpan.Zero ? timeline.EndTime : currentSnapshot.Timeline.EndTime
+        };
+
+        var updatedSnapshot = currentSnapshot with { Timeline = updatedTimeline };
+        long version;
+
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(_selectedSession, selectedSession) ||
+                !ReferenceEquals(_currentSnapshotSession, selectedSession) ||
+                !ReferenceEquals(CurrentSnapshot, currentSnapshot) ||
+                _activeRefreshCount > 0 ||
+                _refreshSequence != capturedRefreshSequence ||
+                _snapshotVersion != capturedSnapshotVersion)
+            {
+                return false;
+            }
+
+            CurrentSnapshot = updatedSnapshot;
+            version = ++_snapshotVersion;
+        }
+
+        PublishSnapshotChanged(updatedSnapshot, version);
+        return true;
+    }
+
     public async ValueTask DisposeAsync()
     {
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            _cts.Cancel();
+        }
+
+        lock (_publishGate)
+        {
+            SnapshotChanged = null;
+            RefreshFailed = null;
+        }
+
         _source.SessionsChanged -= HandleSessionsChanged;
 
         lock (_gate)
@@ -125,9 +230,11 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
 
             _subscribedSessions.Clear();
             _selectedSession = null;
+            _currentSnapshotSession = null;
         }
 
         await _source.DisposeAsync().ConfigureAwait(false);
+        _cts.Dispose();
     }
 
     private async Task<bool> ExecuteCommandAsync(Func<IWindowsMediaSession, Task<bool>> command)
@@ -188,28 +295,74 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
 
     private async Task RefreshAsync(CancellationToken cancellationToken, MediaSessionRefreshContext? context = null)
     {
-        context ??= new MediaSessionRefreshContext();
-        var sessions = RunRefreshOperation(context, "GetSessions", _source.GetSessions);
-        ReconcileSubscriptions(sessions);
-
-        var currentSession = RunRefreshOperation(context, "GetCurrentSession", _source.GetCurrentSession);
-        var selectedSession = RunRefreshOperation(context, "SelectSession", () => _selector.Select(currentSession, sessions));
+        CancellationToken effectiveCt;
+        long sequence;
         lock (_gate)
         {
-            _selectedSession = selectedSession;
+            if (_disposed)
+            {
+                return;
+            }
+
+            _activeRefreshCount++;
+            sequence = ++_refreshSequence;
+            effectiveCt = _cts.Token;
         }
 
-        if (selectedSession is null)
+        try
         {
-            SetCurrentSnapshot(null);
-            return;
-        }
+            using var linkedCts = cancellationToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, effectiveCt)
+                : null;
+            var token = linkedCts?.Token ?? effectiveCt;
 
-        var snapshot = await RunRefreshOperationAsync(
-            context,
-            "MapSession",
-            () => _mapper.MapAsync(selectedSession, cancellationToken)).ConfigureAwait(false);
-        SetCurrentSnapshot(snapshot);
+            context ??= new MediaSessionRefreshContext();
+            var sessions = RunRefreshOperation(context, "GetSessions", _source.GetSessions);
+            ReconcileSubscriptions(sessions);
+
+            var currentSession = RunRefreshOperation(context, "GetCurrentSession", _source.GetCurrentSession);
+            var selectedSession = RunRefreshOperation(context, "SelectSession", () => _selector.Select(currentSession, sessions));
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                if (sequence >= _lastAppliedSequence)
+                {
+                    _selectedSession = selectedSession;
+                }
+            }
+
+            if (selectedSession is null)
+            {
+                SetCurrentSnapshot(null, sequence, null);
+                return;
+            }
+
+            var snapshot = await RunRefreshOperationAsync(
+                context,
+                "MapSession",
+                () => _mapper.MapAsync(selectedSession, token)).ConfigureAwait(false);
+
+            lock (_gate)
+            {
+                if (_disposed || sequence < _lastAppliedSequence || !ReferenceEquals(_selectedSession, selectedSession))
+                {
+                    return;
+                }
+            }
+
+            SetCurrentSnapshot(snapshot, sequence, selectedSession);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _activeRefreshCount--;
+            }
+        }
     }
 
     private static T RunRefreshOperation<T>(MediaSessionRefreshContext context, string operation, Func<T> action)
@@ -229,15 +382,52 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
         public string Operation { get; set; } = "Refresh";
     }
 
-    private void SetCurrentSnapshot(MediaSnapshot? snapshot)
+    private void SetCurrentSnapshot(MediaSnapshot? snapshot, long sequence, IWindowsMediaSession? session)
     {
-        if (Equals(CurrentSnapshot, snapshot))
+        long version;
+        lock (_gate)
         {
-            return;
+            if (_disposed || sequence < _lastAppliedSequence)
+            {
+                return;
+            }
+
+            if (session is not null && !ReferenceEquals(_selectedSession, session))
+            {
+                return;
+            }
+
+            _lastAppliedSequence = sequence;
+            _currentSnapshotSession = session;
+
+            if (Equals(CurrentSnapshot, snapshot))
+            {
+                return;
+            }
+
+            CurrentSnapshot = snapshot;
+            version = ++_snapshotVersion;
         }
 
-        CurrentSnapshot = snapshot;
-        SnapshotChanged?.Invoke(this, snapshot);
+        PublishSnapshotChanged(snapshot, version);
+    }
+
+    private void PublishSnapshotChanged(MediaSnapshot? snapshot, long version)
+    {
+        lock (_publishGate)
+        {
+            lock (_gate)
+            {
+                if (_disposed || version <= _lastEmittedVersion)
+                {
+                    return;
+                }
+
+                _lastEmittedVersion = version;
+            }
+
+            SnapshotChanged?.Invoke(this, snapshot);
+        }
     }
 
     private void ReconcileSubscriptions(IReadOnlyList<IWindowsMediaSession> sessions)

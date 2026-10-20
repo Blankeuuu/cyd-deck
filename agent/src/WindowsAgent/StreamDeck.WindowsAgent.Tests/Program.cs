@@ -30,6 +30,8 @@ if (args.Contains("--bug-repro")) { DesktopBugRegressionTests.Run(); return; }
 
 if (args.Contains("--desktop-review")) { DesktopViewportTests.Run(); return; }
 
+if (args.Contains("--runtime-media-regression")) { await RuntimeMediaRegressionTests.RunAsync(); return; }
+
 // Icon previews use the same glyph masks as the CYD; URL images round-trip to RGB565A8.
 AssertEqual(21, ShortcutIconCatalog.All.Count, "all supported icons are visible in picker");
 AssertEqual("hotkey", ShortcutIconCatalog.Normalize(" Keyboard "), "icon alias normalization");
@@ -264,12 +266,16 @@ await TestUsbRuntimeDisposesTimedOutProbeAsync();
 await TestUsbProbeDoesNotConsumeFrameAfterHelloAsync();
 await TestUsbProbeRecoversFromLeadingEmptyLineAndFragmentAsync();
 await TestUsbDeviceRuntimeHandshakeAsync();
+Console.WriteLine("UI regression: reconnect and configuration");
 await TestReconnectWithSelectedComPortAsync();
 await TestRuntimePortSwitchingAsync();
 await TestDraftNullComPortResolvesToAutomaticAsync();
 await TestSameIdLabelActionDraftPreservesDirtyAndDoesNotPersistShortcutsAsync();
+Console.WriteLine("UI regression: save failure and update continuation");
 await TestSaveFailureDoesNotTriggerReconnectAndPreservesDraftAsync();
+Console.WriteLine("UI regression: minimized updates and tray");
 await TestTrayProductionNotificationAndBalloonClickAsync();
+Console.WriteLine("UI regression: complete");
 var usbFirstCalls = new List<string>();
 AssertTrue(await WindowsAgentRuntime.SendWithUsbPriorityAsync(
     usbReady: true,
@@ -756,7 +762,8 @@ var settingsConstructor = typeof(SettingsWindow).GetConstructor([
     typeof(WindowsStartupService),
     typeof(IPairingApprovalService),
     typeof(Icon),
-    typeof(AgentConfigurationStore)]);
+    typeof(AgentConfigurationStore),
+    typeof(UpdateManager)]);
 AssertTrue(settingsConstructor is not null, "settings window is wired with native pairing service");
 
 var listenerPairingStore = Path.Combine(Path.GetTempPath(), $"streamdeck-listener-pairing-{Guid.NewGuid():N}.json");
@@ -1438,6 +1445,16 @@ static async Task TestArduinoOtaValidationFailuresAsync()
         CancellationToken.None);
     AssertTrue(!tooLarge.Success, "ota oversized image fails");
     AssertContains("too large", tooLarge.SafeError ?? string.Empty, "ota oversized safe error");
+    var changedImage = CreateFirmwareImage(2048);
+    var expectedHash = Convert.ToHexString(SHA256.HashData(changedImage));
+    changedImage[100] ^= 0xff;
+    var progressReported = false;
+    var changed = await updater.UploadAsync(new FirmwareUpdateRequest(
+        IPAddress.Loopback, "test-password", () => new MemoryStream(changedImage),
+        devicePort: 9, timeout: TimeSpan.FromMilliseconds(100), expectedSha256: expectedHash),
+        new InlineProgress<FirmwareUpdateProgress>(_ => progressReported = true));
+    AssertTrue(!changed.Success && changed.SafeError?.Contains("SHA-256") == true, "OTA rejects image changed after dialog opened");
+    AssertTrue(!progressReported, "SHA-256 rejection occurs before network transfer starts");
 }
 
 static byte[] CreateFirmwareImage(int length)
@@ -2053,6 +2070,12 @@ static async Task TestSaveFailureDoesNotTriggerReconnectAndPreservesDraftAsync()
             AssertTrue(window.IsConfigurationDirtyForTests, "Draft remains dirty after save failure");
             AssertEqual("COM9", window.GetConfigurationDraftForTests()?.Server?.UsbPort, "Draft in memory is preserved");
             AssertEqual("Configuration save failed", capturedDialogTitle, "Error was routed to UI dialog handler");
+            var updateStarted = false;
+            AssertTrue(!ResolveUpdateDraft(window, DialogResult.Cancel, () => updateStarted = true), "Cancel blocks update continuation");
+            AssertTrue(window.IsConfigurationDirtyForTests && !updateStarted, "Cancel preserves draft and does not install");
+            AssertTrue(!ResolveUpdateDraft(window, DialogResult.Yes, () => updateStarted = true), "Save defers installation until persistence succeeds");
+            await Task.Delay(100);
+            AssertTrue(!updateStarted && window.IsConfigurationDirtyForTests, "Failed save preserves draft and blocks installation");
         }
         finally
         {
@@ -2079,7 +2102,14 @@ static async Task TestTrayProductionNotificationAndBalloonClickAsync()
 
         var startup = new WindowsStartupService(new AgentOptions(true));
         using var guard = SingleInstanceGuard.Acquire("Local\\CYD_Deck_Tray_Test_" + Guid.NewGuid().ToString("N"));
-        using var context = new WindowsAgentApplicationContext(testState, testRuntime, startup, testPairing, guard, new AgentOptions(true) { StartMinimized = true });
+        using var updateHttp = new HttpClient(new TrayUpdateHttpHandler());
+        using var updates = new UpdateManager(new Version(1, 4, 0), new UpdateReleaseClient(updateHttp));
+        using var context = new WindowsAgentApplicationContext(testState, testRuntime, startup, testPairing, guard, new AgentOptions(true) { StartMinimized = true }, updates);
+        AssertTrue(context.MainWindowForTests is null, "Minimized startup has no settings window");
+        var updateDeadline = DateTime.UtcNow.AddSeconds(8);
+        while (updates.LastCheckResult is null && DateTime.UtcNow < updateDeadline) await Task.Delay(50);
+        AssertEqual(UpdateCheckStatus.UpToDate, updates.LastCheckResult?.Status, "Automatic update check runs without opening settings");
+        AssertTrue(context.MainWindowForTests is null, "Automatic check preserves minimized startup");
 
         // 1. Przejście ze stanu listening do pairing pending:
         context.CheckConnectionNotificationForTests(new AgentStatusSnapshot("pairing pending", "cyd-1", "CYD-Dev", "USB", 8765, 5000, "live", []));
@@ -2103,9 +2133,49 @@ static async Task TestTrayProductionNotificationAndBalloonClickAsync()
         context.TriggerBalloonTipClickedForTests();
         AssertEqual("Shortcuts", context.MainWindowForTests?.CurrentPageForTests, "Connected balloon click does not force navigate to Pairing");
 
+        var window = context.MainWindowForTests!;
+        window.SetConfigurationDraftForTests(testStore.LoadOrDefault() with { Server = new ServerConfiguration { UsbPort = "COM9" } });
+        var continued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        AssertTrue(!ResolveUpdateDraft(window, DialogResult.Yes, () => continued.TrySetResult()), "Update waits for asynchronous draft save");
+        await continued.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        AssertTrue(!window.IsConfigurationDirtyForTests, "Successful save permits update continuation");
+        window.SetConfigurationDraftForTests(testStore.LoadOrDefault() with { Server = new ServerConfiguration { UsbPort = "COM8" } });
+        AssertTrue(ResolveUpdateDraft(window, DialogResult.No, () => throw new Exception("Discard must use caller continuation")), "Discard permits caller to continue installation");
+        AssertTrue(!window.IsConfigurationDirtyForTests, "Discard clears unpersisted draft");
+
         context.Dispose();
         await testRuntime.DisposeAsync();
     });
+}
+
+static bool ResolveUpdateDraft(SettingsWindow window, DialogResult choice, Action continuation)
+{
+    using var timer = new System.Windows.Forms.Timer { Interval = 30 };
+    timer.Tick += (_, _) =>
+    {
+        var dialog = Application.OpenForms.Cast<Form>().FirstOrDefault(form => form.Text == "Unsaved changes");
+        if (dialog is null) return;
+        timer.Stop();
+        dialog.DialogResult = choice;
+        dialog.Close();
+    };
+    timer.Start();
+    var resolver = typeof(SettingsWindow).GetMethod("ResolveUnsavedChanges", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+    return (bool)resolver.Invoke(window, [continuation])!;
+}
+
+sealed class TrayUpdateHttpHandler : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+        Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"tag_name\":\"v1.4.0\",\"name\":\"CYD-DECK 1.4.0\",\"assets\":[]}")
+        });
+}
+
+sealed class InlineProgress<T>(Action<T> callback) : IProgress<T>
+{
+    public void Report(T value) => callback(value);
 }
 
 sealed class FailingConfigurationFileSystem : IConfigurationFileSystem

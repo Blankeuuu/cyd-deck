@@ -58,6 +58,59 @@ public sealed class CoverProcessorTests
     }
 
     [Fact]
+    public async Task EmptyThumbnailStreamReturnsNull()
+    {
+        var processor = CreateProcessor();
+        await using var source = new MemoryStream();
+
+        var result = await processor.ProcessAsync(source, TestContext.Current.CancellationToken);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task CorruptedIndexFileIsDeletedAndCoverRegenerated()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "streamdeck-covers-tests", Guid.NewGuid().ToString("N"));
+        var processor = new CoverProcessor(new CoverProcessingOptions { CacheDirectory = dir, CoverSizePixels = 128 });
+        await using var source1 = CreateWideSource();
+        var result1 = await processor.ProcessAsync(source1, TestContext.Current.CancellationToken);
+        Assert.NotNull(result1);
+
+        // Corrupt all files in index
+        var indexFiles = Directory.GetFiles(Path.Combine(dir, "index"));
+        foreach (var file in indexFiles)
+        {
+            await File.WriteAllTextAsync(file, "{ bad-json-content }", TestContext.Current.CancellationToken);
+        }
+
+        // Processing again should gracefully handle bad index and regenerate
+        await using var source2 = CreateWideSource();
+        var result2 = await processor.ProcessAsync(source2, TestContext.Current.CancellationToken);
+        Assert.NotNull(result2);
+        Assert.Equal(result1.CoverId, result2.CoverId);
+    }
+
+    [Fact]
+    public async Task ZeroByteCoverFileIsDeletedAndCoverRegenerated()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "streamdeck-covers-tests", Guid.NewGuid().ToString("N"));
+        var processor = new CoverProcessor(new CoverProcessingOptions { CacheDirectory = dir, CoverSizePixels = 128 });
+        await using var source1 = CreateWideSource();
+        var result1 = await processor.ProcessAsync(source1, TestContext.Current.CancellationToken);
+        Assert.NotNull(result1);
+
+        // Zero-out the cover file
+        await File.WriteAllBytesAsync(result1.FilePath, [], TestContext.Current.CancellationToken);
+
+        // Next read should invalidate the zero-byte file and regenerate
+        await using var source2 = CreateWideSource();
+        var result2 = await processor.ProcessAsync(source2, TestContext.Current.CancellationToken);
+        Assert.NotNull(result2);
+        Assert.True(new FileInfo(result2.FilePath).Length > 0);
+    }
+
+    [Fact]
     public async Task ProcessCreatesSquareJpegWithSha256Id()
     {
         var processor = CreateProcessor();

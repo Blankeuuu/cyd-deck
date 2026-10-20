@@ -56,16 +56,12 @@ Name: "{group}\CYD-DECK"; Filename: "{app}\CYD-DECK.exe"; AppUserModelID: "Blank
 Name: "{autodesktop}\CYD-DECK"; Filename: "{app}\CYD-DECK.exe"; Tasks: desktopicon; AppUserModelID: "Blankeuuu.CYD-DECK"
 
 [Run]
-Filename: "{app}\CYD-DECK.exe"; Description: "{cm:LaunchProgram,CYD-DECK}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\CYD-DECK.exe"; Description: "{cm:LaunchProgram,CYD-DECK}"; Flags: nowait postinstall
 
 [Code]
 function InitializeSetup(): Boolean;
-var
-  ResultCode: Integer;
 begin
   Result := True;
-  Exec('taskkill.exe', '/F /IM CYD-DECK.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill.exe', '/F /IM StreamDeck.WindowsAgent.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 function InitializeUninstall(): Boolean;

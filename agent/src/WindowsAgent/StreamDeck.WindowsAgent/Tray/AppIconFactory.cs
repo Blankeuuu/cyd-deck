@@ -42,12 +42,45 @@ internal static class AppIconFactory
         graphics.FillRoundedRectangle(
             background,
             new RectangleF(pad, pad, bodySize, bodySize),
-            25f * scale);
+            40f * scale);
 
         var tileSize = 60f * scale;
         var tileRadius = 12f * scale;
-        var p1 = pad + (37f * scale);
-        var p2 = pad + (103f * scale);
+        var p1 = pad + (34f * scale);
+        var p2 = pad + (106f * scale);
+
+        using var primary = new SolidBrush(PrimaryTileColor);
+        graphics.FillRoundedRectangle(primary, new RectangleF(p1, p1, tileSize, tileSize), tileRadius);
+        graphics.FillRoundedRectangle(primary, new RectangleF(p2, p1, tileSize, tileSize), tileRadius);
+        graphics.FillRoundedRectangle(primary, new RectangleF(p1, p2, tileSize, tileSize), tileRadius);
+
+        using var accent = new SolidBrush(AccentTileColor);
+        graphics.FillRoundedRectangle(accent, new RectangleF(p2, p2, tileSize, tileSize), tileRadius);
+
+        return bitmap;
+    }
+
+    internal static Bitmap CreateCanvasBitmap(int canvasSize = 300)
+    {
+        var bitmap = new Bitmap(canvasSize, canvasSize);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.SmoothingMode = SmoothingMode.HighQuality;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        graphics.CompositingQuality = CompositingQuality.HighQuality;
+        graphics.Clear(Color.Transparent);
+
+        var scale = canvasSize / 300f;
+
+        using var background = new SolidBrush(BackgroundColor);
+        graphics.FillRoundedRectangle(
+            background,
+            new RectangleF(50f * scale, 50f * scale, 200f * scale, 200f * scale),
+            40f * scale);
+
+        var tileSize = 60f * scale;
+        var tileRadius = 12f * scale;
+        var p1 = 84f * scale;
+        var p2 = 156f * scale;
 
         using var primary = new SolidBrush(PrimaryTileColor);
         graphics.FillRoundedRectangle(primary, new RectangleF(p1, p1, tileSize, tileSize), tileRadius);

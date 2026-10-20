@@ -42,6 +42,9 @@ public sealed class ArduinoOtaFirmwareUpdater
         var image = validation.Image;
         try
         {
+            if (request.ExpectedSha256 is not null && !string.Equals(
+                Convert.ToHexString(SHA256.HashData(image)), request.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
+                return FirmwareUpdateResult.Failed("Suma SHA-256 firmware uległa zmianie. Pobierz pakiet ponownie.");
             progress?.Report(new FirmwareUpdateProgress(0, image.Length, "Starting firmware update"));
             await UploadValidatedImageAsync(request, image, progress, cancellationToken).ConfigureAwait(false);
             progress?.Report(new FirmwareUpdateProgress(image.Length, image.Length, "Firmware update complete"));
@@ -73,7 +76,8 @@ public sealed class ArduinoOtaFirmwareUpdater
                 request.SetupPassword,
                 () => File.OpenRead(request.FirmwarePath),
                 request.DevicePort,
-                request.Timeout),
+                request.Timeout,
+                request.ExpectedSha256),
             progress,
             cancellationToken);
     }
@@ -310,11 +314,13 @@ public sealed class FirmwareUpdateRequest
         string setupPassword,
         Func<Stream> openFirmwareStream,
         int devicePort = ArduinoOtaFirmwareUpdater.DefaultOtaPort,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        string? expectedSha256 = null)
     {
         DeviceAddress = deviceAddress;
         SetupPassword = setupPassword;
         OpenFirmwareStream = openFirmwareStream;
+        ExpectedSha256 = expectedSha256;
         DevicePort = devicePort;
         Timeout = timeout ?? TimeSpan.FromSeconds(10);
     }
@@ -324,6 +330,7 @@ public sealed class FirmwareUpdateRequest
     public string SetupPassword { get; }
 
     public Func<Stream> OpenFirmwareStream { get; }
+    public string? ExpectedSha256 { get; }
 
     public int DevicePort { get; }
 
@@ -337,11 +344,13 @@ public sealed class FirmwareUpdateFileRequest
         string setupPassword,
         string firmwarePath,
         int devicePort = ArduinoOtaFirmwareUpdater.DefaultOtaPort,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        string? expectedSha256 = null)
     {
         DeviceAddress = deviceAddress;
         SetupPassword = setupPassword;
         FirmwarePath = firmwarePath;
+        ExpectedSha256 = expectedSha256;
         DevicePort = devicePort;
         Timeout = timeout ?? TimeSpan.FromSeconds(10);
     }
@@ -351,6 +360,7 @@ public sealed class FirmwareUpdateFileRequest
     public string SetupPassword { get; }
 
     public string FirmwarePath { get; }
+    public string? ExpectedSha256 { get; }
 
     public int DevicePort { get; }
 
