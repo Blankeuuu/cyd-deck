@@ -19,6 +19,17 @@ internal static class Program
         var repoRoot = ResolveRepoRoot();
         var assetsDir = Path.Combine(repoRoot, "agent", "assets");
 
+        if (args.Length == 2 && args[0] == "--inspect-exe")
+        {
+            PeIconVerifier.Verify(Path.GetFullPath(args[1]), Path.Combine(assetsDir, "cyd-deck.ico"));
+            return;
+        }
+        if (args.Length == 2 && args[0] == "--inspect-window")
+        {
+            PeIconVerifier.VerifyWindow(int.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture));
+            return;
+        }
+
         if (args != null && args.Any(a => a.Equals("--generate", StringComparison.OrdinalIgnoreCase) || a.Equals("--generate-icons", StringComparison.OrdinalIgnoreCase)))
         {
             Console.WriteLine("Generating icon assets (cyd-deck.png and cyd-deck.ico)...");
@@ -33,6 +44,7 @@ internal static class Program
         TestInstallerScriptConsistency();
         TestBuildAndPublishScriptsConsistency();
         TestAssemblyAndPeMetadata();
+        PeIconVerifier.Verify(Path.Combine(Path.GetDirectoryName(typeof(AppIdentity).Assembly.Location)!, AppIdentity.ExecutableFileName), Path.Combine(assetsDir, "cyd-deck.ico"));
 
         Console.WriteLine($"\n=== All {testsPassed}/{testsRun} Branding Tests PASSED ===");
     }
