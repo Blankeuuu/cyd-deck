@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="NavDeck" xml:space="preserve"><value>Deck Builder</value></data>
+  <data name="NavMedia" xml:space="preserve"><value>Multimedia</value></data>
+  <data name="NavMonitor" xml:space="preserve"><value>Monitor systemu</value></data>
+  <data name="NavSettings" xml:space="preserve"><value>Ustawienia</value></data>
+  <data name="NavDevice" xml:space="preserve"><value>Urządzenie</value></data>
+  <data name="NavUpdates" xml:space="preserve"><value>Aktualizacje</value></data>
+  <data name="NavLogs" xml:space="preserve"><value>Dziennik zdarzeń</value></data>
+  <data name="Tools" xml:space="preserve"><value>Narzędzia urządzenia</value></data>
+  <data name="Profile" xml:space="preserve"><value>Profil:</value></data>
+  <data name="AddProfile" xml:space="preserve"><value>Dodaj profil</value></data>
+  <data name="DuplicateProfile" xml:space="preserve"><value>Duplikuj profil</value></data>
+  <data name="DeleteProfile" xml:space="preserve"><value>Usuń profil</value></data>
+  <data name="DeleteProfileQuestion" xml:space="preserve"><value>Usunąć profil „{0}”? Jego kafelki zostaną usunięte z tego profilu. Pozostałe profile nie zmienią się. Zmiana wymaga zapisu.</value></data>
+  <data name="Save" xml:space="preserve"><value>Zapisz zmiany</value></data>
+  <data name="SaveSync" xml:space="preserve"><value>Zapisz i wyślij do CYD</value></data>
+  <data name="RetrySync" xml:space="preserve"><value>Ponów wysyłanie</value></data>
+  <data name="Saving" xml:space="preserve"><value>Zapisywanie…</value></data>
+  <data name="Sending" xml:space="preserve"><value>Wysyłanie do CYD…</value></data>
+  <data name="Dirty" xml:space="preserve"><value>Niezapisane zmiany</value></data>
+  <data name="NoChanges" xml:space="preserve"><value>Brak niezapisanych zmian</value></data>
+  <data name="LocalSaved" xml:space="preserve"><value>Zapisano lokalnie</value></data>
+  <data name="Sent" xml:space="preserve"><value>Wysłano, brak potwierdzenia</value></data>
+  <data name="SyncFailed" xml:space="preserve"><value>Zapisano, wysłanie nieudane</value></data>
+  <data name="Queued" xml:space="preserve"><value>Zapisano — oczekiwanie na CYD</value></data>
+  <data name="DirtyHelp" xml:space="preserve"><value>Zmiany pozostają na komputerze jako szkic. Zapisz, aby utrwalić je i wysłać do CYD.</value></data>
+  <data name="SentHelp" xml:space="preserve"><value>Pakiety zostały wysłane. Protokół nie potwierdził jeszcze zastosowania konfiguracji na urządzeniu.</value></data>
+  <data name="QueuedHelp" xml:space="preserve"><value>Konfiguracja jest na dysku. Po połączeniu Agent wyśle ostatnią zapisaną wersję.</value></data>
+  <data name="NoChangesHelp" xml:space="preserve"><value>Edytuj ustawienia lub kafelki, aby utworzyć szkic.</value></data>
+  <data name="RetryHelp" xml:space="preserve"><value>Wyślij ponownie zapisaną konfigurację. Nie zapisuje bieżącego szkicu.</value></data>
+  <data name="Offline" xml:space="preserve"><value>Offline</value></data>
+  <data name="Connected" xml:space="preserve"><value>Połączono</value></data>
+  <data name="Reconnect" xml:space="preserve"><value>Odśwież porty i połącz</value></data>
+  <data name="UnsavedTitle" xml:space="preserve"><value>Niezapisane zmiany</value></data>
+  <data name="UnsavedQuestion" xml:space="preserve"><value>Zapisać zmiany przed zamknięciem?</value></data>
+  <data name="Cancel" xml:space="preserve"><value>Anuluj</value></data>
+  <data name="Discard" xml:space="preserve"><value>Odrzuć zmiany</value></data>
+  <data name="LoadFailed" xml:space="preserve"><value>Nie można odczytać konfiguracji. Przywróć poprawny plik przed zapisaniem zmian.</value></data>
+  <data name="LoadFailedTitle" xml:space="preserve"><value>Konfiguracja niedostępna</value></data>
+  <data name="OperationFailed" xml:space="preserve"><value>Operacja nie powiodła się. Spróbuj ponownie.</value></data>
+  <data name="Language" xml:space="preserve"><value>Język aplikacji</value></data>
+  <data name="LanguageHelp" xml:space="preserve"><value>Zmiana języka odświeża widok i zachowuje szkic. Zapisz zmiany, aby używać go po restarcie.</value></data>
+  <data name="AppAppearance" xml:space="preserve"><value>Wygląd aplikacji</value></data>
+  <data name="DisplayAppearance" xml:space="preserve"><value>Wygląd CYD</value></data>
+  <data name="ConnectionSettings" xml:space="preserve"><value>Połączenie i zachowanie</value></data>
+  <data name="Theme" xml:space="preserve"><value>Motyw</value></data>
+  <data name="Accent" xml:space="preserve"><value>Kolor akcentu</value></data>
+  <data name="Backup" xml:space="preserve"><value>Eksport konfiguracji</value></data>
+  <data name="Restore" xml:space="preserve"><value>Import konfiguracji</value></data>
+  <data name="ExportConfig" xml:space="preserve"><value>Eksportuj konfigurację…</value></data>
+  <data name="ImportConfig" xml:space="preserve"><value>Importuj konfigurację…</value></data>
+  <data name="Dark" xml:space="preserve"><value>Ciemny</value></data>
+  <data name="Light" xml:space="preserve"><value>Jasny</value></data>
+  <data name="System" xml:space="preserve"><value>Systemowy</value></data>
+  <data name="CustomColor" xml:space="preserve"><value>Własny kolor…</value></data>
+  <data name="Clock24" xml:space="preserve"><value>Zegar 24-godzinny</value></data>
+  <data name="Brightness" xml:space="preserve"><value>Jasność</value></data>
+  <data name="TileTheme" xml:space="preserve"><value>Kolory kafelków</value></data>
+  <data name="Layout" xml:space="preserve"><value>Układ kafelków</value></data>
+  <data name="Background" xml:space="preserve"><value>Tło CYD</value></data>
+  <data name="Corners" xml:space="preserve"><value>Narożniki</value></data>
+  <data name="Rounded" xml:space="preserve"><value>Zaokrąglone</value></data>
+  <data name="Flat" xml:space="preserve"><value>Proste</value></data>
+  <data name="Pill" xml:space="preserve"><value>Pigułka</value></data>
+  <data name="Standby" xml:space="preserve"><value>Tryb czuwania</value></data>
+  <data name="StandbyTimeout" xml:space="preserve"><value>Przejście w czuwanie (s)</value></data>
+  <data name="DisplayPower" xml:space="preserve"><value>Zasilanie ekranu</value></data>
+  <data name="UsbAwake" xml:space="preserve"><value>Ekran pozostaje aktywny podczas połączenia USB z komputerem.</value></data>
+  <data name="AutoConnect" xml:space="preserve"><value>Łącz automatycznie przy starcie</value></data>
+  <data name="WakeTouch" xml:space="preserve"><value>Wybudzaj dotykiem</value></data>
+  <data name="RestoreDefaults" xml:space="preserve"><value>Przywróć domyślne…</value></data>
+  <data name="RestoreDefaultsTitle" xml:space="preserve"><value>Przywracanie domyślnych</value></data>
+  <data name="RestoreDefaultsQuestion" xml:space="preserve"><value>Zastąpić wygląd i ustawienia połączenia wartościami domyślnymi w szkicu? Zmiana nie trafi do CYD przed zapisem.</value></data>
+  <data name="LocalBrightness" xml:space="preserve"><value>Lokalna korekta jasności</value></data>
+  <data name="LocalBrightnessUnknown" xml:space="preserve"><value>Wartość lokalnej korekty nie jest raportowana przez CYD.</value></data>
+  <data name="LocalBrightnessHelp" xml:space="preserve"><value>Lokalna jasność na CYD pozostaje aktywna do jawnego zapisania ustawień ekranu.</value></data>
+  <data name="Port" xml:space="preserve"><value>Port USB</value></data>
+  <data name="Automatic" xml:space="preserve"><value>Automatycznie</value></data>
+  <data name="SavedPort" xml:space="preserve"><value>Zapisany port: {0}</value></data>
+  <data name="ActivePort" xml:space="preserve"><value>Aktywny port: {0}</value></data>
+  <data name="RuntimeOverride" xml:space="preserve"><value>Parametr uruchomienia: {0}</value></data>
+  <data name="DeviceSettings" xml:space="preserve"><value>Ustawienia urządzenia</value></data>
+  <data name="LogsSearch" xml:space="preserve"><value>Szukaj w zdarzeniach…</value></data>
+  <data name="LogsAll" xml:space="preserve"><value>Wszystkie poziomy</value></data>
+  <data name="LogsTime" xml:space="preserve"><value>Czas</value></data>
+  <data name="LogsLevel" xml:space="preserve"><value>Poziom</value></data>
+  <data name="LogsEvent" xml:space="preserve"><value>Zdarzenie</value></data>
+  <data name="LogsDetails" xml:space="preserve"><value>Szczegóły zdarzenia</value></data>
+  <data name="LogsRefresh" xml:space="preserve"><value>Odśwież</value></data>
+  <data name="LogsCopy" xml:space="preserve"><value>Kopiuj zdarzenie</value></data>
+  <data name="LogsCopyAll" xml:space="preserve"><value>Kopiuj widoczne</value></data>
+  <data name="LogsExport" xml:space="preserve"><value>Eksportuj…</value></data>
+  <data name="LogsFolder" xml:space="preserve"><value>Otwórz folder</value></data>
+  <data name="LogsClear" xml:space="preserve"><value>Wyczyść widok</value></data>
+  <data name="LogsEmpty" xml:space="preserve"><value>Brak zdarzeń pasujących do filtrów.</value></data>
+  <data name="SettingsDescription" xml:space="preserve"><value>Ustawienia Windows Agenta, urządzenia CYD, wyglądu i biblioteki akcji.</value></data>
+</root>
+

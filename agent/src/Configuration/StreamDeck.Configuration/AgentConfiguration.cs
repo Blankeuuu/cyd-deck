@@ -37,6 +37,9 @@ public sealed record AgentConfiguration
 
 public sealed record DesktopAppearanceConfiguration
 {
+    [JsonPropertyName("language")]
+    public string Language { get; init; } = "pl";
+
     public bool Clock24Hour { get; init; } = true;
     [JsonPropertyName("theme")]
     public string Theme { get; init; } = "dark";

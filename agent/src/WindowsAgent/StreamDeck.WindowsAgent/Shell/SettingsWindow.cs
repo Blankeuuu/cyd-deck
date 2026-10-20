@@ -17,17 +17,17 @@ namespace StreamDeck.WindowsAgent.Shell;
 public sealed partial class SettingsWindow : Form
 {
     internal const string AppDisplayName = "CYD-DECK";
-    private static readonly Color DarkBackground = Color.FromArgb(13, 15, 20);
+    private static readonly Color DarkBackground = UiTokens.Background;
     private static readonly Color LightBackground = Color.FromArgb(246, 247, 249);
-    private static readonly Color DarkSurface = Color.FromArgb(22, 24, 29);
+    private static readonly Color DarkSurface = UiTokens.Surface;
     private static readonly Color LightSurface = Color.FromArgb(255, 255, 255);
-    private static readonly Color DarkSurfaceAlt = Color.FromArgb(30, 32, 40);
+    private static readonly Color DarkSurfaceAlt = UiTokens.Elevated;
     private static readonly Color LightSurfaceAlt = Color.FromArgb(236, 238, 242);
-    private static readonly Color DarkBorder = Color.FromArgb(41, 43, 47);
+    private static readonly Color DarkBorder = UiTokens.Border;
     private static readonly Color LightBorder = Color.FromArgb(210, 214, 220);
-    private static readonly Color DarkTextPrimary = Color.FromArgb(244, 246, 248);
+    private static readonly Color DarkTextPrimary = UiTokens.Text;
     private static readonly Color LightTextPrimary = Color.FromArgb(29, 32, 37);
-    private static readonly Color DarkTextMuted = Color.FromArgb(156, 164, 176);
+    private static readonly Color DarkTextMuted = UiTokens.Secondary;
     private static readonly Color LightTextMuted = Color.FromArgb(93, 101, 112);
     private static Color Accent { get; set; } = Color.FromArgb(82, 153, 224);
     private static readonly Color Danger = Color.FromArgb(255, 69, 58);
@@ -186,6 +186,7 @@ public sealed partial class SettingsWindow : Form
 
         shortcutImportRefreshTimer.Tick += (_, _) => RefreshShortcutImportsIfChanged();
         var initialDesktopAppearance = LoadDesktopAppearanceConfiguration();
+        UiText.SetLanguage(initialDesktopAppearance.Language);
         var effectiveDesktopTheme = ResolveEffectiveDesktopTheme(initialDesktopAppearance.Theme);
         ApplyClientTheme(effectiveDesktopTheme, initialDesktopAppearance.Accent, null);
         contentPanel = CreateThemedContentPanel(effectiveDesktopTheme);
@@ -199,9 +200,9 @@ public sealed partial class SettingsWindow : Form
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Background;
         ForeColor = TextPrimary;
-        Font = new Font(FontFamily.Families.Any(family => family.Name == "Inter") ? "Inter" : "Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
+        Font = UiTokens.Type.Create();
         AccessibleName = "CYD-DECK settings";
-        AccessibleDescription = "Configure the local Windows Agent, connected CYD device, appearance and Agent-side shortcuts.";
+        AccessibleDescription = T("SettingsDescription");
 
         Controls.Add(CreateLayout());
         state.Changed += HandleStateChanged;
@@ -3695,6 +3696,7 @@ public sealed partial class SettingsWindow : Form
         };
 
         public bool Clock24Hour { get; set; } = true;
+        public string Language { get; set; } = "pl";
         public string Theme { get; set; } = "dark";
         public string WindowStyle { get; set; } = "acrylic";
         public string Accent { get; set; } = "#5299E0";
@@ -3704,6 +3706,7 @@ public sealed partial class SettingsWindow : Form
             return new DesktopAppearanceState
             {
                 Clock24Hour = configuration.Clock24Hour,
+                Language = configuration.Language?.StartsWith("en", StringComparison.OrdinalIgnoreCase) == true ? "en" : "pl",
                 Theme = string.IsNullOrWhiteSpace(configuration.Theme) ? "dark" : configuration.Theme,
                 WindowStyle = string.IsNullOrWhiteSpace(configuration.WindowStyle) ? "acrylic" : configuration.WindowStyle,
                 Accent = string.IsNullOrWhiteSpace(configuration.Accent) ? "#5299E0" : configuration.Accent
@@ -3715,6 +3718,7 @@ public sealed partial class SettingsWindow : Form
             return new DesktopAppearanceConfiguration
             {
                 Clock24Hour = Clock24Hour,
+                Language = Language,
                 Theme = Theme,
                 WindowStyle = WindowStyle,
                 Accent = Accent

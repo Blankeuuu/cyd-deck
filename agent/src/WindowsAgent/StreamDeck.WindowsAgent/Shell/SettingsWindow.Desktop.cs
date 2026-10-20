@@ -27,10 +27,10 @@ public sealed partial class SettingsWindow
             var button = CreateNavButton(name); button.AccessibleName = DisplayPageName(name); navButtons[name] = button; nav.Controls.Add(button);
         }
         var footer = new Panel { Dock = DockStyle.Bottom, Height = 74, Margin = Padding.Empty };
-        var tools = CompactButton("Urządzenie i narzędzia", () => {
+        var tools = CompactButton(T("Tools"), () => {
             if (desktopToolsMenu is null || desktopToolsMenu.IsDisposed) {
                 desktopToolsMenu = new ContextMenuStrip { BackColor = Surface, ForeColor = TextPrimary };
-                foreach (var name in new[] { "Device", "Pairing", "Updates", "Logs" }) desktopToolsMenu.Items.Add(name, null, (_, _) => ShowPage(name));
+                foreach (var name in new[] { "Device", "Pairing", "Updates", "Logs" }) desktopToolsMenu.Items.Add(DisplayPageName(name), null, (_, _) => ShowPage(name));
             }
             desktopToolsMenu.BackColor = Surface; desktopToolsMenu.ForeColor = TextPrimary;
             desktopToolsMenu.Show(footer, new Point(0, 0)); return Task.CompletedTask;
@@ -43,80 +43,111 @@ public sealed partial class SettingsWindow
     }
     private Control CreateDesktopToolbar(string page)
     {
-        var toolbar = new TableLayoutPanel { Dock = DockStyle.Top, Height = 56, ColumnCount = 5, RowCount = 1, Padding = new Padding(0, 4, 0, 10), AccessibleName = "Unified Toolbar" };
+        var toolbar = new TableLayoutPanel { Dock = DockStyle.Top, Height = 104, ColumnCount = 2, RowCount = 2, Padding = new Padding(0, 4, 0, 8), AccessibleName = "Unified Toolbar", Name = "UnifiedToolbar" };
         toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 270)); // Profile: label + combobox + 3 buttons with full margins
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 175)); // Connection status
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145)); // Unified feedback
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 155)); // Zapisz i synchronizuj
-        toolbar.Controls.Add(new Label { Text = DisplayPageName(page), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Font = new Font(Font.FontFamily, 14, FontStyle.Bold) }, 0, 0);
-
-        var profile = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(0, 4, 0, 0), Margin = Padding.Empty };
-        profile.Controls.Add(new Label { Text = "Profil:", AutoSize = true, TextAlign = ContentAlignment.MiddleLeft, ForeColor = TextMuted, Font = new Font(Font.FontFamily, 9.5f), Padding = new Padding(0, 6, 2, 0) });
-
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
+        toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        toolbar.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        toolbar.Controls.Add(new Label { Text = DisplayPageName(page), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Font = UiTokens.Type.Create(UiTokens.Type.Title, FontStyle.Bold) }, 0, 0);
         var configuration = LoadConfiguration(); var profiles = GetProfiles(configuration);
-        var picker = new DarkComboBox { Width = 115, AccessibleName = "Deck Profile", Margin = new Padding(2, 2, 4, 0) };
+        var profile = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty, FlowDirection = FlowDirection.LeftToRight };
+        profile.Controls.Add(new Label { Text = T("Profile"), AutoSize = true, ForeColor = TextMuted, Padding = new Padding(0, 8, 0, 0) });
+        var picker = new DarkComboBox { Width = 138, AccessibleName = "Deck Profile", Name = "DeckProfile", Margin = new Padding(4, 2, 4, 0) };
         picker.Items.AddRange(profiles.Select(p => p.Name).Cast<object>().ToArray()); picker.SelectedItem = configuration.ActiveProfile;
         picker.SelectedIndexChanged += (_, _) => {
-            if (updatingProfilePicker) return;
-            var current = LoadConfiguration(); var all = GetProfiles(current); var next = all.First(p => p.Name == (string)picker.SelectedItem!);
-            configurationDraft = current with { Profiles = all, ActiveProfile = next.Name, Shortcuts = next.Shortcuts }; MarkDraft(); InvalidatePageCache(); ShowPage(currentPage);
+            if (updatingProfilePicker || picker.SelectedItem is not string target) return;
+            RequestProfileSwitch(target, picker);
         };
         unifiedProfilePicker = picker;
         profile.Controls.Add(picker);
-
-        foreach (var item in new[] { ("+", "Dodaj profil", false, false), ("⧉", "Duplikuj profil", true, false), ("−", "Usuń profil", false, true) }) {
+        foreach (var item in new[] { ("+", "AddProfile", false, false), ("⧉", "DuplicateProfile", true, false), ("−", "DeleteProfile", false, true) }) {
             var button = CompactButton(item.Item1, () => {
-                if (!item.Item4 || MessageBox.Show(this, "Czy na pewno chcesz usunąć ten profil kafelków?", "Usuń profil", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK)
+                var activeName = LoadConfiguration().ActiveProfile;
+                if (!item.Item4 || MessageBox.Show(this, F("DeleteProfileQuestion", activeName), T("DeleteProfile"), MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK)
                     ChangeProfile(item.Item3, item.Item4);
                 return Task.CompletedTask;
             });
-            button.Width = 28; button.AccessibleName = item.Item2; button.Enabled = !item.Item4 || profiles.Length > 1; desktopTips.SetToolTip(button, item.Item2); profile.Controls.Add(button);
+            button.Width = 32; button.Height = 32; button.Margin = new Padding(1, 2, 1, 0);
+            button.AccessibleName = T(item.Item2); button.Name = item.Item2;
+            button.Enabled = !item.Item4 || profiles.Length > 1;
+            if (item.Item4) button.ForeColor = Danger;
+            desktopTips.SetToolTip(button, button.AccessibleName); profile.Controls.Add(button);
         }
         toolbar.Controls.Add(profile, 1, 0);
+        var stateRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, Margin = Padding.Empty };
+        stateRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+        stateRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 40));
+        stateRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
+        stateRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 192));
+        unifiedConnection = new Label { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, AccessibleName = "Device connection", Name = "DeviceConnection" };
+        stateRow.Controls.Add(unifiedConnection, 0, 0);
+        var refresh = CompactButton("↻", ReconnectAsync); refresh.Dock = DockStyle.Fill; refresh.AccessibleName = T("Reconnect"); refresh.Name = "ReconnectDevice"; desktopTips.SetToolTip(refresh, refresh.AccessibleName); stateRow.Controls.Add(refresh, 1, 0);
+        unifiedFeedback = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, AccessibleName = "Configuration state", Name = "ConfigurationState", Font = UiTokens.Type.Create(UiTokens.Type.Caption), Padding = new Padding(8, 0, 4, 0) };
+        stateRow.Controls.Add(unifiedFeedback, 2, 0);
+        unifiedSave = CompactButton(T("SaveSync"), async () => {
+            if (configurationDirty) await SaveConfigurationDraftAsync();
+            else await RetrySavedConfigurationAsync();
+        });
+        unifiedSave.Dock = DockStyle.Fill; unifiedSave.AccessibleName = "Save & Sync"; unifiedSave.Name = "SaveAndSync";
+        stateRow.Controls.Add(unifiedSave, 3, 0);
+        toolbar.Controls.Add(stateRow, 0, 1); toolbar.SetColumnSpan(stateRow, 2);
+        RefreshDesktopToolbar();
+        return toolbar;
+    }
 
-        var connection = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 }; connection.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); connection.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 32));
-        unifiedConnection = new Label { Dock = DockStyle.Fill, AutoEllipsis = false, TextAlign = ContentAlignment.MiddleRight, AccessibleName = "Device connection" };
-        connection.Controls.Add(unifiedConnection, 0, 0);
-        var refresh = CompactButton("↻", ReconnectAsync); refresh.Dock = DockStyle.Fill; refresh.AccessibleName = "Odśwież porty i połącz"; desktopTips.SetToolTip(refresh, refresh.AccessibleName); connection.Controls.Add(refresh, 1, 0); toolbar.Controls.Add(connection, 2, 0);
-
-        unifiedFeedback = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, AutoEllipsis = true, AccessibleName = "Configuration state", Font = new Font(Font.FontFamily, 9.5f) }; toolbar.Controls.Add(unifiedFeedback, 3, 0);
-        unifiedSave = CompactButton("Zapisz i synchronizuj", async () => await SaveConfigurationDraftAsync()); unifiedSave.Dock = DockStyle.Fill; unifiedSave.AccessibleName = "Save & Sync"; unifiedSave.BackColor = Accent; unifiedSave.ForeColor = Color.White; toolbar.Controls.Add(unifiedSave, 4, 0);
-        connectedUsbPort ??= UsbSerialPortDiscovery.FindConnectedSupportedPorts().FirstOrDefault(); RefreshDesktopToolbar(); return toolbar;
+    private void RequestProfileSwitch(string targetName, ComboBox picker)
+    {
+        var previous = LoadConfiguration().ActiveProfile;
+        if (targetName == previous) return;
+        void RestorePicker() {
+            if (picker.IsDisposed) return;
+            updatingProfilePicker = true; picker.SelectedItem = previous; updatingProfilePicker = false;
+        }
+        void Switch() {
+            if (IsDisposed || Disposing) return;
+            var current = LoadConfiguration(); var all = GetProfiles(current);
+            var next = all.FirstOrDefault(p => p.Name == targetName);
+            if (next is null) { RestorePicker(); return; }
+            configurationDraft = current with { Profiles = all, ActiveProfile = next.Name, Shortcuts = next.Shortcuts };
+            MarkDraft(); InvalidatePageCache(); ShowPage(currentPage);
+        }
+        if (savingConfiguration) { RestorePicker(); return; }
+        if (configurationDirty && !ResolveUnsavedChanges(Switch)) { RestorePicker(); return; }
+        Switch();
     }
     private void RefreshDesktopToolbar()
     {
-        var snapshot = state.Snapshot(); var connected = snapshot.HostStatus == "connected";
+        var snapshot = state.Snapshot(); var connection = snapshot.Connection;
+        var connected = connection?.IsConnected == true;
         if (unifiedProfilePicker is { IsDisposed: false }) {
             var configuration = LoadConfiguration();
             if (!Equals(unifiedProfilePicker.SelectedItem, configuration.ActiveProfile)) {
-                updatingProfilePicker = true;
-                unifiedProfilePicker.SelectedItem = configuration.ActiveProfile;
-                updatingProfilePicker = false;
+                updatingProfilePicker = true; unifiedProfilePicker.SelectedItem = configuration.ActiveProfile; updatingProfilePicker = false;
             }
+            unifiedProfilePicker.Enabled = !savingConfiguration;
         }
+        var phase = snapshot.Synchronization?.Status;
+        var failure = phase is ConfigurationSyncStatus.Failed or ConfigurationSyncStatus.Disconnected or ConfigurationSyncStatus.TimedOut or ConfigurationSyncStatus.Superseded;
+        var sending = savingConfiguration || phase == ConfigurationSyncStatus.Sending;
+        var caption = lastActionError ?? (sending ? T("Sending") : configurationDirty ? T("Dirty") : failure ? T("SyncFailed") : phase == ConfigurationSyncStatus.SentUnconfirmed ? T("Sent") : phase == ConfigurationSyncStatus.SavedOffline ? T("Queued") : T("NoChanges"));
+        var help = configurationDirty ? T("DirtyHelp") : failure ? T("RetryHelp") : phase == ConfigurationSyncStatus.SentUnconfirmed ? T("SentHelp") : phase == ConfigurationSyncStatus.SavedOffline ? T("QueuedHelp") : T("NoChangesHelp");
         if (unifiedFeedback is { IsDisposed: false }) {
-            var synced = string.Equals(configurationFeedback, "Saved · sent to CYD", StringComparison.OrdinalIgnoreCase);
-            unifiedFeedback.Text = savingConfiguration ? "Zapisywanie…"
-                : configurationDirty ? "● Szkic roboczy"
-                : (connected && synced ? "✓ Zsynchronizowano" : "✓ Zapisano lokalnie");
-            unifiedFeedback.ForeColor = configurationDirty ? (clientLightTheme ? Color.FromArgb(140, 76, 0) : AppleAmber)
-                : (connected && synced ? (clientLightTheme ? Color.DarkGreen : AppleGreen) : TextMuted);
-            desktopTips.SetToolTip(unifiedFeedback, configurationDirty
-                ? "Wprowadzono zmiany w konfiguracji. Kliknij 'Zapisz i synchronizuj', aby zapisać lokalnie i wysłać do CYD."
-                : (connected && synced
-                    ? "Konfiguracja zapisana lokalnie i pomyślnie wysłana do urządzenia CYD."
-                    : "Konfiguracja zapisana na dysku. Zostanie zsynchronizowana po podłączeniu urządzenia."));
+            unifiedFeedback.Text = caption;
+            unifiedFeedback.ForeColor = lastActionError is not null || failure ? Danger : configurationDirty ? UiTokens.Warning : TextMuted;
+            desktopTips.SetToolTip(unifiedFeedback, lastActionError ?? help);
         }
         if (unifiedConnection is { IsDisposed: false }) {
-            unifiedConnection.Text = connected ? "● " + (snapshot.RemoteAddress == "USB" ? connectedUsbPort ?? "USB" : "Wi-Fi") + " • Gotowy" : "● Offline";
-            unifiedConnection.ForeColor = connected ? (clientLightTheme ? Color.DarkGreen : AppleGreen) : TextMuted;
+            var transport = connection?.Transport == DeviceTransport.Usb ? connection.ActiveUsbPort ?? "USB" : connection?.RemoteAddress ?? "Wi-Fi";
+            unifiedConnection.Text = connected ? "● " + transport + " · " + T("Connected") : "● " + T("Offline");
+            unifiedConnection.ForeColor = connected ? (clientLightTheme ? Color.DarkGreen : UiTokens.Success) : TextMuted;
+            desktopTips.SetToolTip(unifiedConnection, string.Join(Environment.NewLine, new[] { connection?.DeviceId, T("ActivePort") + ": " + (connection?.ActiveUsbPort ?? "—"), T("SavedPort") + ": " + (connection?.SavedUsbPort ?? T("Automatic")), T("RuntimeOverride") + ": " + (connection?.CliUsbPortOverride ?? "—") }));
         }
         if (unifiedSave is { IsDisposed: false }) {
-            unifiedSave.Enabled = configurationDirty && !savingConfiguration;
+            unifiedSave.Enabled = !sending && (configurationDirty || connected);
+            unifiedSave.Text = sending ? T("Sending") : configurationDirty ? T("SaveSync") : T("RetrySync");
             unifiedSave.BackColor = unifiedSave.Enabled ? Accent : SurfaceAlt;
-            unifiedSave.ForeColor = unifiedSave.Enabled ? ReadableOn(Accent) : TextMuted;
-            desktopTips.SetToolTip(unifiedSave, unifiedSave.Enabled ? "Zapisz bieżący szkic na dysku i wyślij do urządzenia CYD" : "Brak niezapisanych zmian");
+            unifiedSave.ForeColor = unifiedSave.Enabled ? UiTokens.OnAccent(Accent) : TextMuted;
+            desktopTips.SetToolTip(unifiedSave, configurationDirty ? T("DirtyHelp") : T("RetryHelp"));
         }
     }
     private static Color ReadableOn(Color color)
@@ -189,7 +220,7 @@ public sealed partial class SettingsWindow
             };
             desktopTips.SetToolTip(button, $"{choice.Name} ({choice.Color})"); panel.Controls.Add(button);
         }
-        var custom = CompactButton("Własny kolor…", () => {
+        var custom = CompactButton(T("CustomColor"), () => {
             if (ModernColorPickerDialog.ShowColorPicker(this, value, out var picked)) {
                 value = picked;
                 panel.Tag = value;

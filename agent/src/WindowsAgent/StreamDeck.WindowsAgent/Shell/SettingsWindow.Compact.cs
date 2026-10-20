@@ -15,8 +15,10 @@ public sealed partial class SettingsWindow
     private Label? unifiedFeedback;
     private DarkComboBox? unifiedProfilePicker;
     private bool updatingProfilePicker;
-    private string? connectedUsbPort;
     private string configurationFeedback = "Ready";
+    private string? lastActionError;
+    private static string T(string key) => UiText.Get("Shell." + key);
+    private static string F(string key, params object?[] values) => UiText.Format("Shell." + key, values);
 
     protected override void OnDpiChanged(DpiChangedEventArgs e)
     {
@@ -26,11 +28,13 @@ public sealed partial class SettingsWindow
 
     private static string DisplayPageName(string page) => page switch
     {
-        "Shortcuts" => "Deck Builder",
-        "Appearance" => "Settings",
-        "Media" => "Media Controls",
-        "Monitor" => "System Monitor",
-        "Pairing" => "Urządzenia",
+        "Shortcuts" => T("NavDeck"),
+        "Appearance" => T("NavSettings"),
+        "Media" => T("NavMedia"),
+        "Monitor" => T("NavMonitor"),
+        "Pairing" or "Device" => T("NavDevice"),
+        "Updates" => T("NavUpdates"),
+        "Logs" => T("NavLogs"),
         _ => page
     };
 
@@ -40,14 +44,14 @@ public sealed partial class SettingsWindow
     private bool ResolveUnsavedChanges(Action? afterSave = null)
     {
         if (!configurationDirty) return true;
-        using var dialog = new Form { Text = "Unsaved changes", ClientSize = new Size(420, 130), StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, BackColor = Surface, ForeColor = TextPrimary, Font = Font };
-        dialog.Controls.Add(new Label { Text = "Save your changes before closing?", Dock = DockStyle.Top, Height = 60, Padding = new Padding(20), AutoSize = false });
+        using var dialog = new Form { Text = T("UnsavedTitle"), Name = "UnsavedChangesDialog", ClientSize = new Size(480, 160), StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, BackColor = Surface, ForeColor = TextPrimary, Font = Font };
+        dialog.Controls.Add(new Label { Text = T("UnsavedQuestion"), Dock = DockStyle.Top, Height = 72, Padding = new Padding(20), AutoSize = false });
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, FlowDirection = FlowDirection.RightToLeft };
-        var cancel = CompactButton("Cancel", () => Task.CompletedTask);
+        var cancel = CompactButton(T("Cancel"), () => Task.CompletedTask);
         cancel.DialogResult = DialogResult.Cancel;
-        var discard = CompactButton("Discard", () => Task.CompletedTask);
+        var discard = CompactButton(T("Discard"), () => Task.CompletedTask);
         discard.DialogResult = DialogResult.No;
-        var save = CompactButton("Save", () => Task.CompletedTask);
+        var save = CompactButton(T("Save"), () => Task.CompletedTask);
         save.DialogResult = DialogResult.Yes;
         actions.Controls.AddRange([cancel, discard, save]);
         dialog.Controls.Add(actions);
@@ -79,6 +83,33 @@ public sealed partial class SettingsWindow
         else afterSave();
     }
 
+    private async Task RetrySavedConfigurationAsync()
+    {
+        if (savingConfiguration) return;
+        try
+        {
+            savingConfiguration = true;
+            lastActionError = null;
+            RefreshUnifiedToolbar();
+            await runtime.RetryConfigurationSyncAsync();
+        }
+        catch (Exception exception)
+        {
+            configurationFeedback = "Saved · sync failed";
+            AgentDiagnosticLog.Write($"Saved configuration retry failed: {exception.GetType().Name}");
+        }
+        finally { savingConfiguration = false; RefreshUnifiedToolbar(); }
+    }
+
+    private void SetUiLanguage(string language)
+    {
+        UiText.SetLanguage(language);
+        foreach (var (page, button) in navButtons) { button.Text = DisplayPageName(page); button.AccessibleName = button.Text; }
+        desktopToolsMenu?.Dispose(); desktopToolsMenu = null;
+        void Refresh() { if (IsDisposed || Disposing) return; InvalidatePageCache(); ShowPage(currentPage); }
+        if (IsHandleCreated) BeginInvoke((Action)Refresh); else Refresh();
+    }
+
     internal async Task<bool> SaveConfigurationDraftAsync()
     {
         if (savingConfiguration) return false;
@@ -86,7 +117,9 @@ public sealed partial class SettingsWindow
         try { saved = configurationStore.LoadOrDefault(); }
         catch (Exception exception)
         {
-            MessageBox.Show(this, $"Recover the existing configuration before saving. {exception.GetType().Name}", "Configuration unavailable", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            AgentDiagnosticLog.Write($"Configuration unavailable: {exception.GetType().Name}");
+            if (DialogMessageHookForTests is not null) DialogMessageHookForTests(T("LoadFailedTitle"), T("LoadFailed"));
+            else MessageBox.Show(this, T("LoadFailed"), T("LoadFailedTitle"), MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
         var candidate = LoadConfiguration();
@@ -104,6 +137,8 @@ public sealed partial class SettingsWindow
             themeRebuilt = previousLight != clientLightTheme;
         }
         configurationDirty = false;
+        lastActionError = null;
+        state.MarkConfigurationSaved(candidate.Server?.UsbPort);
         savingConfiguration = true;
         if (themeRebuilt)
         {
@@ -114,9 +149,7 @@ public sealed partial class SettingsWindow
         try
         {
             if (saved.Server != candidate.Server) await runtime.ReconnectAsync();
-            var shortcutsSent = await runtime.UpdateShortcutsAsync(candidate.Shortcuts ?? [], assignedSlots: candidate.Profiles.FirstOrDefault(p => p.Name == candidate.ActiveProfile)?.AssignedShortcutIds);
-            var settingsSent = await runtime.ApplyDeviceSettingsAsync(candidate.Appearance ?? new());
-            synced = shortcutsSent && settingsSent;
+            synced = await runtime.SyncSavedConfigurationAsync();
         }
         catch (Exception exception)
         {
@@ -128,6 +161,7 @@ public sealed partial class SettingsWindow
             configurationFeedback = synced ? "Saved · sent to CYD" : "Saved · sync on reconnect";
             RefreshUnifiedToolbar();
         }
+        if (UiText.Language != candidate.DesktopAppearance.Language) SetUiLanguage(candidate.DesktopAppearance.Language);
         return true;
     }
 
@@ -167,12 +201,17 @@ public sealed partial class SettingsWindow
 
     private static RoundedButton CompactButton(string text, Func<Task> action)
     {
-        var button = new RoundedButton { Text = text, UseMnemonic = false, AutoSize = false, Width = 108, Height = 32, FlatStyle = FlatStyle.Flat, BackColor = SurfaceAlt, ForeColor = TextPrimary, Margin = new Padding(3), Cursor = Cursors.Hand, AccessibleName = text };
+        var button = new RoundedButton { Text = text, UseMnemonic = false, AutoSize = false, Width = 132, Height = 36, FlatStyle = FlatStyle.Flat, BackColor = SurfaceAlt, ForeColor = TextPrimary, Margin = new Padding(UiTokens.Space.Xs), Cursor = Cursors.Hand, AccessibleName = text };
         button.FlatAppearance.BorderColor = Border;
         button.Click += async (_, _) =>
         {
+            var window = button.FindForm() as SettingsWindow;
+            if (window is not null) window.lastActionError = null;
             try { await action(); }
-            catch (Exception exception) { AgentDiagnosticLog.Write($"UI action failed: {exception.GetType().Name}"); }
+            catch (Exception exception) {
+                AgentDiagnosticLog.Write($"UI action failed: {exception.GetType().Name}");
+                if (window is { IsDisposed: false }) { window.lastActionError = T("OperationFailed"); window.RefreshUnifiedToolbar(); }
+            }
         };
         return button;
     }
@@ -194,7 +233,7 @@ public sealed partial class SettingsWindow
         field.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         field.Controls.Add(new Label { Text = label, Dock = DockStyle.Fill, ForeColor = TextMuted, AutoEllipsis = true }, 0, 0);
         control.Dock = DockStyle.Fill;
-        control.AccessibleName = label;
+        if (!string.IsNullOrEmpty(label)) control.AccessibleName = label;
         control.Margin = new Padding(0, 0, 0, 4);
         field.Controls.Add(control, 0, 1);
         card.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
