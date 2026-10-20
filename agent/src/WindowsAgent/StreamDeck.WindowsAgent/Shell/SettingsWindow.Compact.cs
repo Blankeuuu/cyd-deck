@@ -161,7 +161,7 @@ public sealed partial class SettingsWindow
             configurationFeedback = synced ? "Saved · sent to CYD" : "Saved · sync on reconnect";
             RefreshUnifiedToolbar();
         }
-        if (UiText.Language != candidate.DesktopAppearance.Language) SetUiLanguage(candidate.DesktopAppearance.Language);
+        var targetLanguage = candidate.DesktopAppearance?.Language ?? "pl"; if (UiText.Language != targetLanguage) SetUiLanguage(targetLanguage);
         return true;
     }
 

@@ -271,7 +271,7 @@ public sealed partial class SettingsWindow
         if (isConnected)
         {
             var isUsb = snapshot.RemoteAddress == "USB";
-            var portDesc = isUsb ? (connectedUsbPort ?? "USB") : snapshot.RemoteAddress ?? "Wi-Fi";
+            var portDesc = isUsb ? (snapshot.Connection?.ActiveUsbPort ?? "USB") : snapshot.RemoteAddress ?? "Wi-Fi";
             pairingConnectionBadge.Text = $"● Połączono ({portDesc}) • Urządzenie aktywne";
             pairingConnectionBadge.ForeColor = clientLightTheme ? Color.FromArgb(0, 100, 0) : AppleGreen;
         }
