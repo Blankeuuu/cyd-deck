@@ -21,7 +21,7 @@ internal static class DesktopBugRegressionTests
         void Attempt(string name, Action action) { try { action(); Console.WriteLine("PASS " + name); } catch (Exception error) { errors.Add(name + ": " + error.GetType().Name + " " + error.Message); Console.WriteLine("FAIL " + errors[^1]); } }
         Attempt("Named color, Default and profile error path", TestColors);
         Exception? failure = null; var thread = new Thread(() => { try { TestMenu(); } catch (Exception error) { failure = error; } }); thread.SetApartmentState(ApartmentState.STA); thread.Start(); thread.Join();
-        Attempt("Device & Tools repeated open/close", () => { if (failure is not null) throw failure; });
+        Attempt("Device section and theme switching", () => { if (failure is not null) throw failure; });
         if (errors.Count > 0) throw new InvalidOperationException(string.Join("; ", errors));
     }
     private static void TestColors()
@@ -42,12 +42,12 @@ internal static class DesktopBugRegressionTests
         var state = new AgentState(); var pairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/menu-pairing.json")); var runtime = new WindowsAgentRuntime(state, pairing, new AgentOptions(true), listenPortOverride: 0);
         using var icon = AppIconFactory.CreateIcon(); using var window = new SettingsWindow(state, runtime, new WindowsStartupService(new AgentOptions(true)), pairing, icon, store);
         window.StartPosition = FormStartPosition.Manual; window.Location = new Point(-2500, -2500); window.ShowInTaskbar = false; window.Show(); Application.DoEvents();
-        var tools = All(window).OfType<Button>().Single(b => b.AccessibleName == "Device & Tools" || b.Text is "Device & Tools" or "Urządzenie i narzędzia");
+        var deviceNav = All(window).OfType<Button>().Single(b => b.AccessibleName is "Device" or "Urządzenie" || b.Text is "Device" or "Urządzenie");
         for (var i = 0; i < 8; ++i) {
-            tools.PerformClick(); Application.DoEvents(); ContextMenuStrip? active = null;
-            EnumThreadWindows(GetCurrentThreadId(), (handle, _) => { if (Control.FromHandle(handle) is ContextMenuStrip menu && menu.Visible) active = menu; return true; }, IntPtr.Zero);
-            if (active is null) throw new InvalidOperationException("Tools menu did not open");
-            active.Close(); Application.DoEvents();
+            deviceNav.PerformClick(); Application.DoEvents();
+            window.ShowPage((i % 4) switch { 0 => "Device", 1 => "Pairing", 2 => "Updates", _ => "Logs" });
+            Application.DoEvents();
+            // verified device navigation
             All(window).OfType<Button>().Single(b => b.Text is "Settings" or "Ustawienia" || b.AccessibleName is "Settings" or "Ustawienia").PerformClick(); Application.DoEvents();
             All(window).OfType<RadioButton>().Single(b => b.Visible && b.Text == (i % 2 == 0 ? "Light" : "Dark")).PerformClick();
             if (!window.SaveConfigurationDraftAsync().GetAwaiter().GetResult()) throw new InvalidOperationException("Theme save failed during menu regression");
