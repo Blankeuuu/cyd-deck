@@ -4,6 +4,7 @@ using StreamDeck.WindowsAgent.Shell;
 using StreamDeck.Host;
 using StreamDeck.Media;
 using StreamDeck.Protocol;
+using StreamDeck.Configuration;
 
 namespace StreamDeck.WindowsAgent.Tray;
 
@@ -32,6 +33,7 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
     private bool resourcesDisposed;
     private readonly UpdateManager updateManager;
     private readonly CancellationTokenSource updateLifetime = new();
+    private readonly AgentConfigurationStore? configurationStore;
     private string? lastKnownHostStatus;
     private string? balloonTipTargetPage;
 
@@ -42,8 +44,10 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
         IPairingApprovalService pairing,
         SingleInstanceGuard singleInstance,
         AgentOptions options,
-        UpdateManager? updateManager = null)
+        UpdateManager? updateManager = null,
+        AgentConfigurationStore? configurationStore = null)
     {
+        this.configurationStore = configurationStore;
         this.updateManager = updateManager ?? new UpdateManager();
         this.state = state;
         this.runtime = runtime;
@@ -236,7 +240,8 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
             AgentDiagnosticLog.Write("ShowMainWindow executing");
             if (mainWindow is null || mainWindow.IsDisposed)
             {
-                mainWindow = new SettingsWindow(state, runtime, startup, pairing, appIcon, sharedUpdateManager: updateManager);
+                mainWindow = new SettingsWindow(state, runtime, startup, pairing, appIcon,
+                    configurationOverride: configurationStore, sharedUpdateManager: updateManager);
             }
 
             if (!mainWindow.Visible)

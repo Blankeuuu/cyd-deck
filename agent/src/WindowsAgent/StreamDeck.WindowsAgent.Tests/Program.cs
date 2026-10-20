@@ -30,6 +30,13 @@ if (args.Contains("--bug-repro")) { DesktopBugRegressionTests.Run(); return; }
 
 if (args.Contains("--desktop-review")) { DesktopViewportTests.Run(); return; }
 
+if (args.Contains("--tray-updates-regression"))
+{
+    await TestTrayProductionNotificationAndBalloonClickAsync();
+    Console.WriteLine("PASS isolated tray/update configuration regression");
+    return;
+}
+
 if (args.Contains("--runtime-media-regression")) { await RuntimeMediaRegressionTests.RunAsync(); return; }
 
 // Icon previews use the same glyph masks as the CYD; URL images round-trip to RGB565A8.
@@ -2104,7 +2111,8 @@ static async Task TestTrayProductionNotificationAndBalloonClickAsync()
         using var guard = SingleInstanceGuard.Acquire("Local\\CYD_Deck_Tray_Test_" + Guid.NewGuid().ToString("N"));
         using var updateHttp = new HttpClient(new TrayUpdateHttpHandler());
         using var updates = new UpdateManager(new Version(1, 4, 0), new UpdateReleaseClient(updateHttp));
-        using var context = new WindowsAgentApplicationContext(testState, testRuntime, startup, testPairing, guard, new AgentOptions(true) { StartMinimized = true }, updates);
+        using var context = new WindowsAgentApplicationContext(testState, testRuntime, startup, testPairing, guard,
+            new AgentOptions(true) { StartMinimized = true }, updates, configurationStore: testStore);
         AssertTrue(context.MainWindowForTests is null, "Minimized startup has no settings window");
         var updateDeadline = DateTime.UtcNow.AddSeconds(8);
         while (updates.LastCheckResult is null && DateTime.UtcNow < updateDeadline) await Task.Delay(50);
@@ -2139,9 +2147,11 @@ static async Task TestTrayProductionNotificationAndBalloonClickAsync()
         AssertTrue(!ResolveUpdateDraft(window, DialogResult.Yes, () => continued.TrySetResult()), "Update waits for asynchronous draft save");
         await continued.Task.WaitAsync(TimeSpan.FromSeconds(5));
         AssertTrue(!window.IsConfigurationDirtyForTests, "Successful save permits update continuation");
+        AssertEqual("COM9", testStore.LoadOrDefault().Server?.UsbPort, "Tray saves only to its injected fixture store");
         window.SetConfigurationDraftForTests(testStore.LoadOrDefault() with { Server = new ServerConfiguration { UsbPort = "COM8" } });
         AssertTrue(ResolveUpdateDraft(window, DialogResult.No, () => throw new Exception("Discard must use caller continuation")), "Discard permits caller to continue installation");
         AssertTrue(!window.IsConfigurationDirtyForTests, "Discard clears unpersisted draft");
+        AssertEqual("COM9", testStore.LoadOrDefault().Server?.UsbPort, "Discard preserves saved fixture configuration");
 
         context.Dispose();
         await testRuntime.DisposeAsync();
