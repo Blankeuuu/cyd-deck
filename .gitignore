@@ -82,3 +82,5 @@ serial_*.txt
 *.keystore
 __pycache__/
 *.pyc
+
+/ux-*/
