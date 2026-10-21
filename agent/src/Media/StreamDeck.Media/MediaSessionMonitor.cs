@@ -55,8 +55,11 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
     private readonly IMediaSessionMapper _mapper;
     private readonly object _gate = new();
     private readonly object _publishGate = new();
+    private readonly object _refreshScheduleGate = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly HashSet<IWindowsMediaSession> _subscribedSessions = [];
+    private Task? _backgroundRefreshTask;
+    private bool _refreshQueued;
     private IWindowsMediaSession? _selectedSession;
     private IWindowsMediaSession? _currentSnapshotSession;
     private bool _started;
@@ -202,6 +205,7 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        Task? backgroundRefreshTask;
         lock (_gate)
         {
             if (_disposed)
@@ -211,6 +215,23 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
 
             _disposed = true;
             _cts.Cancel();
+        }
+
+        lock (_refreshScheduleGate)
+        {
+            _refreshQueued = false;
+            backgroundRefreshTask = _backgroundRefreshTask;
+        }
+
+        if (backgroundRefreshTask is not null)
+        {
+            try
+            {
+                await backgroundRefreshTask.ConfigureAwait(false);
+            }
+            catch
+            {
+            }
         }
 
         lock (_publishGate)
@@ -253,9 +274,9 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
             if (selectedSession is null) return false;
 
             var accepted = await command(selectedSession).ConfigureAwait(false);
-            // Native acceptance is not playback confirmation. Publish only a new read,
-            // also after rejection, because SMTC events can be delayed or omitted.
-            await RefreshSafelyAsync(cancellationToken).ConfigureAwait(false);
+            // Native acceptance is not playback confirmation. Trigger a bounded, non-blocking
+            // background refresh so metadata/thumbnail I/O does not delay Host ACK.
+            ScheduleRefresh();
             return accepted;
         }
         catch (OperationCanceledException)
@@ -265,6 +286,70 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
         catch
         {
             return false;
+        }
+    }
+
+    private void ScheduleRefresh()
+    {
+        lock (_refreshScheduleGate)
+        {
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+            }
+
+            if (_backgroundRefreshTask is not null && !_backgroundRefreshTask.IsCompleted)
+            {
+                _refreshQueued = true;
+                return;
+            }
+
+            // Async methods may do synchronous COM/stream work before their first
+            // await. Keep that work off the command/transport caller as well.
+            _backgroundRefreshTask = Task.Run(ProcessQueuedRefreshesAsync, CancellationToken.None);
+        }
+    }
+
+    private async Task ProcessQueuedRefreshesAsync()
+    {
+        while (true)
+        {
+            CancellationToken ct;
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                ct = _cts.Token;
+            }
+
+            try
+            {
+                await RefreshSafelyAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch
+            {
+            }
+
+            lock (_refreshScheduleGate)
+            {
+                if (!_refreshQueued)
+                {
+                    _backgroundRefreshTask = null;
+                    return;
+                }
+
+                _refreshQueued = false;
+            }
         }
     }
 

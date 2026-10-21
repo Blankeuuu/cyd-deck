@@ -1,3 +1,4 @@
+using System.Text.Json;
 using StreamDeck.Audio;
 using StreamDeck.Protocol;
 using StreamDeck.Configuration;
@@ -19,21 +20,44 @@ public sealed class DeviceProtocolSession(
     Func<DeviceShortcutConfiguration>? shortcutsProvider = null,
     Func<AppearanceConfiguration>? appearanceProvider = null,
     Func<IProtocolSink, CancellationToken, ValueTask>? initialMediaSender = null,
-    Func<CoverRequestMessage, CancellationToken, ValueTask>? coverRequestHandler = null)
+    Func<CoverRequestMessage, CancellationToken, ValueTask>? coverRequestHandler = null,
+    Action<string>? sessionErrorHandler = null)
 {
     private readonly Guid pendingSessionId = Guid.NewGuid();
     private bool authorized;
     private HelloMessage? pendingHello;
     private bool pairingChangeSubscribed;
+    private readonly SemaphoreSlim shortcutExecution = new(1, 1);
+
+    public bool IsAuthorized => authorized;
 
     public async Task HandleTextMessageAsync(string message, CancellationToken cancellationToken = default)
     {
         var parseResult = ProtocolSerializer.Parse(message);
         if (!parseResult.IsSuccess)
         {
-            await sink.SendTextAsync(
-                ProtocolStateMapper.CreateConnectionState("degraded", parseResult.ErrorMessage),
-                cancellationToken).ConfigureAwait(false);
+            if (!authorized)
+            {
+                await sink.SendTextAsync(
+                    ProtocolStateMapper.CreateConnectionState("degraded", parseResult.ErrorMessage),
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            sessionErrorHandler?.Invoke(parseResult.ErrorMessage ?? "Malformed message payload.");
+
+            var (safeRequestId, frameType) = TryInspectIncomingEnvelope(message);
+            // Never send an ACK in response to an incoming ACK (even malformed ones); prevents ACK-of-ACK loops.
+            if (safeRequestId is not null && !string.Equals(frameType, ProtocolConstants.MessageTypes.Ack, StringComparison.OrdinalIgnoreCase))
+            {
+                await sink.SendTextAsync(
+                    ProtocolSerializer.SerializeAck(
+                        safeRequestId,
+                        success: false,
+                        new ProtocolError("invalidPayload", parseResult.ErrorMessage ?? "Malformed message payload.")),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
 
@@ -50,10 +74,32 @@ public sealed class DeviceProtocolSession(
             return;
         }
 
+        if (envelope.Type == ProtocolConstants.MessageTypes.Ack)
+        {
+            // Incoming ACK (e.g. acknowledging device.settings) is observed/ignored without reply.
+            // Prevents ACK-of-ACK ping-pong loops.
+            return;
+        }
+
         if (envelope.Type == ProtocolConstants.MessageTypes.CoverRequest)
         {
             if (coverRequestHandler is not null)
                 await coverRequestHandler(ProtocolSerializer.DeserializeData<CoverRequestMessage>(envelope), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (envelope.Type == ProtocolConstants.MessageTypes.ShortcutExecute)
+        {
+            if (!await shortcutExecution.WaitAsync(0, cancellationToken).ConfigureAwait(false)) {
+                await sink.SendTextAsync(ProtocolSerializer.SerializeAck(envelope.RequestId!, false,
+                    new ProtocolError("busy", "Another Shortcut is executing.")), cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            _ = Task.Run(async () => {
+                try { await dispatcher.DispatchAsync(envelope, sink, cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+                catch { /* Transport is gone; execution is uncertain and must never be retried. */ }
+                finally { shortcutExecution.Release(); }
+            }, CancellationToken.None);
             return;
         }
 
@@ -205,5 +251,39 @@ public sealed class DeviceProtocolSession(
         await sink.SendTextAsync(
             ProtocolStateMapper.CreateConnectionState("degraded", "Device is not paired or authorized."),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private static (string? RequestId, string? Type) TryInspectIncomingEnvelope(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                string? type = null;
+                if (doc.RootElement.TryGetProperty("type", out var typeProp) && typeProp.ValueKind == JsonValueKind.String)
+                {
+                    type = typeProp.GetString();
+                }
+
+                string? safeReqId = null;
+                if (doc.RootElement.TryGetProperty("requestId", out var reqProp) && reqProp.ValueKind == JsonValueKind.String)
+                {
+                    var req = reqProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(req) && req.Length <= 64 && req.All(c => c >= 0x21 && c <= 0x7e))
+                    {
+                        safeReqId = req;
+                    }
+                }
+
+                return (safeReqId, type);
+            }
+        }
+        catch
+        {
+            // Unparsable JSON
+        }
+
+        return (null, null);
     }
 }

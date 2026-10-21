@@ -4,6 +4,8 @@ public sealed class WindowsMasterVolumeService : IDisposable
 {
     private readonly INativeAudioEndpoint _endpoint;
     private bool _disposed;
+    private long revision;
+    private readonly object publishGate = new();
 
     public WindowsMasterVolumeService(INativeAudioEndpoint endpoint)
     {
@@ -110,8 +112,11 @@ public sealed class WindowsMasterVolumeService : IDisposable
 
     private void Publish(AudioSnapshot snapshot)
     {
-        CurrentSnapshot = snapshot;
-        AudioChanged?.Invoke(this, snapshot);
+        lock (publishGate) {
+            snapshot = snapshot with { Revision = ++revision };
+            CurrentSnapshot = snapshot;
+            AudioChanged?.Invoke(this, snapshot);
+        }
     }
 
     private void ThrowIfDisposed()

@@ -65,7 +65,7 @@ public sealed record DevicePerformanceInfo(long LoopMaxUs, long RenderMaxUs, lon
 
 public sealed record DeviceAudioInfo(int VolumePercent, bool Muted);
 
-public sealed record DeviceCoverInfo(int Status, bool Rendered);
+public sealed record DeviceCoverInfo(int Status, bool Rendered, string? CoverId = null);
 
 public sealed record DeviceWifiInfo(bool Connected, string? Ssid, int? Rssi, string? Ip);
 
@@ -91,7 +91,7 @@ public sealed record MediaTimelineMessage(long PositionMs, long? DurationMs, lon
 
 public sealed record MediaPlaybackMessage(bool Playing);
 
-public sealed record AudioUpdateMessage(int VolumePercent, bool Muted);
+public sealed record AudioUpdateMessage(int VolumePercent, bool Muted, long? Revision = null);
 
 public sealed record SystemStatsMessage(
     double CpuPercent,

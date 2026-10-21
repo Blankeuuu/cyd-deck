@@ -7,7 +7,8 @@ public sealed class DeviceCommandDispatcher(
     IHostAudioController audioController,
     IHostShortcutExecutor shortcutExecutor,
     IHostSystemCommandExecutor systemCommandExecutor,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    Action<string>? diagnostics = null)
 {
     private readonly TimeProvider timeProvider = timeProvider ?? TimeProvider.System;
 
@@ -18,6 +19,12 @@ public sealed class DeviceCommandDispatcher(
 
         switch (envelope.Type)
         {
+            case "diagnostic.event":
+                var trace = ProtocolSerializer.DeserializeData<DeviceDiagnosticEvent>(envelope);
+                // Accept only bounded identifiers, never arbitrary device log text.
+                static string Safe(string? value) => new((value ?? "").Where(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_').Take(64).ToArray());
+                diagnostics?.Invoke($"device stage={Safe(trace.Stage)} correlation={Safe(trace.Correlation)} deviceMs={trace.DeviceMs} transport={Safe(trace.Transport)}");
+                break;
             case ProtocolConstants.MessageTypes.MediaCommand:
                 await AckCommandAsync(
                     envelope,
@@ -32,10 +39,14 @@ public sealed class DeviceCommandDispatcher(
                     sink,
                     () => audioController.SetVolumeAsync(ProtocolSerializer.DeserializeData<AudioSetVolumeMessage>(envelope).VolumePercent, cancellationToken),
                     cancellationToken).ConfigureAwait(false);
+                if (audioController.Snapshot is { } audio)
+                    await sink.SendTextAsync(ProtocolStateMapper.CreateAudioUpdate(audio, envelope.RequestId), cancellationToken).ConfigureAwait(false);
                 break;
 
             case ProtocolConstants.MessageTypes.AudioToggleMute:
                 await AckCommandAsync(envelope, sink, () => audioController.ToggleMuteAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
+                if (audioController.Snapshot is { } muteSnapshot)
+                    await sink.SendTextAsync(ProtocolStateMapper.CreateAudioUpdate(muteSnapshot, envelope.RequestId), cancellationToken).ConfigureAwait(false);
                 break;
 
             case ProtocolConstants.MessageTypes.ShortcutExecute:
@@ -75,7 +86,7 @@ public sealed class DeviceCommandDispatcher(
         }
     }
 
-    private static async Task AckCommandAsync(
+    private async Task AckCommandAsync(
         ProtocolEnvelope envelope,
         IProtocolSink sink,
         Func<Task<bool>> command,
@@ -87,18 +98,34 @@ public sealed class DeviceCommandDispatcher(
         }
 
         bool success;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        diagnostics?.Invoke($"request={envelope.RequestId} stage=command_received type={envelope.Type}");
+        string errorCode = "commandFailed";
         try
         {
+            diagnostics?.Invoke($"request={envelope.RequestId} stage=execution_started");
             success = await command().ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             throw;
         }
-        catch
+        catch (Exception error)
         {
             success = false;
+            errorCode = error switch {
+                HostCommandException commandError => commandError.Code,
+                FileNotFoundException => "targetNotFound",
+                System.ComponentModel.Win32Exception { NativeErrorCode: 2 or 3 } => "targetNotFound",
+                System.ComponentModel.Win32Exception { NativeErrorCode: 5 } => "accessDenied",
+                System.ComponentModel.Win32Exception => "actionUnavailable",
+                UnauthorizedAccessException => "accessDenied",
+                NotSupportedException => "actionUnavailable",
+                ArgumentException => "invalidConfiguration",
+                _ => "executionFailed"
+            };
         }
+        diagnostics?.Invoke($"request={envelope.RequestId} stage=execution_completed success={success} elapsedMs={System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F2}");
 
         if (success)
         {
@@ -106,7 +133,7 @@ public sealed class DeviceCommandDispatcher(
             return;
         }
 
-        await SendFailureAckAsync(envelope.RequestId, "commandFailed", "Host command failed or is not available.", sink, cancellationToken)
+        await SendFailureAckAsync(envelope.RequestId, errorCode, "Host command failed or is not available.", sink, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -121,4 +148,11 @@ public sealed class DeviceCommandDispatcher(
             ProtocolSerializer.SerializeAck(requestId, success: false, new ProtocolError(code, message)),
             cancellationToken);
     }
+}
+
+public sealed record DeviceDiagnosticEvent(string Stage, string Correlation, long DeviceMs, string Transport);
+
+public sealed class HostCommandException(string code) : Exception("Host command could not be completed.")
+{
+    public string Code { get; } = code;
 }

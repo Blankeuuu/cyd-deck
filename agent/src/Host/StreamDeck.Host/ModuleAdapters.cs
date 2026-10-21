@@ -24,6 +24,7 @@ public sealed class MediaSessionMonitorController(MediaSessionMonitor monitor) :
 
 public sealed class MasterVolumeController(WindowsMasterVolumeService volumeService) : IHostAudioController
 {
+    public AudioSnapshot? Snapshot => volumeService.CurrentSnapshot;
     public Task<bool> SetVolumeAsync(int volumePercent, CancellationToken cancellationToken = default)
     {
         return Task.FromResult(volumeService.SetVolume(volumePercent));
@@ -40,6 +41,7 @@ public sealed class ShortcutExecutorController(ShortcutExecutor shortcutExecutor
     public async Task<bool> ExecuteAsync(string shortcutId, CancellationToken cancellationToken = default)
     {
         var result = await shortcutExecutor.ExecuteAsync(new ShortcutExecuteRequest(shortcutId), cancellationToken).ConfigureAwait(false);
+        if (result.Status == ShortcutExecutionStatus.UnknownShortcut) throw new HostCommandException("unknownShortcut");
         return result.Status == ShortcutExecutionStatus.Executed;
     }
 }

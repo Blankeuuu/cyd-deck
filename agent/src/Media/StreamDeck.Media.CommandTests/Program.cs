@@ -13,7 +13,8 @@ foreach (var (name, test) in new (string, Func<Task>)[]
     ("Accepted command does not fabricate paused state", AcceptedWithoutPlaybackChange),
     ("Session switch while a command is pending keeps the new snapshot", SwitchWhilePending),
     ("Native exception is a failed ACK", NativeException),
-    ("Metadata failure cannot turn accepted pause into rejection", MetadataFailure)
+    ("Metadata failure cannot turn accepted pause into rejection", MetadataFailure),
+    ("Blocked mapper does not stall protocol1 ACK", BlockedMapperAck)
 })
 {
     try { await test(); Console.WriteLine($"PASS {name}"); }
@@ -26,12 +27,23 @@ static void Check(bool value, string message)
     if (!value) throw new InvalidOperationException(message);
 }
 
+static async Task WaitForSnapshotAsync(MediaSessionMonitor monitor, Func<MediaSnapshot?, bool> predicate, TimeSpan timeout = default)
+{
+    if (timeout == default) timeout = TimeSpan.FromSeconds(2);
+    var start = DateTime.UtcNow;
+    while (!predicate(monitor.CurrentSnapshot) && DateTime.UtcNow - start < timeout)
+    {
+        await Task.Delay(10);
+    }
+}
+
 static async Task PauseWithoutEvent()
 {
     var session = new Session();
     await using var monitor = new MediaSessionMonitor(new Source(session));
     await monitor.StartAsync();
     Check(await Send(monitor, MediaCommand.Pause), "command rejected");
+    await WaitForSnapshotAsync(monitor, s => s?.PlaybackState == session.State);
     Check(monitor.CurrentSnapshot?.PlaybackState == session.State, "snapshot still playing after real pause");
 }
 
@@ -44,7 +56,7 @@ static async Task RejectedPause()
     Check(session.State == MediaPlaybackState.Playing && monitor.CurrentSnapshot?.PlaybackState == session.State,
         "rejection stopped progress while audio remained playing");
     session.Position = TimeSpan.FromSeconds(21);
-    Check(monitor.TryRefreshTimeline() && monitor.CurrentSnapshot?.Timeline.Position == session.Position,
+    Check(await RefreshTimelineWhenIdleAsync(monitor, session.Position) && monitor.CurrentSnapshot?.Timeline.Position == session.Position,
         "progress froze after rejection while audio remained playing");
 }
 
@@ -67,8 +79,10 @@ static async Task RepeatedClick()
     await using var monitor = new MediaSessionMonitor(new Source(session));
     await monitor.StartAsync();
     Check(await Send(monitor, MediaCommand.PlayPause), "first click rejected");
+    await WaitForSnapshotAsync(monitor, s => s?.PlaybackState == MediaPlaybackState.Paused);
     Check(monitor.CurrentSnapshot?.PlaybackState == MediaPlaybackState.Paused, "first click not observed");
     Check(await Send(monitor, MediaCommand.PlayPause), "second click rejected");
+    await WaitForSnapshotAsync(monitor, s => s?.PlaybackState == session.State);
     Check(session.State == MediaPlaybackState.Playing && monitor.CurrentSnapshot?.PlaybackState == session.State,
         "second click did not resume observed playback");
 }
@@ -81,7 +95,7 @@ static async Task AcceptedWithoutPlaybackChange()
     Check(await Send(monitor, MediaCommand.Pause), "native acceptance lost");
     Check(monitor.CurrentSnapshot?.PlaybackState == MediaPlaybackState.Playing, "ACK fabricated playback confirmation");
     session.Position = TimeSpan.FromSeconds(22);
-    Check(monitor.TryRefreshTimeline() && monitor.CurrentSnapshot?.Timeline.Position == session.Position,
+    Check(await RefreshTimelineWhenIdleAsync(monitor, session.Position) && monitor.CurrentSnapshot?.Timeline.Position == session.Position,
         "acceptance without native pause froze progress");
 }
 
@@ -121,7 +135,36 @@ static async Task MetadataFailure()
     session.FailMetadata = true;
     Check(await Send(monitor, MediaCommand.Pause), "accepted command falsely rejected after metadata failure");
     Check(session.State == MediaPlaybackState.Paused, "command not executed");
+    await Task.Delay(50);
     Check(monitor.CurrentSnapshot?.PlaybackState == MediaPlaybackState.Playing, "metadata failure fabricated confirmation");
+}
+
+static async Task BlockedMapperAck()
+{
+    var mapStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var releaseMap = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var session = new Session();
+    await using var monitor = new MediaSessionMonitor(new Source(session));
+    await monitor.StartAsync();
+
+    session.OnGetMediaProperties = async () =>
+    {
+        mapStarted.TrySetResult(true);
+        await releaseMap.Task;
+        return new NativeMediaProperties("Track", null, null, null);
+    };
+
+    var cmdTask = Send(monitor, MediaCommand.Previous);
+    var completedInTime = await Task.WhenAny(cmdTask, Task.Delay(300)) == cmdTask;
+    try
+    {
+        Check(completedInTime, "ACK stalled by blocked metadata mapping");
+        Check(await cmdTask, "command was not accepted");
+    }
+    finally
+    {
+        releaseMap.TrySetResult(true);
+    }
 }
 
 static async Task<bool> Send(MediaSessionMonitor monitor, MediaCommand command)
@@ -134,6 +177,18 @@ static async Task<bool> Send(MediaSessionMonitor monitor, MediaCommand command)
     using var ack = JsonDocument.Parse(sink.Messages.Single());
     Check(ack.RootElement.GetProperty("protocol").GetInt32() == 1, "protocol changed");
     return ack.RootElement.GetProperty("success").GetBoolean();
+}
+
+// TryRefreshTimeline returns false while a background refresh is active or when it already applied the position; wait for either.
+static async Task<bool> RefreshTimelineWhenIdleAsync(MediaSessionMonitor monitor, TimeSpan expectedPosition)
+{
+    var deadline = DateTime.UtcNow.AddSeconds(2);
+    while (DateTime.UtcNow < deadline)
+    {
+        if (monitor.TryRefreshTimeline() || monitor.CurrentSnapshot?.Timeline.Position == expectedPosition) return true;
+        await Task.Delay(20);
+    }
+    return false;
 }
 
 sealed class Unused : IHostAudioController, IHostShortcutExecutor
@@ -166,9 +221,12 @@ sealed class Session : IWindowsMediaSession
     public Func<Task>? BeforeCommand { get; init; }
     public bool FailMetadata { get; set; }
     public TimeSpan Position { get; set; } = TimeSpan.FromSeconds(20);
-    public Task<NativeMediaProperties> GetMediaPropertiesAsync(CancellationToken ct = default) => FailMetadata
-        ? throw new InvalidOperationException("fake metadata failure")
-        : Task.FromResult(new NativeMediaProperties("Track", null, null, null));
+    public Func<Task<NativeMediaProperties>>? OnGetMediaProperties { get; set; }
+    public Task<NativeMediaProperties> GetMediaPropertiesAsync(CancellationToken ct = default) => OnGetMediaProperties is not null
+        ? OnGetMediaProperties()
+        : FailMetadata
+            ? throw new InvalidOperationException("fake metadata failure")
+            : Task.FromResult(new NativeMediaProperties("Track", null, null, null));
     public NativePlaybackInfo GetPlaybackInfo() => new(State);
     public NativeTimelineProperties GetTimelineProperties() => new(TimeSpan.Zero, TimeSpan.FromMinutes(3), Position, TimeSpan.Zero, TimeSpan.FromMinutes(3));
     public Task<bool> TryPlayAsync(CancellationToken ct = default) => Set(MediaPlaybackState.Playing);

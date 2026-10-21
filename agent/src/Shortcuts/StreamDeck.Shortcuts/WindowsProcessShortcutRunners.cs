@@ -88,6 +88,24 @@ public sealed class WindowsProcessScriptRunner : IScriptRunner
     public Task RunScriptAsync(string scriptPath, IReadOnlyList<string> arguments, CancellationToken cancellationToken)
     {
         ValidateConfiguredPath(scriptPath, nameof(scriptPath));
+        if (scriptPath.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) || scriptPath.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase))
+        {
+            static string QuoteBatchValue(string value)
+            {
+                if (value.IndexOfAny(['"', '%', '\r', '\n', '\0']) >= 0)
+                    throw new ArgumentException("Batch path/arguments contain unsupported expansion characters.");
+                return "\"" + value + "\"";
+            }
+            var command = string.Join(" ", new[] { scriptPath }.Concat(arguments).Select(QuoteBatchValue));
+            var start = new ProcessStartInfo
+            {
+                FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
+                Arguments = "/d /s /v:off /c \"" + command + "\"",
+                UseShellExecute = false, CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(scriptPath)!
+            };
+            return WaitForScriptAsync(start, cancellationToken);
+        }
         return StartAsync(scriptPath, arguments, cancellationToken);
     }
 
@@ -113,7 +131,8 @@ public sealed class WindowsProcessScriptRunner : IScriptRunner
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
-            UseShellExecute = false
+            UseShellExecute = false,
+            CreateNoWindow = true
         };
 
         foreach (var argument in arguments)
@@ -121,8 +140,15 @@ public sealed class WindowsProcessScriptRunner : IScriptRunner
             startInfo.ArgumentList.Add(argument);
         }
 
-        Process.Start(startInfo);
-        return Task.CompletedTask;
+        return WaitForScriptAsync(startInfo, cancellationToken);
+    }
+
+    private static async Task WaitForScriptAsync(ProcessStartInfo startInfo, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Script process was not started.");
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        if (process.ExitCode != 0) throw new InvalidOperationException($"Script failed (exit code {process.ExitCode}).");
     }
 
     private static void ValidateConfiguredPath(string path, string parameterName)
@@ -131,5 +157,6 @@ public sealed class WindowsProcessScriptRunner : IScriptRunner
         {
             throw new ArgumentException("Configured script path must be fully qualified.", parameterName);
         }
+        if (!File.Exists(path)) throw new FileNotFoundException("Configured script is unavailable.");
     }
 }

@@ -84,9 +84,9 @@ static void RefreshPublishesCurrentEndpointState()
     var result = service.Refresh();
 
     AssertTrue(result, "refresh result");
-    AssertEqual(new AudioSnapshot(42, true), service.CurrentSnapshot, "current snapshot");
+    AssertEqual(new AudioSnapshot(42, true) { Revision = 1 }, service.CurrentSnapshot, "current snapshot");
     AssertEqual(1, events.Count, "event count");
-    AssertEqual(new AudioSnapshot(42, true), events[0], "event snapshot");
+    AssertEqual(new AudioSnapshot(42, true) { Revision = 1 }, events[0], "event snapshot");
 }
 
 static void NativeEndpointEventUpdatesState()
@@ -98,8 +98,10 @@ static void NativeEndpointEventUpdatesState()
 
     endpoint.RaiseChanged(0.73f, true);
 
-    AssertEqual(new AudioSnapshot(73, true), service.CurrentSnapshot, "event snapshot");
-    AssertEqual(1, events.Count, "event count");
+    AssertEqual(new AudioSnapshot(73, true) { Revision = 1 }, service.CurrentSnapshot, "event snapshot");
+    endpoint.RaiseChanged(0.2f, false);
+    AssertEqual(2L, service.CurrentSnapshot!.Revision, "external volume changes advance revision");
+    AssertEqual(2, events.Count, "event count");
 }
 
 static void CommandsMutateEndpoint()

@@ -7,6 +7,20 @@ namespace StreamDeck.Host.Tests;
 public sealed class DeviceCommandDispatcherTests
 {
     [Fact]
+    public async Task VolumeReplyContainsObservedSnapshotRevisionAndRequestId()
+    {
+        var audio = new FakeAudioController { Snapshot = new StreamDeck.Audio.AudioSnapshot(80, false) { Revision = 7 } };
+        var sink = new MemoryProtocolSink();
+        var envelope = ProtocolSerializer.Parse(ProtocolSerializer.Serialize(
+            ProtocolConstants.MessageTypes.AudioSetVolume, "volume-7", new AudioSetVolumeMessage(80))).Envelope!;
+        await CreateDispatcher(audioController: audio).DispatchAsync(envelope, sink, TestContext.Current.CancellationToken);
+        Assert.Equal(2, sink.Messages.Count);
+        using var update = JsonDocument.Parse(sink.Messages[1]);
+        Assert.Equal("volume-7", update.RootElement.GetProperty("requestId").GetString());
+        Assert.Equal(7, update.RootElement.GetProperty("data").GetProperty("revision").GetInt64());
+        Assert.Equal(80, update.RootElement.GetProperty("data").GetProperty("volumePercent").GetInt32());
+    }
+    [Fact]
     public async Task MediaCommandIsAcknowledgedAfterControllerSucceeds()
     {
         var media = new FakeMediaController();
@@ -91,6 +105,7 @@ public sealed class DeviceCommandDispatcherTests
 
     private sealed class FakeAudioController : IHostAudioController
     {
+        public StreamDeck.Audio.AudioSnapshot? Snapshot { get; init; }
         public Task<bool> SetVolumeAsync(int volumePercent, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(true);

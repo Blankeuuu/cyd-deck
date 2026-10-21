@@ -19,6 +19,8 @@ public static class ProtocolConstants
         public const string DeviceInfo = "device.info";
         public const string Ping = "ping";
         public const string CoverRequest = "cover.request";
+        public const string DiagnosticEvent = "diagnostic.event";
+        public const string DiagnosticsConfigure = "diagnostics.configure";
         public const string MediaUpdate = "media.update";
         public const string MediaTimeline = "media.timeline";
         public const string MediaPlayback = "media.playback";

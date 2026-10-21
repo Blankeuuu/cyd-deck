@@ -12,6 +12,46 @@ namespace StreamDeck.Host.Tests;
 public sealed class DeviceProtocolSessionTests
 {
     [Fact]
+    public async Task RunningShortcutDoesNotBlockMediaAndDuplicateGetsBusyAck()
+    {
+        var shortcut = new BlockingShortcut();
+        var sink = new ConcurrentSink();
+        var session = new DeviceProtocolSession(new DeviceCommandDispatcher(new FakeMediaController(),
+            new FakeAudioController(), shortcut, new RejectingSystemCommandExecutor()), new AuthorizingDeviceAuthorizer(), sink);
+        var token = TestContext.Current.CancellationToken;
+        await session.HandleTextMessageAsync(CreateHello(), token);
+        await session.HandleTextMessageAsync(ProtocolSerializer.Serialize(ProtocolConstants.MessageTypes.ShortcutExecute,
+            "slow-script", new ShortcutExecuteMessage("test")), token).WaitAsync(TimeSpan.FromSeconds(2), token);
+        await shortcut.Started.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+        await session.HandleTextMessageAsync(ProtocolSerializer.Serialize(ProtocolConstants.MessageTypes.MediaCommand,
+            "media-responsive", new MediaCommandMessage(MediaCommand.Previous)), token);
+        Assert.Contains(sink.Messages, message => message.Contains("media-responsive", StringComparison.Ordinal));
+        await session.HandleTextMessageAsync(ProtocolSerializer.Serialize(ProtocolConstants.MessageTypes.ShortcutExecute,
+            "second-script", new ShortcutExecuteMessage("test")), token);
+        Assert.Contains(sink.Messages, message => message.Contains("\"code\":\"busy\"", StringComparison.Ordinal));
+        shortcut.Release.SetResult(true);
+        await sink.ShortcutAck.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+    }
+
+    private sealed class BlockingShortcut : IHostShortcutExecutor
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<bool> ExecuteAsync(string id, CancellationToken cancellationToken = default) {
+            Started.TrySetResult(); return Release.Task.WaitAsync(cancellationToken);
+        }
+    }
+    private sealed class ConcurrentSink : IProtocolSink
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<string> Messages { get; } = new();
+        public TaskCompletionSource ShortcutAck { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ValueTask SendTextAsync(string message, CancellationToken cancellationToken = default) {
+            Messages.Enqueue(message);
+            if (message.Contains("slow-script", StringComparison.Ordinal)) ShortcutAck.TrySetResult();
+            return ValueTask.CompletedTask;
+        }
+    }
+    [Fact]
     public async Task HydrationSendsShortcutsBeforeAppearanceAndAudioBeforeConnected()
     {
         var sink = new MemoryProtocolSink();

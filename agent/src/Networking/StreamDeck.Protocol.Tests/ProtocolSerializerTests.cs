@@ -7,6 +7,14 @@ namespace StreamDeck.Protocol.Tests;
 public sealed class ProtocolSerializerTests
 {
     [Fact]
+    public void DiagnosticExtensionsAreExplicitAndBounded()
+    {
+        Assert.True(ProtocolSerializer.Parse("""{"protocol":1,"type":"diagnostics.configure","data":{"enabled":true}}""").IsSuccess);
+        Assert.True(ProtocolSerializer.Parse("""{"protocol":1,"type":"diagnostic.event","data":{"stage":"ack_received","correlation":"media-7","deviceMs":123,"transport":"USB"}}""").IsSuccess);
+        Assert.False(ProtocolSerializer.Parse("""{"protocol":1,"type":"diagnostic.event","data":{"stage":"private argument text","correlation":"media-7","deviceMs":123,"transport":"USB"}}""").IsSuccess);
+        Assert.False(ProtocolSerializer.Parse("""{"protocol":1,"type":"diagnostic.event","data":{"stage":"ack_received","correlation":"media-7","deviceMs":-1,"transport":"USB"}}""").IsSuccess);
+    }
+    [Fact]
     public void SerializesVersionedEnvelopeWithCamelCasePayload()
     {
         var json = ProtocolSerializer.Serialize(

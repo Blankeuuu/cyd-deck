@@ -20,6 +20,8 @@ public static class ProtocolSerializer
         ProtocolConstants.MessageTypes.DeviceInfo,
         ProtocolConstants.MessageTypes.Ping,
         ProtocolConstants.MessageTypes.CoverRequest,
+        ProtocolConstants.MessageTypes.DiagnosticEvent,
+        ProtocolConstants.MessageTypes.DiagnosticsConfigure,
         ProtocolConstants.MessageTypes.MediaUpdate,
         ProtocolConstants.MessageTypes.MediaTimeline,
         ProtocolConstants.MessageTypes.MediaPlayback,
@@ -220,6 +222,8 @@ public static class ProtocolSerializer
             ProtocolConstants.MessageTypes.DeviceInfo => ValidateDeviceInfo(envelope),
             ProtocolConstants.MessageTypes.ShortcutsReport => ValidateShortcutsReport(envelope),
             ProtocolConstants.MessageTypes.CoverRequest => ValidateCoverRequest(envelope),
+            ProtocolConstants.MessageTypes.DiagnosticEvent => ValidateDiagnosticEvent(envelope),
+            ProtocolConstants.MessageTypes.DiagnosticsConfigure => ValidateDiagnosticsConfigure(envelope),
             ProtocolConstants.MessageTypes.Ping => ValidateIntegerRangePayload(envelope, "sentAtUnixMs", 0, long.MaxValue),
             _ => null
         };
@@ -235,6 +239,30 @@ public static class ProtocolSerializer
             id.GetString() is not { Length: 64 } value || !value.All(Uri.IsHexDigit))
             return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "cover.request requires a SHA256 coverId.");
         return null;
+    }
+
+    private static ProtocolParseResult? ValidateDiagnosticsConfigure(ProtocolEnvelope envelope)
+    {
+        var validation = RequireObjectPayload(envelope, out var data);
+        if (validation is not null) return validation;
+        validation = ValidateOnlyProperties(envelope, data, "enabled");
+        if (validation is not null) return validation;
+        return data.TryGetProperty("enabled", out var enabled) && enabled.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? null : ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "diagnostics.configure requires enabled.");
+    }
+
+    private static ProtocolParseResult? ValidateDiagnosticEvent(ProtocolEnvelope envelope)
+    {
+        var validation = RequireObjectPayload(envelope, out var data);
+        if (validation is not null) return validation;
+        validation = ValidateOnlyProperties(envelope, data, "stage", "correlation", "deviceMs", "transport");
+        if (validation is not null) return validation;
+        foreach (var field in new[] { "stage", "correlation", "transport" })
+            if (!data.TryGetProperty(field, out var value) || value.ValueKind != JsonValueKind.String ||
+                value.GetString() is not { Length: > 0 and <= 64 } text ||
+                text.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_'))
+                return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "Invalid diagnostic identifier.");
+        return ValidateRequiredIntegerRange(data, "deviceMs", 0, uint.MaxValue, "diagnostic.event");
     }
 
     private static ProtocolParseResult? ValidateHello(ProtocolEnvelope envelope)
@@ -705,7 +733,7 @@ public static class ProtocolSerializer
         if (!data.TryGetProperty("cover", out var cover) || cover.ValueKind == JsonValueKind.Null) return null;
         if (cover.ValueKind != JsonValueKind.Object)
             return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "device.info cover must be an object.");
-        var properties = ValidateOnlyProperties(new ProtocolEnvelope { Type = "device.info" }, cover, "status", "rendered");
+        var properties = ValidateOnlyProperties(new ProtocolEnvelope { Type = "device.info" }, cover, "status", "rendered", "coverId");
         if (properties is not null) return properties;
         if (!cover.TryGetProperty("rendered", out var rendered) || rendered.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
             return ProtocolParseResult.Failure(ProtocolErrorCode.InvalidPayload, "device.info cover.rendered must be boolean.");

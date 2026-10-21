@@ -9,6 +9,7 @@ public interface IHostMediaController
 
 public interface IHostAudioController
 {
+    StreamDeck.Audio.AudioSnapshot? Snapshot => null;
     Task<bool> SetVolumeAsync(int volumePercent, CancellationToken cancellationToken = default);
 
     Task<bool> ToggleMuteAsync(CancellationToken cancellationToken = default);

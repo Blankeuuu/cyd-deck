@@ -34,23 +34,23 @@ public static class ProtocolStateMapper
         return ProtocolSerializer.Serialize(ProtocolConstants.MessageTypes.MediaUpdate, requestId: null, message);
     }
 
-    public static string CreateAudioUpdate(AudioSnapshot snapshot)
+    public static string CreateAudioUpdate(AudioSnapshot snapshot, string? requestId = null)
     {
         return ProtocolSerializer.Serialize(
             ProtocolConstants.MessageTypes.AudioUpdate,
-            requestId: null,
-            new AudioUpdateMessage(snapshot.VolumePercent, snapshot.IsMuted));
+            requestId,
+            new AudioUpdateMessage(snapshot.VolumePercent, snapshot.IsMuted, snapshot.Revision > 0 ? snapshot.Revision : null));
     }
 
     public static string CreateSystemStats(SystemMetrics metrics)
     {
         var cpu = Math.Clamp(metrics.CpuUsagePercent, 0, 100);
-        var gpu = metrics.GpuUsagePercent.HasValue
+        int? gpu = metrics.GpuUsagePercent.HasValue && double.IsFinite(metrics.GpuUsagePercent.Value)
             ? (int)Math.Round(Math.Clamp(metrics.GpuUsagePercent.Value, 0, 100))
-            : (int)Math.Round(Math.Clamp(cpu * 0.65 + 8, 4, 98));
-        var temp = metrics.CpuTemperatureCelsius.HasValue
-            ? (int)Math.Round(Math.Clamp(metrics.CpuTemperatureCelsius.Value, 20, 110))
-            : (int)Math.Round(Math.Clamp(38 + cpu * 0.42, 35, 92));
+            : null;
+        int? temp = metrics.CpuTemperatureCelsius.HasValue && double.IsFinite(metrics.CpuTemperatureCelsius.Value)
+            ? (int)Math.Round(metrics.CpuTemperatureCelsius.Value)
+            : null;
 
         var nowLocal = DateTime.Now;
         var hostLocalMinutes = nowLocal.Hour * 60 + nowLocal.Minute;
