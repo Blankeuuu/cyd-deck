@@ -2,6 +2,7 @@
 #include "board_pins.h"
 #include "ui/app_state.h"
 #include "ui/gesture_recognizer.h"
+#include "network/pending_commands.h"
 using namespace streamdeck;
 
 static_assert(board::screenWidth == 320);
@@ -9,6 +10,40 @@ static_assert(board::screenHeight == 240);
 static_assert(board::landscapeRotation == 3, "CYD ST7789 app uses the user-facing landscape orientation");
 
 int main() {
+  AudioState audio;
+  audio.reportedVolume = 50;
+  requestVolume(audio, 20, 100);
+  std::strcpy(audio.requestId, "volume-2");
+  assert(receiveVolume(audio, 50, 1, nullptr));
+  assert(displayedVolume(audio) == 20);
+  assert(receiveVolume(audio, 20, 2, "volume-2"));
+  assert(!audio.pending && displayedVolume(audio) == 20);
+  assert(!receiveVolume(audio, 50, 1, nullptr));
+  requestVolume(audio, 80, 200);
+  std::strcpy(audio.requestId, "volume-3");
+  receiveVolume(audio, 20, 2, "volume-2");
+  assert(audio.pending && displayedVolume(audio) == 80);
+  receiveVolume(audio, 80, 3, "volume-3");
+  assert(!audio.pending && displayedVolume(audio) == 80);
+  receiveVolume(audio, 10, 4, nullptr); // External Windows change.
+  assert(displayedVolume(audio) == 10);
+  resetAudioSession(audio); // Agent restart before the 30-second USB peer timeout.
+  assert(receiveVolume(audio, 28, 1, nullptr));
+  assert(displayedVolume(audio) == 28);
+  PendingCommands commands;
+  PendingCommand completed;
+  assert(commands.add("previous-1", UINT32_MAX - 99, false));
+  assert(commands.add("previous-2", 0, false));
+  assert(commands.take("previous-2", completed));
+  assert(!commands.take("previous-2", completed));
+  assert(!commands.expire(4899, completed));
+  assert(commands.expire(4900, completed));
+  assert(std::strcmp(completed.id, "previous-1") == 0);
+  IntentQueue volumeQueue;
+  for (int i = 0; i <= 100; ++i) assert(volumeQueue.push({IntentType::SetVolume, static_cast<int16_t>(i)}));
+  Intent latest;
+  assert(volumeQueue.pop(latest) && latest.value == 100);
+  assert(!volumeQueue.pop(latest));
   GestureRecognizer g;
   g.begin(200,100);
   assert(g.update(180,103,true)==0);
@@ -174,4 +209,44 @@ int main() {
       HttpRequestReadDecision::Invalid);
   assert(decideHttpRequestRead(oversizedPost, std::strlen(oversizedPost), 1536) ==
       HttpRequestReadDecision::Invalid);
+
+  // Debug mode defaults, toggle helper and toast visibility tests
+  AppState debugTestState;
+  assert(!debugTestState.ui.debugMode);
+  assert(std::strcmp(nvs_keys::kAppearanceNamespace, "appearance") == 0);
+  assert(std::strcmp(nvs_keys::kDebugModeKey, "debug") == 0);
+  assert(nvs_keys::kDebugModeDefault == false);
+
+  // Default debugMode=false: toast must NOT show even with active commandFeedback
+  std::strcpy(debugTestState.commandFeedback, "Done");
+  debugTestState.feedbackAtMs = 1000;
+  assert(!shouldShowCommandToast(debugTestState, 1500));
+  std::strcpy(debugTestState.commandFeedback, "Busy - try again");
+  assert(!shouldShowCommandToast(debugTestState, 1500));
+
+  // Toggle debugMode ON
+  assert(toggleDebugMode(debugTestState.ui) == true);
+  assert(debugTestState.ui.debugMode == true);
+  // With debugMode=true and fresh feedback, toast must show
+  assert(shouldShowCommandToast(debugTestState, 1500));
+  // Expired feedback (>2000 ms) must not show
+  assert(!shouldShowCommandToast(debugTestState, 3001));
+  // Empty feedback must not show
+  debugTestState.commandFeedback[0] = '\0';
+  assert(!shouldShowCommandToast(debugTestState, 1500));
+
+  // Toggle debugMode back OFF
+  std::strcpy(debugTestState.commandFeedback, "Done");
+  assert(toggleDebugMode(debugTestState.ui) == false);
+  assert(debugTestState.ui.debugMode == false);
+  assert(!shouldShowCommandToast(debugTestState, 1500));
+
+  // ToggleDebugMode intent push & pop
+  IntentQueue debugQueue;
+  assert(debugQueue.push({IntentType::ToggleDebugMode, 1, 100}));
+  Intent debugIntent;
+  assert(debugQueue.pop(debugIntent));
+  assert(debugIntent.type == IntentType::ToggleDebugMode);
+  assert(debugIntent.value == 1);
+  assert(debugIntent.queuedAtMs == 100);
 }

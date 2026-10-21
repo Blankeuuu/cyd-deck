@@ -7,9 +7,43 @@
 #include "network/cover_art.h"
 #include "network/pc_metrics.h"
 #include "ui/app_state.h"
+#include "storage/cover_stream.h"
 
 int main() {
   using namespace streamdeck;
+  {
+    storage::CoverStreamValidation stream;
+    const uint8_t first[] = {0xff};
+    const uint8_t middle[] = {0xd8, 0x10, 0xff};
+    const uint8_t last[] = {0xd9};
+    assert(stream.append(first, sizeof(first)));
+    assert(stream.append(middle, sizeof(middle)));
+    assert(!stream.complete(4));
+    assert(stream.append(last, sizeof(last)));
+    assert(stream.complete(5));
+    assert(!stream.complete(6));
+    assert(!stream.append(nullptr, 1));
+    assert(!stream.append(first, storage::kMaxCoverBytes));
+    stream = {};
+    assert(stream.append(middle, sizeof(middle)));
+    assert(!stream.complete(sizeof(middle)));
+  }
+  {
+    CoverFetchState recovery;
+    const char* id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    updateCoverFetch(recovery, id, UINT32_MAX - 100);
+    uint32_t now = UINT32_MAX - 99;
+    for (unsigned retry = 0; retry < 3; ++retry) {
+      markCoverFetchComplete(recovery, id, false);
+      assert(updateCoverFetch(recovery, id, now) == CoverTransition::Unchanged);
+      now += (1000U << retry);
+      assert(updateCoverFetch(recovery, id, now - 1) == CoverTransition::Unchanged);
+      assert(updateCoverFetch(recovery, id, now) == CoverTransition::Requested);
+    }
+    markCoverFetchComplete(recovery, id, false);
+    assert(updateCoverFetch(recovery, id, now + 60000) == CoverTransition::Unchanged);
+    assert(recovery.retries == 3);
+  }
   {
     SystemState metrics;
     const char sample[] = R"({"protocol":1,"type":"system.stats","data":{"cpuPercent":33.6,"memoryPercent":62,"memoryUsedBytes":10737418240,"memoryTotalBytes":17179869184,"gpuPercent":91,"tempCelsius":77}})";
@@ -24,14 +58,14 @@ int main() {
     const char unavailable[] = R"({"cpuPercent":null,"memoryPercent":null,"memoryUsedBytes":null,"memoryTotalBytes":null})";
     protocol::applyPcMetricsJson(metrics, unavailable, sizeof(unavailable) - 1, 5000);
     assert(!metrics.cpuAvailable && !metrics.ramAvailable && !metrics.ramCapacityAvailable);
-    assert(!metrics.pcStatsReceived && !pcMetricsFresh(metrics, true, 5000));
+    assert(metrics.pcStatsReceived && pcMetricsFresh(metrics, true, 5000)); // Fresh, but unavailable.
     const char zero[] = R"({"cpuPercent":0,"memoryPercent":0,"memoryUsedBytes":0,"memoryTotalBytes":17179869184})";
     protocol::applyPcMetricsJson(metrics, zero, sizeof(zero) - 1, 10000);
     assert(metrics.cpuAvailable && metrics.cpuPercent == 0 && metrics.ramAvailable && metrics.ramPercent == 0);
     assert(metrics.ramCapacityAvailable && metrics.ramUsedMb == 0 && pcMetricsFresh(metrics, true, 10000));
     const char invalid[] = R"({"cpuPercent":101,"memoryPercent":-1,"memoryUsedBytes":18446744073709551616,"memoryTotalBytes":17179869184})";
     protocol::applyPcMetricsJson(metrics, invalid, sizeof(invalid) - 1, 10001);
-    assert(!metrics.pcStatsReceived && !metrics.ramCapacityAvailable);
+    assert(metrics.pcStatsReceived && !metrics.ramCapacityAvailable);
     const char partial[] = R"({"cpuPercent":12.4,"memoryUsedBytes":2000,"memoryTotalBytes":1000})";
     protocol::applyPcMetricsJson(metrics, partial, sizeof(partial) - 1, 10002);
     assert(metrics.cpuAvailable && metrics.cpuPercent == 12 && !metrics.ramAvailable && !metrics.ramCapacityAvailable);
@@ -139,7 +173,8 @@ int main() {
   assert(!expirePendingCover(timeoutCover, 15099));
   assert(expirePendingCover(timeoutCover, 15100));
   assert(timeoutCover.status == CoverStatus::Failed);
-  assert(updateCoverFetch(timeoutCover, stableCover, 16000) == CoverTransition::Unchanged);
+  assert(updateCoverFetch(timeoutCover, stableCover, 15100) == CoverTransition::Unchanged);
+  assert(updateCoverFetch(timeoutCover, stableCover, 16100) == CoverTransition::Requested);
   assert(markCoverFetchComplete(timeoutCover, stableCover, true) == CoverTransition::Available);
   assert(updateCoverFetch(timeoutCover, stableCover, 17000) == CoverTransition::Unchanged);
   assert(timeoutCover.rendered);
@@ -271,6 +306,26 @@ int main() {
   char reportJson[512]{};
   assert(protocol::makeShortcutsReportJson(shortcutState, reportJson, sizeof(reportJson)));
   assert(std::strcmp(reportJson, "{\"protocol\":1,\"type\":\"shortcuts.report\",\"data\":{\"shortcuts\":[]}}") == 0);
+
+  // Active profiles retain blank Deck Tile positions, but those placeholders
+  // must never become executable Shortcut IDs or appear in shortcuts.report.
+  ShortcutState sparseProfile;
+  const char* sparseUpdate = "{\"protocol\":1,\"type\":\"shortcuts.update\",\"data\":{\"shortcuts\":["
+      "{\"id\":\"__empty_slot_0\",\"label\":\"No shortcut\",\"icon\":\"empty\"},"
+      "{\"id\":\"valid-action\",\"label\":\"Action\",\"icon\":\"app\"},"
+      "{\"id\":\"__empty_slot_2\",\"label\":\"No shortcut\",\"icon\":\"empty\"}]}}";
+  protocol::applyShortcutsUpdateJson(sparseProfile, sparseUpdate, std::strlen(sparseUpdate));
+  assert(sparseProfile.ids[0][0] == '\0');
+  assert(std::strcmp(sparseProfile.ids[1], "valid-action") == 0);
+  assert(sparseProfile.ids[2][0] == '\0');
+  assert(protocol::makeShortcutsReportJson(sparseProfile, reportJson, sizeof(reportJson)));
+  assert(std::strstr(reportJson, "__empty_slot_") == nullptr);
+  assert(std::strstr(reportJson, "valid-action") != nullptr);
+  // Older NVS contents may still contain placeholders until the next sync.
+  std::strcpy(sparseProfile.ids[0], "__empty_slot_0");
+  std::strcpy(sparseProfile.icons[0], "empty");
+  assert(protocol::makeShortcutsReportJson(sparseProfile, reportJson, sizeof(reportJson)));
+  assert(std::strstr(reportJson, "__empty_slot_") == nullptr);
 
   // Test Mic toggle with spaces/uppercase, label before id, and 7 shortcuts (limit 6)
   ShortcutState micState;

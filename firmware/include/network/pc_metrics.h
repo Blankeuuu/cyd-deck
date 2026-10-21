@@ -71,13 +71,24 @@ inline bool pcBytes(const char* json, std::size_t length, const char* field, uin
 inline void applyPcMetricsJson(SystemState& state, const char* json, std::size_t length, uint32_t nowMs) {
   state.cpuAvailable = pcPercent(json, length, "cpuPercent", state.cpuPercent);
   state.ramAvailable = pcPercent(json, length, "memoryPercent", state.ramPercent);
+  state.gpuAvailable = pcPercent(json, length, "gpuPercent", state.gpuPercent);
+  char temperature[48];
+  state.tempAvailable = false;
+  if (pcNumberToken(json, length, "tempCelsius", temperature)) {
+    char* end = nullptr;
+    const double value = std::strtod(temperature, &end);
+    if (end && !*end && std::isfinite(value) && value >= -40 && value <= 150) {
+      state.tempCelsius = static_cast<int16_t>(std::lround(value));
+      state.tempAvailable = true;
+    }
+  }
   uint64_t used = 0, total = 0;
   state.ramCapacityAvailable = pcBytes(json, length, "memoryUsedBytes", used) &&
       pcBytes(json, length, "memoryTotalBytes", total) && total > 0 && used <= total &&
       total / 1048576ULL <= UINT32_MAX;
   state.ramUsedMb = state.ramCapacityAvailable ? static_cast<uint32_t>(used / 1048576ULL) : 0;
   state.ramTotalMb = state.ramCapacityAvailable ? static_cast<uint32_t>(total / 1048576ULL) : 0;
-  state.pcStatsReceived = state.cpuAvailable || state.ramAvailable;
+  state.pcStatsReceived = true;
   state.pcStatsAtMs = nowMs;
 }
 

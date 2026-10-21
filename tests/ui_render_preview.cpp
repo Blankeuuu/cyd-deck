@@ -2,11 +2,14 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
+#include <cassert>
 #include "../firmware/src/ui/ui_manager.cpp"
 
 namespace {
 uint16_t frame[320 * 240]{};
 uint16_t draw[320 * 20]{};
+lv_point_t simulatedPoint{};
+bool simulatedDown = false;
 
 void previewFlush(lv_display_t* display, const lv_area_t* area, uint8_t* pixels) {
   const auto* source = reinterpret_cast<const uint16_t*>(pixels);
@@ -64,6 +67,12 @@ int main(int argc, char** argv) {
   state.ota.enabled = true;
   std::strcpy(state.ota.status, "OTA ready");
   streamdeck::uiBegin(state, intents);
+  lv_indev_t* pointer = lv_indev_create();
+  lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(pointer, [](lv_indev_t*, lv_indev_data_t* data) {
+    data->point = simulatedPoint;
+    data->state = simulatedDown ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+  });
   for (int light = 0; light <= 1; ++light) {
     state.appearance.theme = light;
     state.appearance.background = light ? 0xF3F5F7 : 0x101216;
@@ -75,6 +84,14 @@ int main(int argc, char** argv) {
     if (!capture(argv[1], theme, "touch")) return 1;
     lv_obj_send_event(settingsTabs[2], LV_EVENT_CLICKED, nullptr);
     if (!capture(argv[1], theme, "device")) return 1;
+    state.ui.debugMode = true;
+    state.system.freeHeap = 145 * 1024;
+    std::strcpy(state.commandFeedback, "Done");
+    state.feedbackAtMs = lv_tick_get();
+    streamdeck::uiRefresh(state);
+    if (!capture(argv[1], theme, "device-debug")) return 1;
+    state.ui.debugMode = false;
+    streamdeck::uiRefresh(state);
     settingsDetailsClicked(nullptr);
     if (!capture(argv[1], theme, "status")) return 1;
     settingsDetailsClicked(nullptr);
@@ -92,6 +109,12 @@ int main(int argc, char** argv) {
     state.system.ramTotalMb = 16384;
     streamdeck::uiSetPage(streamdeck::Page::Pc);
     if (!capture(argv[1], theme, "pc-live")) return 1;
+    state.system.gpuAvailable = state.system.tempAvailable = true;
+    state.system.gpuPercent = 2;
+    state.system.tempCelsius = 54;
+    streamdeck::uiRefresh(state);
+    if (!capture(argv[1], theme, "pc-all-sensors-fixture")) return 1;
+    state.system.gpuAvailable = state.system.tempAvailable = false;
     state.system.pcStatsReceived = false;
     streamdeck::uiRefresh(state);
     if (!capture(argv[1], theme, "pc-waiting")) return 1;
@@ -105,6 +128,43 @@ int main(int argc, char** argv) {
     state.media.durationMs = 210000;
     streamdeck::uiSetPage(streamdeck::Page::Media);
     if (!capture(argv[1], theme, "media")) return 1;
+    std::strcpy(state.commandFeedback, "Done");
+    state.feedbackAtMs = lv_tick_get();
+    state.ui.debugMode = false;
+    streamdeck::uiRefresh(state);
+    if (!capture(argv[1], theme, "media-toast-hidden")) return 1;
+    state.ui.debugMode = true;
+    streamdeck::uiRefresh(state);
+    if (!capture(argv[1], theme, "media-toast-debug")) return 1;
+    state.ui.debugMode = false;
+    state.commandFeedback[0] = '\0';
+    streamdeck::uiRefresh(state);
+    // Exercise real LVGL pointer press/release, including tap without dragging.
+    state.audio = {};
+    state.audio.reportedVolume = 56;
+    state.audio.available = true;
+    streamdeck::uiRefresh(state);
+    lv_refr_now(nullptr);
+    for (int target : {20, 80, 10, 100}) {
+      simulatedPoint = {76 + (174 * target) / 100, 181};
+      simulatedDown = true; lv_indev_read(pointer);
+      simulatedDown = false; lv_indev_read(pointer);
+      streamdeck::Intent finalIntent;
+      bool found = false;
+      while (intents.pop(finalIntent)) if (finalIntent.type == streamdeck::IntentType::SetVolume) found = true;
+      assert(found);
+      assert(finalIntent.value >= target - 1 && finalIntent.value <= target + 1);
+      const int selected = finalIntent.value;
+      streamdeck::receiveVolume(state.audio, 56, 1, nullptr);
+      streamdeck::uiRefresh(state);
+      assert(lv_slider_get_value(mediaVolumeSlider) == selected);
+      std::strcpy(state.audio.requestId, "volume-test");
+      streamdeck::receiveVolume(state.audio, selected, 2, "volume-test");
+      streamdeck::uiRefresh(state);
+      assert(!state.audio.pending && lv_slider_get_value(mediaVolumeSlider) == selected);
+      state.audio.revision = 0;
+    }
+    std::printf("PASS real LVGL taps and stale audio protection (%s)\n", theme);
     state.appearance.accent = light ? 0x28724F : 0xD85D93;
     streamdeck::uiRefresh(state);
     if (!capture(argv[1], theme, "media-accent")) return 1;

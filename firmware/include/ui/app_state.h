@@ -13,8 +13,8 @@ namespace streamdeck {
 constexpr std::size_t kMaxShortcutIdLength = 64;
 constexpr uint8_t kPageCount = 4;
 enum class Page : uint8_t { Media = 0, Shortcuts = 1, Pc = 2, Info = 3, Home = 4 };
-enum class IntentType : uint8_t { Previous, TogglePlayback, Next, SetVolume, RunShortcut, Recalibrate, RestartDevice, FactoryReset, SettingsUpdated, RefreshUi, ShortcutsUpdated, ToggleMute, TestTouch, SetBrightness, OpenSetupPortal };
-struct Intent { IntentType type; int16_t value; constexpr Intent(IntentType t = IntentType::Previous, int16_t v = 0) : type(t), value(v) {} };
+enum class IntentType : uint8_t { Previous, TogglePlayback, Next, SetVolume, RunShortcut, Recalibrate, RestartDevice, FactoryReset, SettingsUpdated, RefreshUi, ShortcutsUpdated, ToggleMute, TestTouch, SetBrightness, OpenSetupPortal, ToggleDebugMode };
+struct Intent { IntentType type; int16_t value; uint32_t queuedAtMs; constexpr Intent(IntentType t = IntentType::Previous, int16_t v = 0, uint32_t at = 0) : type(t), value(v), queuedAtMs(at) {} };
 struct MediaState { char title[48] = "No track"; char artist[48] = "Waiting for PC"; char album[48] = ""; char coverId[kCoverIdLength + 1] = ""; CoverFetchState cover; uint32_t positionMs = 0; uint32_t durationMs = 0; bool playing = false; uint32_t timelineAtMs = 0; bool timelineAnchored = false; };
 inline uint32_t mediaPositionAt(const MediaState& media, uint32_t nowMs) {
   uint64_t position = media.positionMs;
@@ -24,13 +24,52 @@ inline uint32_t mediaPositionAt(const MediaState& media, uint32_t nowMs) {
 }
 struct DisplayIdleDecision { bool off = false; bool dimmed = false; bool resetIdleTimer = false; };
 enum class PendingSetupDecision : uint8_t { Wait, Success, Failure };
-struct AudioState { uint8_t reportedVolume = 0; bool available = false; bool muted = false; };
+struct AudioState {
+  uint8_t reportedVolume = 0;
+  uint8_t requestedVolume = 0;
+  bool available = false;
+  bool muted = false;
+  bool pending = false;
+  bool failed = false;
+  uint32_t requestedAtMs = 0;
+  uint32_t revision = 0;
+  char requestId[40] = "";
+};
+inline uint8_t displayedVolume(const AudioState& audio) {
+  return audio.pending ? audio.requestedVolume : audio.reportedVolume;
+}
+inline void resetAudioSession(AudioState& audio) {
+  audio.revision = 0;
+  audio.pending = false;
+  audio.failed = false;
+  audio.requestId[0] = '\0';
+}
+inline void requestVolume(AudioState& audio, uint8_t value, uint32_t now) {
+  audio.requestedVolume = value;
+  audio.requestedAtMs = now;
+  audio.pending = true;
+  audio.failed = false;
+  audio.requestId[0] = '\0';
+}
+inline bool receiveVolume(AudioState& audio, uint8_t value, uint32_t revision, const char* requestId) {
+  if (revision && audio.revision && static_cast<int32_t>(revision - audio.revision) < 0) return false;
+  if (revision) audio.revision = revision;
+  audio.reportedVolume = value;
+  audio.available = true;
+  if (audio.pending && ((requestId && audio.requestId[0] && std::strcmp(requestId, audio.requestId) == 0) ||
+      (!revision && value == audio.requestedVolume))) audio.pending = false;
+  return true;
+}
 struct SystemState {
   uint32_t freeHeap = 0;
   uint32_t minHeap = 0;
   uint32_t largestBlock = 0;
   uint8_t cpuPercent = 0;
   uint8_t ramPercent = 0;
+  uint8_t gpuPercent = 0;
+  int16_t tempCelsius = 0;
+  bool gpuAvailable = false;
+  bool tempAvailable = false;
   bool cpuAvailable = false;
   bool ramAvailable = false;
   bool ramCapacityAvailable = false;
@@ -96,7 +135,7 @@ struct AppearanceState {
   Page pageOrder[kPageCount] = {Page::Media, Page::Shortcuts, Page::Pc, Page::Info};
   bool pageVisible[kPageCount] = {true, true, true, true};
 };
-struct UiState { Page page = Page::Home; bool volumeOpen = false; uint8_t localBrightness = 0; char brightnessRevision[33] = ""; bool calibrationValid = false; bool standby = false; };
+struct UiState { Page page = Page::Home; bool volumeOpen = false; uint8_t localBrightness = 0; char brightnessRevision[33] = ""; bool calibrationValid = false; bool standby = false; bool debugMode = false; };
 inline void applyBrightnessRevision(UiState& ui, const char* revision, bool force) {
   const bool valid = revision && std::strlen(revision) == 32 &&
       std::all_of(revision, revision + 32, [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
@@ -111,6 +150,8 @@ struct LoopPerformance {
   uint32_t wifiDiscoveryCount = 0;
 };
 struct AppState {
+  char commandFeedback[48] = "";
+  uint32_t feedbackAtMs = 0;
   LoopPerformance performance;
   MediaState media;
   AudioState audio;
@@ -205,6 +246,21 @@ inline DisplayIdleDecision computeDisplayIdleDecision(const AppState& state, uin
   decision.dimmed = !decision.off && state.appearance.dimAfterSeconds > 0 &&
       idleSeconds >= state.appearance.dimAfterSeconds;
   return decision;
+}
+
+namespace nvs_keys {
+constexpr const char* kAppearanceNamespace = "appearance";
+constexpr const char* kDebugModeKey = "debug";
+constexpr bool kDebugModeDefault = false;
+}
+
+inline bool toggleDebugMode(UiState& ui) {
+  ui.debugMode = !ui.debugMode;
+  return ui.debugMode;
+}
+
+inline bool shouldShowCommandToast(const AppState& state, uint32_t nowMs, uint32_t timeoutMs = 2000) {
+  return state.ui.debugMode && state.commandFeedback[0] != '\0' && (nowMs - state.feedbackAtMs < timeoutMs);
 }
 
 inline PendingSetupDecision decidePendingSetupResult(bool connected, bool ssidMatches,
@@ -312,7 +368,24 @@ inline HttpRequestReadDecision decideHttpRequestRead(const char* request,
 
 class IntentQueue {
  public:
-  bool push(Intent intent) { if (size_ == Capacity) return false; items_[tail_] = intent; tail_=(tail_+1)%Capacity; ++size_; return true; }
+  bool push(Intent intent) {
+    // Coalesce only adjacent volume values; never reorder media/shortcut actions.
+    if (size_ && intent.type == IntentType::SetVolume && items_[(tail_ + Capacity - 1) % Capacity].type == intent.type) {
+      items_[(tail_ + Capacity - 1) % Capacity] = intent; return true;
+    }
+    if (intent.type == IntentType::RefreshUi) {
+      for (uint8_t i = 0; i < size_; ++i) if (items_[(head_ + i) % Capacity].type == intent.type) return true;
+    }
+    if (size_ == Capacity) {
+      // Redundant repaint requests must never crowd out a physical control.
+      for (uint8_t i = 0; i < size_; ++i) if (items_[(head_ + i) % Capacity].type == IntentType::RefreshUi) {
+        for (uint8_t j = i; j + 1 < size_; ++j) items_[(head_ + j) % Capacity] = items_[(head_ + j + 1) % Capacity];
+        tail_ = (tail_ + Capacity - 1) % Capacity; --size_; break;
+      }
+    }
+    if (size_ == Capacity) return false;
+    items_[tail_] = intent; tail_=(tail_+1)%Capacity; ++size_; return true;
+  }
   bool pop(Intent& intent) { if (!size_) return false; intent=items_[head_]; head_=(head_+1)%Capacity; --size_; return true; }
   static constexpr uint8_t Capacity=16;
  private:

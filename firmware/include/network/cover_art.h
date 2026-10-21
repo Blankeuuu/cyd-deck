@@ -13,6 +13,7 @@ constexpr std::size_t kMaxCoverBytes = 512U * 1024U;
 
 enum class CoverStatus : unsigned char { NoCover, Pending, Available, Failed };
 enum class CoverTransition : unsigned char { Unchanged, Requested, Cleared, Available, Failed, Stale };
+enum class CoverRenderResult : unsigned char { Pending, Ready, Failed };
 
 struct CoverFetchState {
   char requestedId[kCoverIdLength + 1] = "";
@@ -20,7 +21,13 @@ struct CoverFetchState {
   CoverStatus status = CoverStatus::NoCover;
   bool inFlight = false;
   bool rendered = false;
+  bool displayed = false;
+  bool decoding = false;
+  bool decodeAfterTransfer = false;
+  bool cacheChecked = false;
   uint32_t requestedAtMs = 0;
+  uint8_t retries = 0;
+  bool retryArmed = false;
 };
 
 inline bool isHex(char value) {
@@ -78,7 +85,16 @@ inline CoverTransition updateCoverFetch(CoverFetchState& state, const char* cove
   }
 
   if (std::strcmp(state.requestedId, coverId) == 0) {
-    return CoverTransition::Unchanged;
+    if (state.status != CoverStatus::Failed || state.retries >= 3) return CoverTransition::Unchanged;
+    if (!state.retryArmed) {
+      state.retryArmed = true;
+      state.requestedAtMs = nowMs;
+      return CoverTransition::Unchanged;
+    }
+    if (nowMs - state.requestedAtMs < (1000U << state.retries)) return CoverTransition::Unchanged;
+    ++state.retries;
+  } else {
+    state.retries = 0;
   }
 
   std::strncpy(state.requestedId, coverId, sizeof(state.requestedId) - 1);
@@ -88,6 +104,11 @@ inline CoverTransition updateCoverFetch(CoverFetchState& state, const char* cove
   state.requestedAtMs = nowMs;
   state.inFlight = false;
   state.rendered = false;
+  state.displayed = false;
+  state.retryArmed = false;
+  state.decoding = false;
+  state.decodeAfterTransfer = false;
+  state.cacheChecked = false;
   return CoverTransition::Requested;
 }
 
@@ -97,6 +118,9 @@ inline CoverTransition markCoverFetchComplete(CoverFetchState& state, const char
   }
 
   state.inFlight = false;
+  state.retryArmed = false;
+  state.displayed = false;
+  state.decoding = false;
   if (!ok) {
     state.availableId[0] = '\0';
     state.status = CoverStatus::Failed;

@@ -1,6 +1,8 @@
 #include "storage/sd_storage.h"
 
 #include <SD.h>
+#include <cstring>
+#include <cstdio>
 
 #include "board_pins.h"
 
@@ -109,6 +111,9 @@ bool SdStorage::hasCover(const char* coverId) {
     return false;
   }
 
+  char backup[kMaxCoverPathLength]{};
+  std::snprintf(backup, sizeof(backup), "%s.bak", path);
+  if (!fs_->exists(path) && fs_->exists(backup)) fs_->rename(backup, path);
   File file = fs_->open(path, FILE_READ);
   if (!file) {
     return false;
@@ -216,6 +221,12 @@ File SdStorage::openCoverRead(const char* coverId) {
   return fs_->open(path, FILE_READ);
 }
 
+File SdStorage::openCoverReadOnly(const char* coverId) {
+  char path[kMaxCoverPathLength]{};
+  if (!status_.ready || !isSafeAssetId(coverId) || !makeCoverPath(coverId, path, sizeof(path))) return File();
+  return fs_->open(path, FILE_READ);
+}
+
 File SdStorage::openCoverTempWrite(const char* coverId) {
   if (!status_.ready || !isSafeAssetId(coverId)) {
     status_.message = "invalid cover id or storage unavailable";
@@ -227,6 +238,10 @@ File SdStorage::openCoverTempWrite(const char* coverId) {
     return File();
   }
   if (fs_->exists(tempPath)) fs_->remove(tempPath);
+  mbedtls_sha256_init(&coverHash_);
+  coverStream_ = {};
+  mbedtls_sha256_starts_ret(&coverHash_, 0);
+  std::snprintf(hashingCoverId_, sizeof(hashingCoverId_), "%s", coverId);
   return fs_->open(tempPath, FILE_WRITE);
 }
 
@@ -241,6 +256,8 @@ bool SdStorage::appendCoverTemp(File& file, const uint8_t* data, std::size_t len
     return false;
   }
   totalWritten += written;
+  if (!coverStream_.append(data, written)) return false;
+  mbedtls_sha256_update_ret(&coverHash_, data, written);
   return true;
 }
 
@@ -248,6 +265,15 @@ bool SdStorage::commitCoverTemp(const char* coverId, std::size_t length) {
   if (!status_.ready || !isSafeAssetId(coverId) || length == 0 || length > kMaxCoverBytes) {
     discardCoverTemp(coverId);
     status_.message = "invalid cover payload";
+    return false;
+  }
+  uint8_t hash[32]{};
+  char hashId[65]{};
+  mbedtls_sha256_finish_ret(&coverHash_, hash);
+  for (unsigned i = 0; i < 32; ++i) std::snprintf(hashId + i * 2, 3, "%02x", hash[i]);
+  if (std::strcmp(hashingCoverId_, coverId) != 0 || strcasecmp(hashId, coverId) != 0) {
+    discardCoverTemp(coverId);
+    status_.message = "cover checksum failed";
     return false;
   }
   if (!pruneFor(length)) {
@@ -266,32 +292,32 @@ bool SdStorage::commitCoverTemp(const char* coverId, std::size_t length) {
     status_.message = "cover path failed";
     return false;
   }
-  File verify = fs_->open(tempPath, FILE_READ);
-  uint8_t first[2]{};
-  uint8_t last[2]{};
-  bool jpeg = verify && verify.size() == length && length >= 4;
-  if (jpeg) {
-    verify.read(first, sizeof(first));
-    verify.seek(length - 2);
-    verify.read(last, sizeof(last));
-    jpeg = first[0] == 0xFF && first[1] == 0xD8 && last[0] == 0xFF && last[1] == 0xD9;
-  }
-  if (verify) verify.close();
+  const bool jpeg = coverStream_.complete(length);
   if (!jpeg) {
     fs_->remove(tempPath);
     status_.message = "invalid cover payload";
     return false;
   }
-  if (fs_->exists(path) && !fs_->remove(path)) {
+  char backup[kMaxCoverPathLength]{};
+  std::snprintf(backup, sizeof(backup), "%s.bak", path);
+  if (fs_->exists(backup) && !fs_->remove(backup)) {
+    fs_->remove(tempPath);
+    status_.message = "cover backup unavailable";
+    return false;
+  }
+  const bool replacing = fs_->exists(path);
+  if (replacing && !fs_->rename(path, backup)) {
     fs_->remove(tempPath);
     status_.message = "cover replace failed";
     return false;
   }
   if (!fs_->rename(tempPath, path)) {
+    if (replacing) fs_->rename(backup, path);
     fs_->remove(tempPath);
     status_.message = "cover commit failed";
     return false;
   }
+  if (replacing) fs_->remove(backup);
   upsertCover(coverId, static_cast<uint32_t>(length));
   saveIndex();
   refreshCapacity();

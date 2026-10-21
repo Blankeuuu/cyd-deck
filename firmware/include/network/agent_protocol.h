@@ -214,6 +214,11 @@ inline bool decodeShortcutIcon(const char* data, uint8_t* pixels) {
   return true;
 }
 
+inline bool isEmptyShortcutSlot(const char* id, const char* icon) {
+  return (icon && std::strcmp(icon, "empty") == 0) ||
+      (id && std::strncmp(id, "__empty_slot_", 13) == 0);
+}
+
 inline void applyShortcutsUpdateJson(ShortcutState& shortcuts, const char* payload, std::size_t length) {
   resetShortcuts(shortcuts);
   if (!payload || length == 0) return;
@@ -241,6 +246,12 @@ inline void applyShortcutsUpdateJson(ShortcutState& shortcuts, const char* paylo
     readQuotedField(objStart, objLen, "color", color, sizeof(color));
     readQuotedField(objStart, objLen, "iconData", iconData, sizeof(iconData));
     if (id[0] != '\0') {
+      if (isEmptyShortcutSlot(id, icon)) {
+        // Keep the Deck Tile position, but do not persist an executable ID.
+        ++index;
+        cursor = (objEnd == end) ? end : objEnd + 1;
+        continue;
+      }
       copyShortcutText(shortcuts.names[index], sizeof(shortcuts.names[index]), label, "Shortcut");
       copyShortcutText(shortcuts.ids[index], sizeof(shortcuts.ids[index]), id, "");
       copyShortcutText(shortcuts.icons[index], sizeof(shortcuts.icons[index]), icon, "");
@@ -263,7 +274,7 @@ inline bool makeShortcutsReportJson(const ShortcutState& shortcuts, char* out, s
   if (!appendText(cursor, remaining, "{\"protocol\":1,\"type\":\"shortcuts.report\",\"data\":{\"shortcuts\":[")) return false;
   bool first = true;
   for (std::size_t i = 0; i < kMaxShortcutsPerReport; ++i) {
-    if (shortcuts.ids[i][0] == '\0') continue;
+    if (shortcuts.ids[i][0] == '\0' || isEmptyShortcutSlot(shortcuts.ids[i], shortcuts.icons[i])) continue;
     if (!first && !appendText(cursor, remaining, ",")) return false;
     first = false;
     if (!appendText(cursor, remaining, "{\"id\":")) return false;

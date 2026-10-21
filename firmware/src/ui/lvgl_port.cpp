@@ -7,6 +7,7 @@ namespace {
 DisplayHal* activeDisplay=nullptr;
 lv_color_t* drawBuffer=nullptr;
 constexpr uint16_t kDrawBufferPixels = 320 * 10;
+uint32_t frameSequence = 0;
 uint32_t tickNow() { return millis(); }
 void flush(lv_display_t* display, const lv_area_t* area, uint8_t* px) {
   (void)display;
@@ -14,10 +15,12 @@ void flush(lv_display_t* display, const lv_area_t* area, uint8_t* px) {
   const int32_t height=area->y2-area->y1+1;
   lv_draw_sw_rgb565_swap(px,width*height);
   activeDisplay->pushImage(area->x1,area->y1,width,height,reinterpret_cast<uint16_t*>(px));
+  if (lv_display_flush_is_last(display)) ++frameSequence;
   lv_display_flush_ready(display);
 }
 }
 namespace streamdeck {
+uint32_t lvglPortFrameSequence() { return frameSequence; }
 void lvglPortBegin(DisplayHal& display) {
   activeDisplay=&display;
   lv_init();

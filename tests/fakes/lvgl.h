@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+inline void lv_obj_move_foreground(void*) {}
 
 #define LV_SYMBOL_SETTINGS "[settings]"
 #define LV_SYMBOL_AUDIO "[audio]"

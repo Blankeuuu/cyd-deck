@@ -61,9 +61,11 @@ bool settingsDetailsOpen = false;
 lv_obj_t* settingsTabs[3]{};
 lv_obj_t* brightnessPresets[3]{};
 constexpr int kBrightnessPresets[] = {25, 60, 100};
-lv_obj_t* settingsControls[8]{};
+lv_obj_t* settingsControls[12]{};
 uint8_t settingsControlCount = 0;
 lv_obj_t* factoryResetButton = nullptr;
+lv_obj_t* debugModeButton = nullptr;
+lv_obj_t* settingsDebugRow = nullptr;
 lv_obj_t* resetDialogPanel = nullptr;
 lv_obj_t* resetDialogTitle = nullptr;
 lv_obj_t* resetDialogDetail = nullptr;
@@ -106,11 +108,12 @@ lv_obj_t* overlayVolumePercent = nullptr;
 lv_obj_t* shortcutButtons[6]{};
 lv_obj_t* shortcutLabels[6]{};
 lv_obj_t* shortcutIcons[6]{};
-lv_obj_t* pcMetricCards[2]{};
-lv_obj_t* pcMetricTitles[2]{};
-lv_obj_t* pcMetricValues[2]{};
-lv_obj_t* pcMetricBars[2]{};
-lv_obj_t* pcMetricDetails[2]{};
+lv_obj_t* pcMetricCards[4]{};
+lv_obj_t* pcMetricTitles[4]{};
+lv_obj_t* pcMetricValues[4]{};
+lv_obj_t* pcMetricBars[4]{};
+lv_obj_t* pcMetricDetails[4]{};
+lv_obj_t* commandToast = nullptr;
 lv_obj_t* pcSource = nullptr;
 lv_obj_t* pcConnection = nullptr;
 lv_obj_t* otaStatus = nullptr;
@@ -358,7 +361,7 @@ lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
 
 void enqueue(lv_event_t* e) {
   queuePtr->push({static_cast<IntentType>(
-      reinterpret_cast<intptr_t>(lv_event_get_user_data(e))), 0});
+      reinterpret_cast<intptr_t>(lv_event_get_user_data(e))), 0, lv_tick_get()});
 }
 
 void showDeviceActionDialog(IntentType action) {
@@ -389,7 +392,7 @@ void confirmFactoryReset(lv_event_t*) {
 
 void shortcut(lv_event_t* e) {
   queuePtr->push({IntentType::RunShortcut,
-      static_cast<int16_t>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)))});
+      static_cast<int16_t>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e))), lv_tick_get()});
 }
 
 int16_t clampVolume(int value) {
@@ -401,7 +404,7 @@ int16_t clampVolume(int value) {
 void volumeStep(lv_event_t* e) {
   const int delta = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
   queuePtr->push({IntentType::SetVolume,
-      clampVolume(static_cast<int>(statePtr->audio.reportedVolume) + delta)});
+      clampVolume(static_cast<int>(displayedVolume(statePtr->audio)) + delta)});
 }
 
 void muteClicked(lv_event_t*) {
@@ -420,7 +423,8 @@ void volumeSliderChanged(lv_event_t* e) {
   const lv_event_code_t code = lv_event_get_code(e);
   if (code == LV_EVENT_RELEASED || (now - lastVolumeSentAt >= 60)) {
     lastVolumeSentAt = now;
-    queuePtr->push({IntentType::SetVolume, clampVolume(val)});
+    if (queuePtr->push({IntentType::SetVolume, clampVolume(val), now}) && statePtr)
+      requestVolume(statePtr->audio, clampVolume(val), now);
   }
 }
 
@@ -853,24 +857,25 @@ void buildPcPage() {
   makeLabel(pages[2], "Windows PC", 12, 5, 184, 24, kText, 20);
   pcConnection = makeLabel(pages[2], "", 202, 9, 106, 18, kMuted, 14);
   lv_obj_set_style_text_align(pcConnection, LV_TEXT_ALIGN_RIGHT, 0);
-  static const char* const kMetricNames[] = {"CPU usage", "Memory (RAM)"};
+  static const char* const kMetricNames[] = {"CPU", "RAM", "GPU", "TEMP"};
   const uint32_t panelColor = statePtr && statePtr->appearance.theme == 1 ? kLightPanel : kPanel;
 
-  for (int i = 0; i < 2; ++i) {
+  for (int i = 0; i < 4; ++i) {
     pcMetricCards[i] = lv_obj_create(pages[2]);
-    setStaticBounds(pcMetricCards[i], 8, 36 + i * 76, 304, 68);
+    setStaticBounds(pcMetricCards[i], 8 + (i % 2) * 156, 32 + (i / 2) * 76, 148, 70);
     lv_obj_set_style_bg_color(pcMetricCards[i], lv_color_hex(panelColor), 0);
     lv_obj_set_style_bg_opa(pcMetricCards[i], LV_OPA_COVER, 0);
     lv_obj_set_style_radius(pcMetricCards[i], 14, 0);
     lv_obj_set_style_border_width(pcMetricCards[i], 0, 0);
 
-    pcMetricTitles[i] = makeLabel(pcMetricCards[i], kMetricNames[i], 12, 6, 176, 22, kText, 16);
-    pcMetricValues[i] = makeLabel(pcMetricCards[i], "--", 196, 4, 96, 24, kText, 20);
+    pcMetricTitles[i] = makeLabel(pcMetricCards[i], kMetricNames[i], 8, 4, 50, 22, kText, 16);
+    pcMetricValues[i] = makeLabel(pcMetricCards[i], "--", 56, 4, 84, 24, kText, 20);
+    if (i == 3) lv_obj_set_style_text_font(pcMetricValues[i], &lv_font_montserrat_20, 0); // Contains U+00B0.
     lv_obj_set_style_text_align(pcMetricValues[i], LV_TEXT_ALIGN_RIGHT, 0);
-    pcMetricDetails[i] = makeLabel(pcMetricCards[i], "", 12, 29, 280, 18, kMuted, 14);
+    pcMetricDetails[i] = makeLabel(pcMetricCards[i], "", 8, 30, 132, 18, kMuted, 14);
 
     pcMetricBars[i] = lv_bar_create(pcMetricCards[i]);
-    setStaticBounds(pcMetricBars[i], 12, 54, 280, 5);
+    setStaticBounds(pcMetricBars[i], 8, 56, 132, 5);
     lv_bar_set_range(pcMetricBars[i], 0, 100);
     lv_obj_set_style_radius(pcMetricBars[i], 4, LV_PART_MAIN);
     lv_obj_set_style_radius(pcMetricBars[i], 4, LV_PART_INDICATOR);
@@ -933,7 +938,7 @@ void settingsDetailsClicked(lv_event_t*) {
 lv_obj_t* settingsControl(const char* text, int x, int y, int w, int h,
                           lv_event_cb_t cb, void* data = nullptr) {
   lv_obj_t* control = button(pages[3], text, x, y, w, h, cb, data);
-  if (settingsControlCount < 8) settingsControls[settingsControlCount++] = control;
+  if (settingsControlCount < 12) settingsControls[settingsControlCount++] = control;
   return control;
 }
 
@@ -946,6 +951,16 @@ lv_obj_t* deviceDetail(const char* title, int y) {
 
 void closeTouchTest(lv_event_t*) {
   lv_obj_add_flag(touchTestPanel, LV_OBJ_FLAG_HIDDEN);
+}
+
+void debugModeClicked(lv_event_t*) {
+  if (!statePtr) return;
+  toggleDebugMode(statePtr->ui);
+  if (!statePtr->ui.debugMode && commandToast) {
+    lv_obj_add_flag(commandToast, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (queuePtr) queuePtr->push({IntentType::ToggleDebugMode, statePtr->ui.debugMode ? int16_t(1) : int16_t(0), lv_tick_get()});
+  uiRefresh(*statePtr);
 }
 
 void buildInfoPage() {
@@ -995,10 +1010,13 @@ void buildInfoPage() {
         reinterpret_cast<void*>(static_cast<intptr_t>(IntentType::Recalibrate)));
     makeLabel(pages[3], "Test response or align five targets.", 12, 164, 296, 20, kMuted, 14);
   } else {
-    settingsControl("Connection & status", 8, 86, 304, 44, settingsDetailsClicked);
-    makeLabel(pages[3], "Factory reset: hold for 3 seconds.", 12, 134, 296, 18, kMuted, 14);
-    settingsControl("Restart", 8, 154, 148, 44, showRestartDialog);
-    factoryResetButton = settingsControl("Factory reset", 164, 154, 148, 44, nullptr);
+    settingsControl("Connection & status", 8, 84, 172, 44, settingsDetailsClicked);
+    debugModeButton = settingsControl(statePtr && statePtr->ui.debugMode ? "Debug: ON" : "Debug: OFF",
+        188, 84, 124, 44, debugModeClicked);
+    settingsDebugRow = makeLabel(pages[3], "", 12, 134, 296, 18, kMuted, 14);
+    lv_label_set_long_mode(settingsDebugRow, LV_LABEL_LONG_MODE_CLIP);
+    settingsControl("Restart", 8, 156, 148, 44, showRestartDialog);
+    factoryResetButton = settingsControl("Factory reset", 164, 156, 148, 44, nullptr);
     lv_obj_add_event_cb(factoryResetButton, showFactoryResetDialog, LV_EVENT_LONG_PRESSED, nullptr);
   }
 }
@@ -1049,6 +1067,7 @@ void refreshSettings(const AppState& state) {
     bool selectionControl = false;
     for (int slot = 0; slot < 3; ++slot)
       selectionControl |= settingsControls[i] == settingsTabs[slot] || settingsControls[i] == brightnessPresets[slot];
+    selectionControl |= settingsControls[i] == debugModeButton;
     if (!selectionControl) setControlColors(settingsControls[i], neutral,
         settingsControls[i] == factoryResetButton ? (state.appearance.theme ? kLightDangerText : kDangerText) : textColor());
   }
@@ -1056,6 +1075,33 @@ void refreshSettings(const AppState& state) {
     const bool selected = i == static_cast<int>(settingsSection);
     const uint32_t fill = selected ? state.appearance.accent : neutral;
     setControlColors(settingsTabs[i], fill, selected ? contrastingText(fill) : textColor());
+  }
+  if (debugModeButton) {
+    const bool enabled = state.ui.debugMode;
+    lv_obj_t* label = lv_obj_get_child(debugModeButton, 0);
+    if (label) setLabelText(label, enabled ? "Debug: ON" : "Debug: OFF");
+    const uint32_t fill = enabled ? state.appearance.accent : neutral;
+    setControlColors(debugModeButton, fill, enabled ? contrastingText(fill) : textColor());
+  }
+  if (settingsDebugRow) {
+    if (state.ui.debugMode) {
+      char debugBuffer[64];
+      const bool usb = std::strcmp(state.connection.agentHost, "usb") == 0;
+      const char* conn = state.connection.agentConnected
+          ? (usb ? "USB" : "Wi-Fi")
+          : (state.connection.wifiConnected ? "LAN" : "Offline");
+      const uint32_t freeKb = state.system.freeHeap > 0 ? (state.system.freeHeap / 1024) : 0;
+      const char* last = state.commandFeedback[0] ? state.commandFeedback : "OK";
+      if (freeKb > 0) {
+        std::snprintf(debugBuffer, sizeof(debugBuffer), "%s | %lu KB free | %s",
+            conn, static_cast<unsigned long>(freeKb), last);
+      } else {
+        std::snprintf(debugBuffer, sizeof(debugBuffer), "%s | %s", conn, last);
+      }
+      setLabelText(settingsDebugRow, debugBuffer);
+    } else {
+      setLabelText(settingsDebugRow, "Factory reset: hold for 3 seconds.");
+    }
   }
   const bool settingsActive = state.ui.page == Page::Info;
   const uint32_t gearFill = settingsActive ? state.appearance.accent : neutral;
@@ -1086,6 +1132,8 @@ void clearPageWidgets() {
   for (auto& icon : homeShortcutIcons) icon = nullptr;
   brightnessLabel = brightnessSlider = nullptr;
   brightnessPercent = settingsConnection = touchCalibrationStatus = factoryResetButton = nullptr;
+  debugModeButton = nullptr;
+  settingsDebugRow = nullptr;
   for (auto& tab : settingsTabs) tab = nullptr;
   for (auto& preset : brightnessPresets) preset = nullptr;
   for (auto& control : settingsControls) control = nullptr;
@@ -1097,7 +1145,7 @@ void clearPageWidgets() {
   for (auto& btn : shortcutButtons) btn = nullptr;
   for (auto& label : shortcutLabels) label = nullptr;
   for (auto& icon : shortcutIcons) icon = nullptr;
-  for (int i = 0; i < 2; ++i) {
+  for (int i = 0; i < 4; ++i) {
     pcMetricCards[i] = pcMetricTitles[i] = pcMetricValues[i] = pcMetricBars[i] = pcMetricDetails[i] = nullptr;
   }
   appliedShortcutsLayout = 0xFF;
@@ -1168,6 +1216,11 @@ void build() {
   lv_obj_set_style_text_align(wake, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_add_flag(standbyPanel, LV_OBJ_FLAG_HIDDEN);
   sharedButtonCount = buttonCount;
+  commandToast = makeLabel(root, "", 24, 4, 272, 24, kText, 16);
+  lv_obj_set_style_bg_color(commandToast, lv_color_hex(kPanel), 0);
+  lv_obj_set_style_bg_opa(commandToast, LV_OPA_COVER, 0);
+  lv_obj_set_style_text_align(commandToast, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_add_flag(commandToast, LV_OBJ_FLAG_HIDDEN);
   sharedLabelCount = labelCount;
 }
 
@@ -1195,6 +1248,19 @@ void uiRefresh(AppState& s) {
       std::strcmp(s.media.title, "Waiting for PC") != 0;
 
   applyAppearanceStyles(s);
+  if (commandToast) {
+    if (shouldShowCommandToast(s, lv_tick_get())) {
+      const auto toastBackground = lv_color_hex(s.appearance.theme == 1 ? kLightPanel : kPanel);
+      const auto toastText = lv_color_hex(textColor());
+      if (!lv_color_eq(lv_obj_get_style_bg_color(commandToast, 0), toastBackground))
+        lv_obj_set_style_bg_color(commandToast, toastBackground, 0);
+      if (!lv_color_eq(lv_obj_get_style_text_color(commandToast, 0), toastText))
+        lv_obj_set_style_text_color(commandToast, toastText, 0);
+      setLabelText(commandToast, s.commandFeedback);
+      lv_obj_clear_flag(commandToast, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_move_foreground(commandToast);
+    } else lv_obj_add_flag(commandToast, LV_OBJ_FLAG_HIDDEN);
+  }
   refreshSettings(s);
   if (s.ui.standby && !s.connection.agentConnected) {
     char clock[8] = "--:--";
@@ -1288,8 +1354,8 @@ void uiRefresh(AppState& s) {
   // An older Windows echo must not move the thumb under the user's finger.
   const bool draggingVolume = mediaVolumeSlider && lv_obj_has_state(mediaVolumeSlider, LV_STATE_PRESSED);
   if (mediaVolumeSlider && !draggingVolume)
-    lv_slider_set_value(mediaVolumeSlider, s.audio.reportedVolume, LV_ANIM_OFF);
-  const unsigned displayedVolume = draggingVolume ? lv_slider_get_value(mediaVolumeSlider) : s.audio.reportedVolume;
+    lv_slider_set_value(mediaVolumeSlider, displayedVolume(s.audio), LV_ANIM_OFF);
+  const unsigned displayedVolume = draggingVolume ? lv_slider_get_value(mediaVolumeSlider) : streamdeck::displayedVolume(s.audio);
   std::snprintf(buffer, sizeof(buffer), "%u%%", displayedVolume);
   setLabelText(volumeSliderLabel, buffer);
   std::snprintf(buffer, sizeof(buffer), "%s %u%%",
@@ -1310,26 +1376,28 @@ void uiRefresh(AppState& s) {
 
   const bool pcFresh = pcMetricsFresh(s.system, s.connection.agentConnected, lv_tick_get());
   setLabelText(pcConnection, !s.connection.agentConnected ? "Offline" :
-      (pcFresh ? "Live" : (s.system.pcStatsReceived ? "Stale" : "Waiting")));
+      (pcFresh ? ((s.system.cpuAvailable || s.system.ramAvailable || s.system.gpuAvailable || s.system.tempAvailable) ? "Live" : "Unavailable") : (s.system.pcStatsReceived ? "Stale" : "Waiting")));
   setLabelText(pcSource, pcFresh ? "Source: Windows Agent" :
       (s.connection.agentConnected ? "Waiting for new PC data" : "Connect Windows Agent"));
   if (pcMetricValues[0]) {
-    const bool available[] = {s.system.cpuAvailable, s.system.ramAvailable};
-    const unsigned values[] = {s.system.cpuPercent, s.system.ramPercent};
-    for (int i = 0; i < 2; ++i) {
-      if (pcFresh && available[i]) std::snprintf(buffer, sizeof(buffer), "%u%%", values[i]);
+    const bool available[] = {s.system.cpuAvailable, s.system.ramAvailable, s.system.gpuAvailable, s.system.tempAvailable};
+    const int values[] = {s.system.cpuPercent, s.system.ramPercent, s.system.gpuPercent, s.system.tempCelsius};
+    for (int i = 0; i < 4; ++i) {
+      if (pcFresh && available[i]) std::snprintf(buffer, sizeof(buffer), i == 3 ? "%d°C" : "%d%%", values[i]);
       else std::snprintf(buffer, sizeof(buffer), "--");
       setLabelText(pcMetricValues[i], buffer);
       lv_bar_set_value(pcMetricBars[i], pcFresh && available[i] ? values[i] : 0, LV_ANIM_OFF);
     }
-    setLabelText(pcMetricDetails[0], pcFresh && s.system.cpuAvailable ? "All processors" : "No current measurement");
+    setLabelText(pcMetricDetails[0], pcFresh && s.system.cpuAvailable ? "All processors" : "Unavailable");
+    setLabelText(pcMetricDetails[2], pcFresh && s.system.gpuAvailable ? "GPU engines" : "Unavailable");
+    setLabelText(pcMetricDetails[3], pcFresh && s.system.tempAvailable ? "CPU sensor" : "Unavailable");
     if (pcFresh && s.system.ramAvailable && s.system.ramCapacityAvailable) {
       const uint64_t used = static_cast<uint64_t>(s.system.ramUsedMb) * 10ULL / 1024ULL;
       const uint64_t total = static_cast<uint64_t>(s.system.ramTotalMb) * 10ULL / 1024ULL;
-      std::snprintf(buffer, sizeof(buffer), "%llu.%llu / %llu.%llu GB used",
+      std::snprintf(buffer, sizeof(buffer), "%llu.%llu/%llu.%llu GB",
           used / 10, used % 10, total / 10, total % 10);
       setLabelText(pcMetricDetails[1], buffer);
-    } else setLabelText(pcMetricDetails[1], pcFresh && s.system.ramAvailable ? "Capacity not reported" : "No current measurement");
+    } else setLabelText(pcMetricDetails[1], "Unavailable");
   }
   if (s.ota.running) {
     std::snprintf(buffer, sizeof(buffer), "%s %u%%", s.ota.status, s.ota.progress);

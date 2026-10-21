@@ -27,7 +27,11 @@ try {
     $arguments += @(rg --files 'firmware/src/ui/fonts' -g '*.c')
     $arguments += @('-x', 'c++', 'tests/ui_render_preview.cpp', '-o', '.tools/ui_render_preview.exe')
     [IO.File]::WriteAllLines($response, $arguments, [Text.UTF8Encoding]::new($false))
-    & $zig c++ "@$response" *> $buildLog
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $zig c++ "@$response" *> $buildLog
+    } finally { $ErrorActionPreference = $previousErrorAction }
     if ($LASTEXITCODE -ne 0) { Get-Content $buildLog -Tail 40; exit $LASTEXITCODE }
     & $executable $output
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -3,9 +3,11 @@
 #include <Arduino.h>
 #include <FS.h>
 #include <SPI.h>
+#include <mbedtls/sha256.h>
 
 #include "storage/sd_paths.h"
 #include "storage/paged_index.h"
+#include "storage/cover_stream.h"
 
 namespace streamdeck::storage {
 
@@ -32,6 +34,7 @@ class SdStorage {
   bool commitCoverTemp(const char* coverId, std::size_t length);
   void discardCoverTemp(const char* coverId);
   File openCoverRead(const char* coverId);
+  File openCoverReadOnly(const char* coverId);
   bool removeCover(const char* coverId);
 
  private:
@@ -62,6 +65,9 @@ class SdStorage {
   PagedIndex<CoverIndexEntry, kMaxIndexEntries> entries_;
   std::size_t entryCount_ = 0;
   uint32_t lastUseTick_ = 0;
+  mbedtls_sha256_context coverHash_{};
+  char hashingCoverId_[kMaxCoverIdLength + 1]{};
+  CoverStreamValidation coverStream_;
 };
 
 }  // namespace streamdeck::storage

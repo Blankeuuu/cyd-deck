@@ -76,6 +76,7 @@ static unsigned ascii_width(const lv_font_t* font, const char* text) {
 }
 
 int main(void) {
+  assert_glyph_present_in_actual_font_data(&lv_font_montserrat_20, 0x00B0);
   assert_glyph_present_in_actual_font_data(&cyd_icons_20, 0xF11C); /* hotkey keyboard */
   assert_glyph_present_in_actual_font_data(&cyd_icons_20, 0xF07B); /* folder */
   assert_glyph_present_in_actual_font_data(&cyd_icons_20, 0xF013); /* settings */

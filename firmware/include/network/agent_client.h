@@ -14,7 +14,8 @@ struct AgentClientConfig {
   String manualHost;
   uint16_t port = 8765;
   bool usbProtocolEnabled = true;
-  bool (*renderCover)(const char* coverId, AppState& state) = nullptr;
+  CoverRenderResult (*renderCover)(const char* coverId, AppState& state) = nullptr;
+  bool (*coverDecodeBusy)() = nullptr;
 };
 
 class AgentClient {

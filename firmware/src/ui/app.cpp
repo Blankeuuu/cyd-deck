@@ -9,6 +9,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <esp_system.h>
 #include <lgfx/v1/LGFX_Sprite.hpp>
 #include <lgfx/v1/lgfx_filesystem_support.hpp>
@@ -115,7 +118,13 @@ uint8_t calibrationStep = 0;
 lv_indev_t* pointer = nullptr;
 lv_obj_t* setupStatusLabel = nullptr;
 
-bool renderCachedCover(const char* coverId, AppState& appState);
+CoverRenderResult renderCachedCover(const char* coverId, AppState& appState);
+struct CoverDecodeJob {
+  std::atomic<bool> running{false};
+  char id[kCoverIdLength + 1]{};
+  uint16_t* pixels = nullptr;
+  bool decoded = false;
+} coverDecodeJob;
 #if defined(WOKWI_SIMULATOR)
 void renderWokwiCoverDiagnostic(AppState& appState);
 #endif
@@ -354,6 +363,7 @@ void loadAppearanceSettings() {
       ? prefs.getUShort("offsec", state.appearance.screenOffAfterSeconds)
       : prefs.getUInt("offsec", state.appearance.screenOffAfterSeconds);
   state.appearance.wakeOnTouch = prefs.getBool("wake", state.appearance.wakeOnTouch);
+  state.ui.debugMode = prefs.getBool(nvs_keys::kDebugModeKey, nvs_keys::kDebugModeDefault);
   const PreferenceType orderType = prefs.getType("order");
   uint64_t order = orderType == PT_U64
       ? prefs.getULong64("order", 0x0302010400ULL)
@@ -393,6 +403,7 @@ void persistAppearanceSettings() {
   prefs.putUChar("dimbright", state.appearance.dimBrightness);
   prefs.putUInt("offsec", state.appearance.screenOffAfterSeconds);
   prefs.putBool("wake", state.appearance.wakeOnTouch);
+  prefs.putBool(nvs_keys::kDebugModeKey, state.ui.debugMode);
   uint64_t order = 0;
   uint8_t visible = 0;
   for (uint8_t i = 0; i < kPageCount; ++i) {
@@ -510,6 +521,7 @@ void startAppUi() {
     config.manualHost = setupSettings.agentIp;
     config.usbProtocolEnabled = kUsbProtocolEnabled;
     config.renderCover = renderCachedCover;
+    config.coverDecodeBusy = []() { return coverDecodeJob.running.load(); };
     agentClient.begin(config, state, intents, sdStorage);
     agentClientStarted = true;
   }
@@ -526,26 +538,73 @@ void markUserInput() {
   }
 }
 
-bool renderCachedCover(const char* coverId, AppState& appState) {
-  if (!coverId || !sdMounted || !appUiStarted) return false;
-  File jpeg = sdStorage.openCoverRead(coverId);
-  if (!jpeg) return false;
-  if (!coverPixels) {
-    coverPixels = static_cast<uint16_t*>(std::calloc(kCoverImageSize * kCoverImageSize, sizeof(uint16_t)));
-    if (!coverPixels) {
-      jpeg.close();
-      return false;
+CoverRenderResult renderCachedCover(const char* coverId, AppState& appState) {
+  if (!isValidCoverId(coverId) || !sdMounted || !appUiStarted) return CoverRenderResult::Failed;
+  auto& job = coverDecodeJob;
+  if (job.running.load()) return CoverRenderResult::Pending;
+  if (job.id[0]) {
+    const bool current = std::strcmp(job.id, coverId) == 0;
+    const bool decoded = job.decoded;
+    uint16_t* prepared = job.pixels;
+    job.id[0] = '\0'; job.pixels = nullptr;
+    if (!current || !decoded) {
+      std::free(prepared);
+      if (current) return CoverRenderResult::Failed;
+    } else {
+      uint16_t* previous = coverPixels;
+      lv_image_cache_drop(&coverImageDsc);
+      coverPixels = prepared;
+      coverImageDsc.data = reinterpret_cast<const uint8_t*>(coverPixels);
+      std::free(previous);
+      // Descriptor and widgets are only touched on the LVGL thread below.
+      goto publishCover;
     }
   }
+  std::strncpy(job.id, coverId, sizeof(job.id) - 1);
+  job.decoded = false;
+  job.running.store(true);
+  if (xTaskCreate([](void*) {
+      auto& work = coverDecodeJob;
+      File jpeg = sdStorage.openCoverReadOnly(work.id);
+      if (jpeg && jpeg.size() > 0 && jpeg.size() <= storage::kMaxCoverBytes) {
+        mbedtls_sha256_context digest;
+        mbedtls_sha256_init(&digest);
+        mbedtls_sha256_starts_ret(&digest, 0);
+        uint8_t bytes[512], hash[32]{};
+        std::size_t received = 0;
+        while (jpeg.available()) {
+          const int length = jpeg.read(bytes, sizeof(bytes));
+          if (length <= 0) break;
+          mbedtls_sha256_update_ret(&digest, bytes, length);
+          received += length;
+          vTaskDelay(1);
+        }
+        mbedtls_sha256_finish_ret(&digest, hash);
+        mbedtls_sha256_free(&digest);
+        char hashId[65]{};
+        for (unsigned i = 0; i < 32; ++i) std::snprintf(hashId + i * 2, 3, "%02x", hash[i]);
+        const bool intact = received == jpeg.size() && strcasecmp(hashId, work.id) == 0 && jpeg.seek(0);
+        if (intact)
+        work.pixels = static_cast<uint16_t*>(std::calloc(kCoverImageSize * kCoverImageSize, sizeof(uint16_t)));
+        if (work.pixels) {
+          lgfx::LGFX_FILESYSTEM_Support<lgfx::LGFX_Sprite> sprite;
+          sprite.setColorDepth(16);
+          sprite.setBuffer(work.pixels, kCoverImageSize, kCoverImageSize, 16);
+          sprite.fillScreen(0x0000);
+          work.decoded = sprite.drawJpg(&jpeg, 0, 0, kCoverImageSize, kCoverImageSize, 0, 0, 1.0f);
+          if (work.decoded) convertDisplayOrderRgb565ToLvgl(work.pixels, kCoverImageSize * kCoverImageSize);
+        }
+      }
+      if (jpeg) jpeg.close();
+      work.running.store(false);
+      vTaskDelete(nullptr);
+    }, "cover-decode", 6144, nullptr, 1, nullptr) != pdPASS) {
+    job.id[0] = '\0'; job.running.store(false);
+    return CoverRenderResult::Failed;
+  }
+  return CoverRenderResult::Pending;
 
-  lgfx::LGFX_FILESYSTEM_Support<lgfx::LGFX_Sprite> sprite;
-  sprite.setColorDepth(16);
-  sprite.setBuffer(coverPixels, kCoverImageSize, kCoverImageSize, 16);
-  sprite.fillScreen(0x0000);
-  const bool decoded = sprite.drawJpg(&jpeg, 0, 0, kCoverImageSize, kCoverImageSize, 0, 0, 1.0f);
-  jpeg.close();
-  if (!decoded) return false;
-  convertDisplayOrderRgb565ToLvgl(coverPixels, kCoverImageSize * kCoverImageSize);
+publishCover:
   coverImageDsc.header.magic = LV_IMAGE_HEADER_MAGIC;
   coverImageDsc.header.cf = LV_COLOR_FORMAT_RGB565;
   coverImageDsc.header.flags = 0;
@@ -556,7 +615,7 @@ bool renderCachedCover(const char* coverId, AppState& appState) {
   coverImageDsc.data = reinterpret_cast<const uint8_t*>(coverPixels);
   uiSetCoverImage(&coverImageDsc);
   appState.media.cover.rendered = true;
-  return true;
+  return CoverRenderResult::Ready;
 }
 
 #if defined(WOKWI_SIMULATOR)
@@ -1194,6 +1253,15 @@ void handleIntent(const Intent& intent) {
     case IntentType::OpenSetupPortal:
       startSetupPortal();
       break;
+    case IntentType::ToggleDebugMode:
+      state.ui.debugMode = intent.value != 0;
+      persistAppearanceSettings();
+      lastUserInputAt = millis();
+      displayOff = false;
+      displayDimmed = false;
+      state.ui.standby = false;
+      uiRefresh(state);
+      break;
     case IntentType::SettingsUpdated:
       persistAppearanceSettings();
       // Settings wake the display: reset idle time as well as the flags.
@@ -1212,13 +1280,11 @@ void handleIntent(const Intent& intent) {
       uiRefresh(state);
       break;
     case IntentType::SetVolume:
-      state.audio.reportedVolume = constrain(intent.value, 0, 100);
+      requestVolume(state.audio, constrain(intent.value, 0, 100), millis());
       uiRefresh(state);
       agentClient.sendIntent(intent);
       break;
     case IntentType::ToggleMute:
-      state.audio.muted = !state.audio.muted;
-      uiRefresh(state);
       agentClient.sendIntent(intent);
       break;
     case IntentType::Previous:
@@ -1395,7 +1461,11 @@ void appBegin() {
 
 void appLoop() {
   const uint32_t loopStarted = micros();
+  const uint32_t frameBefore = lvglPortFrameSequence();
   lv_timer_handler();
+  if (lvglPortFrameSequence() != frameBefore && state.media.cover.rendered &&
+      (state.ui.page == Page::Home || state.ui.page == Page::Media) && !state.ui.standby)
+    state.media.cover.displayed = true;
   const uint32_t renderUs = micros() - loopStarted;
   const uint32_t networkStarted = micros();
   if (setupQrNeedsDraw) drawSetupQr();

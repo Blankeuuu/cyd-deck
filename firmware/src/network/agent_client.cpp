@@ -7,11 +7,16 @@
 #include <esp_heap_caps.h>
 #include <algorithm>
 #include <cstring>
+#include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 
 #include "network/agent_discovery.h"
 #include "network/agent_protocol.h"
 #include "network/cover_art.h"
 #include "network/pc_metrics.h"
+#include "network/pending_commands.h"
 #include "network/usb_agent_protocol.h"
 #include "storage/sd_paths.h"
 
@@ -231,13 +236,42 @@ class AgentClient::Impl {
 
   void loop() {
     if (!state_) return;
+    const bool metricsFresh = pcMetricsFresh(state_->system, state_->connection.agentConnected, millis());
+    if (metricsWereFresh_ && !metricsFresh) trace("stale_detected", "system");
+    metricsWereFresh_ = metricsFresh;
+
+    PendingCommand expired;
+    while (pendingCommands_.expire(millis(), expired)) finishCommand(expired, false, "ACK timeout");
+    if (state_->audio.pending && millis() - state_->audio.requestedAtMs >= 5000) {
+      state_->audio.pending = false;
+      state_->audio.failed = true;
+      copyText(state_->commandFeedback, sizeof(state_->commandFeedback), "Volume state timeout");
+      state_->feedbackAtMs = millis();
+    }
 
     serviceUsb();
+    if (state_->media.cover.displayed && std::strcmp(lastDisplayedCover_, state_->media.cover.availableId) != 0) {
+      copyText(lastDisplayedCover_, sizeof(lastDisplayedCover_), state_->media.cover.availableId);
+      trace("rendered", lastDisplayedCover_);
+      sendDeviceInfo();
+    }
+    serviceHttpCover();
     maybeUsbHeartbeat();
     maybeSendUsbDeviceInfo();
     if (expirePendingCover(state_->media.cover, millis())) {
       resetUsbCoverTransfer();
       if (intents_) intents_->push({IntentType::RefreshUi, 0});
+    }
+    if (canSend()) {
+      auto& cover = state_->media.cover;
+      if (cover.status == CoverStatus::Failed && !cover.retryArmed && cover.retries < 3)
+        trace("retry_scheduled", cover.requestedId);
+      if (cover.status == CoverStatus::Failed &&
+          updateCoverFetch(cover, state_->media.coverId, millis()) == CoverTransition::Requested) {
+        resetUsbCoverTransfer();
+      }
+      if (cover.status == CoverStatus::Pending && cover.decoding) serviceCoverDecode();
+      if (cover.status == CoverStatus::Pending && !cover.inFlight && !cover.decoding) startCoverRequest();
     }
 
     // USB owns control while authenticated. Never run blocking DNS/TCP discovery
@@ -279,7 +313,13 @@ class AgentClient::Impl {
   }
 
   void sendIntent(const Intent& intent) {
-    if (!canSend()) return;
+    lastIntentAtMs_ = intent.queuedAtMs;
+    if (!canSend()) {
+      copyText(state_->commandFeedback, sizeof(state_->commandFeedback), "Disconnected");
+      state_->feedbackAtMs = millis();
+      state_->audio.pending = false;
+      return;
+    }
 
     if (protocol::isMediaIntent(intent.type)) {
       sendMediaCommand(protocol::mediaCommandFor(intent.type));
@@ -298,7 +338,8 @@ class AgentClient::Impl {
 
     if (intent.type == IntentType::RunShortcut && state_) {
       const int index = intent.value;
-      if (index >= 0 && index < 6 && state_->shortcuts.ids[index][0] != '\0') {
+      if (index >= 0 && index < 6 && state_->shortcuts.ids[index][0] != '\0' &&
+          !protocol::isEmptyShortcutSlot(state_->shortcuts.ids[index], state_->shortcuts.icons[index])) {
         sendShortcut(state_->shortcuts.ids[index]);
       }
     }
@@ -336,6 +377,7 @@ class AgentClient::Impl {
     if (!state_) return;
     const bool wifiOnline = connected_ && authorized_;
     const bool agentOnline = wifiOnline || usbAuthorized_;
+    if (agentOnline && !state_->connection.agentConnected) state_->audio.revision = 0;
     state_->connection.agentConnected = agentOnline;
     if (!agentOnline) state_->system.pcStatsReceived = false;
     state_->connection.online = agentOnline;
@@ -445,6 +487,7 @@ class AgentClient::Impl {
     }
 
     if (type == protocol::kHello) {
+      if (state_ && quotedField(payload, length, "role") == "agent") resetAudioSession(state_->audio);
       return;
     }
     if (type == protocol::kConnectionState) {
@@ -485,6 +528,10 @@ class AgentClient::Impl {
     }
     if (type == "device.status.request") {
       sendDeviceInfo();
+      return;
+    }
+    if (type == "diagnostics.configure") {
+      diagnostics_ = boolField(payload, length, "enabled", false);
       return;
     }
     if (type == protocol::kDeviceRestart) {
@@ -537,17 +584,23 @@ class AgentClient::Impl {
     }
     if (type == protocol::kAudioUpdate) {
       if (state_) {
-        state_->audio.reportedVolume = static_cast<uint8_t>(
-            constrain(integerField(payload, length, "volumePercent", state_->audio.reportedVolume), 0, 100));
-        state_->audio.muted = boolField(payload, length, "muted", false);
-        state_->audio.available = true;
+        const auto volume = static_cast<uint8_t>(constrain(integerField(payload, length, "volumePercent", state_->audio.reportedVolume), 0, 100));
+        const String requestId = quotedField(payload, length, "requestId");
+        const bool wasPending = state_->audio.pending;
+        trace("audio_update_received", requestId.length() ? requestId.c_str() : "audio");
+        if (receiveVolume(state_->audio, volume, integerField(payload, length, "revision", 0), requestId.c_str()))
+          state_->audio.muted = boolField(payload, length, "muted", false);
+        if (wasPending && !state_->audio.pending) trace("volume_reconciled", requestId.length() ? requestId.c_str() : "audio");
         if (intents_) intents_->push({IntentType::RefreshUi, 0});
       }
       return;
     }
     if (type == protocol::kSystemStats) {
       if (state_) {
+        trace("stats_received", "system");
         protocol::applyPcMetricsJson(state_->system, payload, length, millis());
+        trace("stats_parsed", "system");
+        trace("metrics_updated", "system");
         if (hasField(payload, length, "hostDate")) copyText(state_->system.hostDate, sizeof(state_->system.hostDate), quotedField(payload, length, "hostDate").c_str(), "");
         const long hostMinutes = integerField(payload, length, "hostLocalMinutes", -1);
         if (hostMinutes >= 0 && hostMinutes < 1440) {
@@ -562,7 +615,21 @@ class AgentClient::Impl {
       applyShortcuts(payload, length);
       return;
     }
-    if (type == protocol::kAck || type == protocol::kPong) {
+    if (type == protocol::kAck) {
+      PendingCommand command;
+      const String id = quotedField(payload, length, "requestId");
+      const String code = quotedField(payload, length, "code");
+      const char* detail = code == "unknownShortcut" ? "Unknown Shortcut" :
+          code == "invalidConfiguration" ? "Invalid configuration" :
+          code == "targetNotFound" ? "Target not found" :
+          code == "actionUnavailable" ? "Action unavailable" :
+          code == "accessDenied" ? "Access denied" :
+          code == "busy" ? "Another Shortcut is running" : "Command failed";
+      if (pendingCommands_.take(id.c_str(), command))
+        finishCommand(command, boolField(payload, length, "success", false), detail);
+      return;
+    }
+    if (type == protocol::kPong) {
       return;
     }
   }
@@ -579,25 +646,55 @@ class AgentClient::Impl {
     copyText(state_->media.coverId, sizeof(state_->media.coverId), coverId.c_str(), "");
     const CoverTransition transition = updateCoverFetch(state_->media.cover, state_->media.coverId, millis());
     if (transition == CoverTransition::Requested || transition == CoverTransition::Cleared) {
+      cancelHttpCover();
       resetUsbCoverTransfer();
     }
-    if (transition == CoverTransition::Requested) {
-      const bool cached = storage_ && config_.renderCover && config_.renderCover(state_->media.coverId, *state_);
-      if (cached) {
-        markCoverFetchComplete(state_->media.cover, state_->media.coverId, true, true);
-      } else if (usbAuthorized_) {
-        String request = "{\"protocol\":1,\"type\":\"cover.request\",\"data\":{\"coverId\":\"";
-        request += state_->media.coverId;
-        request += "\"}}";
-        sendText(request, false);
-      }
-    }
+    if (transition == CoverTransition::Requested) startCoverRequest();
     if (intents_) intents_->push({IntentType::RefreshUi, 0});
     state_->media.playing = boolField(payload, length, "playing", false);
     state_->media.positionMs = integerField(payload, length, "positionMs", 0);
     state_->media.durationMs = integerField(payload, length, "durationMs", 0);
     state_->media.timelineAtMs = millis();
     state_->media.timelineAnchored = true;
+  }
+
+  void startCoverRequest() {
+      auto& cover = state_->media.cover;
+      if (!cover.cacheChecked) {
+        trace("requested", state_->media.coverId);
+        cover.cacheChecked = true;
+        cover.decoding = true;
+        cover.decodeAfterTransfer = false;
+        serviceCoverDecode();
+        return;
+      }
+      if (usbAuthorized_) {
+        cover.inFlight = true;
+        cover.requestedAtMs = millis();
+        String request = "{\"protocol\":1,\"type\":\"cover.request\",\"data\":{\"coverId\":\"";
+        request += state_->media.coverId;
+        request += "\"}}";
+        sendText(request, false);
+      }
+  }
+
+  void serviceCoverDecode() {
+    auto& cover = state_->media.cover;
+    const auto result = config_.renderCover ? config_.renderCover(cover.requestedId, *state_) : CoverRenderResult::Failed;
+    if (result == CoverRenderResult::Pending) return;
+    cover.decoding = false;
+    if (result == CoverRenderResult::Ready) {
+      trace(cover.decodeAfterTransfer ? "decode_success" : "cache_hit", cover.requestedId);
+      markCoverFetchComplete(cover, cover.requestedId, true, true);
+    } else if (cover.decodeAfterTransfer) {
+      trace("decode_failed", cover.requestedId);
+      markCoverFetchComplete(cover, cover.requestedId, false);
+    } else {
+      trace("cache_miss", cover.requestedId);
+      cover.inFlight = false;
+      startCoverRequest();
+    }
+    if (intents_) intents_->push({IntentType::RefreshUi, 0});
   }
 
   void applyShortcuts(const char* payload, size_t length) {
@@ -658,7 +755,7 @@ class AgentClient::Impl {
   void maybeFetchCover() {
     if (usbAuthorized_ || !state_ || !storage_ || !authorized_ || WiFi.status() != WL_CONNECTED) return;
     CoverFetchState& cover = state_->media.cover;
-    if (cover.status != CoverStatus::Pending || cover.inFlight || !isValidCoverId(cover.requestedId)) return;
+    if (httpRunning_ || cover.status != CoverStatus::Pending || cover.inFlight || cover.decoding || !cover.cacheChecked || !isValidCoverId(cover.requestedId)) return;
 
     char path[kCoverRequestPathMax]{};
     if (!makeCoverRequestPath(cover.requestedId, path, sizeof(path))) {
@@ -670,20 +767,51 @@ class AgentClient::Impl {
     copyText(requestId, sizeof(requestId), cover.requestedId, "");
     cover.inFlight = true;
 
-    if (storage_->hasCover(requestId)) {
-      const bool rendered = config_.renderCover ? config_.renderCover(requestId, *state_) : false;
-      markCoverFetchComplete(cover, requestId, rendered, rendered);
-      return;
+    if (!httpQueue_) httpQueue_ = xQueueCreate(4, sizeof(HttpCoverChunk));
+    if (!httpQueue_) { markCoverFetchComplete(cover, requestId, false); return; }
+    xQueueReset(httpQueue_);
+    copyText(httpCoverId_, sizeof(httpCoverId_), requestId);
+    copyText(httpHost_, sizeof(httpHost_), host_.c_str());
+    httpPort_ = config_.port;
+    httpCancel_ = false;
+    httpRunning_ = true;
+    if (xTaskCreate([](void* context) {
+          auto* self = static_cast<Impl*>(context);
+          self->downloadHttpCover();
+          self->httpRunning_ = false;
+          vTaskDelete(nullptr);
+        }, "cover-http", 4096, this, 1, nullptr) != pdPASS) {
+      httpRunning_ = false;
+      markCoverFetchComplete(cover, requestId, false);
     }
+  }
 
+  struct HttpCoverChunk {
+    uint8_t kind = 0; // 0 = bytes, 1 = complete, 2 = failed
+    uint16_t length = 0;
+    uint32_t total = 0;
+    uint8_t bytes[512]{};
+  };
+
+  bool queueHttpChunk(const HttpCoverChunk& chunk) {
+    while (!httpCancel_) {
+      if (xQueueSend(httpQueue_, &chunk, pdMS_TO_TICKS(20)) == pdTRUE) return true;
+    }
+    return false;
+  }
+
+  // Network waits run on a worker. Only the UI thread touches SD and LVGL.
+  void downloadHttpCover() {
     WiFiClient client;
     client.setTimeout(kCoverHttpTimeoutMs);
     bool ok = false;
-    if (client.connect(host_.c_str(), config_.port, kCoverHttpTimeoutMs)) {
+    if (!httpCancel_ && client.connect(httpHost_, httpPort_, kCoverHttpTimeoutMs)) {
+      char path[kCoverRequestPathMax]{};
+      makeCoverRequestPath(httpCoverId_, path, sizeof(path));
       client.print(F("GET "));
       client.print(path);
       client.print(F(" HTTP/1.1\r\nHost: "));
-      client.print(host_);
+      client.print(httpHost_);
       client.print(F("\r\nConnection: close\r\n\r\n"));
 
       const String statusLine = client.readStringUntil('\n');
@@ -699,37 +827,85 @@ class AgentClient::Impl {
 
       if (statusCode == 200 && contentLength > 0 &&
           contentLength <= static_cast<int>(storage::kMaxCoverBytes)) {
-        File out = storage_->openCoverTempWrite(requestId);
         std::size_t received = 0;
-        uint8_t buffer[512];
         const uint32_t startedAt = millis();
-        while (out && received < static_cast<std::size_t>(contentLength) &&
+        while (!httpCancel_ && received < static_cast<std::size_t>(contentLength) &&
             millis() - startedAt < kCoverHttpTimeoutMs) {
           const int available = client.available();
           if (available <= 0) {
-            delay(1);
+            vTaskDelay(pdMS_TO_TICKS(1));
             continue;
           }
-          const int want = std::min<int>(available,
-              std::min<int>(static_cast<int>(sizeof(buffer)), contentLength - static_cast<int>(received)));
-          const int read = client.read(buffer, want);
+          HttpCoverChunk chunk;
+          chunk.total = contentLength;
+          const int want = std::min<int>(available, std::min<int>(sizeof(chunk.bytes), contentLength - received));
+          const int read = client.read(chunk.bytes, want);
           if (read <= 0) break;
-          if (!appendCountedCoverChunk(received, static_cast<std::size_t>(contentLength),
-                  static_cast<std::size_t>(read), [&]() {
-                    return storage_->appendCoverTemp(out, buffer, static_cast<std::size_t>(read), received);
-                  })) break;
+          chunk.length = read;
+          if (!queueHttpChunk(chunk)) break;
+          received += read;
         }
-        if (out) {
-          out.flush();
-          out.close();
-        }
-        ok = received == static_cast<std::size_t>(contentLength) && storage_->commitCoverTemp(requestId, received);
-        if (!ok) storage_->discardCoverTemp(requestId);
+        ok = received == static_cast<std::size_t>(contentLength);
       }
     }
     client.stop();
-    const bool rendered = ok && config_.renderCover && config_.renderCover(requestId, *state_);
-    markCoverFetchComplete(cover, requestId, rendered, rendered);
+    HttpCoverChunk result;
+    result.kind = ok ? 1 : 2;
+    queueHttpChunk(result);
+  }
+
+  void serviceHttpCover() {
+    if (!httpQueue_) return;
+    if (!acceptsCoverTransfer(state_->media.cover, httpCoverId_) || usbAuthorized_) httpCancel_ = true;
+    if (httpCancel_ && (httpFile_ || httpWritten_)) {
+      if (httpFile_) httpFile_.close();
+      storage_->discardCoverTemp(httpCoverId_);
+      httpWritten_ = 0;
+    }
+    HttpCoverChunk chunk;
+    if (xQueueReceive(httpQueue_, &chunk, 0) != pdTRUE) return;
+    if (httpCancel_) {
+      return;
+    }
+    bool ok = true;
+    if (chunk.kind == 0) {
+      if (!httpFile_) {
+        trace("transfer_started", httpCoverId_);
+        httpFile_ = storage_->openCoverTempWrite(httpCoverId_); httpWritten_ = 0;
+      }
+      httpTotal_ = chunk.total;
+      ok = appendCountedCoverChunk(httpWritten_, httpTotal_, chunk.length, [&]() {
+        return storage_->appendCoverTemp(httpFile_, chunk.bytes, chunk.length, httpWritten_);
+      });
+      if (ok) state_->media.cover.requestedAtMs = millis();
+    } else {
+      trace(chunk.kind == 1 ? "transfer_completed" : "transfer_failed", httpCoverId_);
+      if (httpFile_) { httpFile_.flush(); httpFile_.close(); }
+      ok = chunk.kind == 1 && httpWritten_ == httpTotal_ && storage_->commitCoverTemp(httpCoverId_, httpWritten_);
+      if (ok) trace("saved", httpCoverId_);
+      if (ok) {
+        state_->media.cover.inFlight = false;
+        state_->media.cover.decoding = true;
+        state_->media.cover.decodeAfterTransfer = true;
+        serviceCoverDecode();
+      } else markCoverFetchComplete(state_->media.cover, httpCoverId_, false);
+      httpWritten_ = 0;
+    }
+    if (!ok) {
+      httpCancel_ = true;
+      if (httpFile_) httpFile_.close();
+      storage_->discardCoverTemp(httpCoverId_);
+      markCoverFetchComplete(state_->media.cover, httpCoverId_, false);
+      httpWritten_ = 0;
+    }
+  }
+
+  void cancelHttpCover() {
+    httpCancel_ = true;
+    if (httpFile_) httpFile_.close();
+    if (storage_ && httpCoverId_[0] && !(config_.coverDecodeBusy && config_.coverDecodeBusy()))
+      storage_->discardCoverTemp(httpCoverId_);
+    httpWritten_ = 0;
   }
 
   void maybeSendDeviceInfo() {
@@ -803,7 +979,12 @@ class AgentClient::Impl {
     message += "},\"cover\":{\"status\":";
     message += static_cast<unsigned>(state_->media.cover.status);
     message += ",\"rendered\":";
-    message += state_->media.cover.rendered ? "true" : "false";
+    message += state_->media.cover.displayed ? "true" : "false";
+    if (diagnostics_) {
+      message += ",\"coverId\":\"";
+      message += state_->media.cover.requestedId;
+      message += "\"";
+    }
     message += "}}";
     return message;
   }
@@ -847,6 +1028,7 @@ class AgentClient::Impl {
 
   void sendMediaCommand(const char* command) {
     String requestId = makeRequestId("media");
+    if (!trackCommand(requestId, false)) return;
     String message = "{\"protocol\":1,\"type\":\"media.command\",\"requestId\":\"";
     message += requestId;
     message += "\",\"data\":{\"command\":\"";
@@ -857,6 +1039,9 @@ class AgentClient::Impl {
 
   void sendSetVolume(int value) {
     String requestId = makeRequestId("volume");
+    if (!trackCommand(requestId, true)) return;
+    copyText(state_->audio.requestId, sizeof(state_->audio.requestId), requestId.c_str());
+    trace("volume_requested", requestId.c_str());
     String message = "{\"protocol\":1,\"type\":\"audio.setVolume\",\"requestId\":\"";
     message += requestId;
     message += "\",\"data\":{\"volumePercent\":";
@@ -867,6 +1052,7 @@ class AgentClient::Impl {
 
   void sendToggleMute() {
     String requestId = makeRequestId("mute");
+    if (!trackCommand(requestId, false)) return;
     String message = "{\"protocol\":1,\"type\":\"audio.toggleMute\",\"requestId\":\"";
     message += requestId;
     message += "\",\"data\":{}}";
@@ -875,6 +1061,7 @@ class AgentClient::Impl {
 
   void sendShortcut(const char* shortcutId) {
     String requestId = makeRequestId("shortcut");
+    if (!trackCommand(requestId, false)) return;
     char message[192]{};
     if (protocol::makeShortcutExecuteJson(requestId.c_str(), shortcutId, message, sizeof(message))) {
       sendText(message, false);
@@ -883,16 +1070,43 @@ class AgentClient::Impl {
 
   void resetUsbCoverTransfer() {
     if (usbCoverFile_) usbCoverFile_.close();
-    if (storage_ && usbCoverId_[0]) storage_->discardCoverTemp(usbCoverId_);
+    if (storage_ && usbCoverId_[0] && !(config_.coverDecodeBusy && config_.coverDecodeBusy()))
+      storage_->discardCoverTemp(usbCoverId_);
     usbCoverId_[0] = '\0';
     usbCoverTotal_ = 0;
     usbCoverWritten_ = 0;
   }
 
+  bool trackCommand(const String& id, bool volume) {
+    if (pendingCommands_.add(id.c_str(), millis(), volume)) {
+      if (lastIntentAtMs_) trace(volume ? "slider_interaction" : (id.startsWith("shortcut") ? "tile_pressed" : "touch_registered"), id.c_str(), lastIntentAtMs_);
+      if (id.startsWith("shortcut")) trace("shortcut_requested", id.c_str());
+      if (lastIntentAtMs_) trace("intent_queued", id.c_str(), lastIntentAtMs_);
+      trace("command_sent", id.c_str());
+      return true;
+    }
+    copyText(state_->commandFeedback, sizeof(state_->commandFeedback), "Busy - try again");
+    state_->feedbackAtMs = millis();
+    if (volume) { state_->audio.pending = false; state_->audio.failed = true; }
+    return false;
+  }
+
+  void finishCommand(const PendingCommand& command, bool success, const char* failure) {
+    if (command.volume && std::strcmp(state_->audio.requestId, command.id) != 0) return;
+    trace(success ? "ack_received" : "command_failed", command.id);
+    copyText(state_->commandFeedback, sizeof(state_->commandFeedback), success ? "Done" : failure);
+    state_->feedbackAtMs = millis();
+    if (command.volume && std::strcmp(state_->audio.requestId, command.id) == 0 && !success) {
+      state_->audio.pending = false;
+      state_->audio.failed = true;
+    }
+    if (intents_) intents_->push({IntentType::RefreshUi, 0});
+  }
+
   void handleCoverChunk(const char* payload, size_t length) {
     if (!storage_ || !state_) return;
     const String coverId = quotedField(payload, length, "coverId");
-    if (!acceptsCoverTransfer(state_->media.cover, coverId.c_str())) return;
+    if (!acceptsCoverTransfer(state_->media.cover, coverId.c_str()) || state_->media.cover.decoding) return;
     const long offset = integerField(payload, length, "offset", -1);
     const long total = integerField(payload, length, "total", -1);
     const String data = quotedField(payload, length, "data");
@@ -903,6 +1117,7 @@ class AgentClient::Impl {
         usb::decodeBase64(data.c_str(), data.length(), decoded, sizeof(decoded), decodedLength) &&
         decodedLength > 0 && static_cast<std::size_t>(offset) + decodedLength <= static_cast<std::size_t>(total);
     if (!valid) {
+      trace("transfer_failed", state_->media.cover.requestedId);
       if (state_) markCoverFetchComplete(state_->media.cover, state_->media.cover.requestedId, false);
       resetUsbCoverTransfer();
       return;
@@ -913,14 +1128,17 @@ class AgentClient::Impl {
       usbCoverTotal_ = static_cast<std::size_t>(total);
       usbCoverWritten_ = 0;
       usbCoverFile_ = storage_->openCoverTempWrite(usbCoverId_);
+      trace("transfer_started", usbCoverId_);
     }
     if (std::strcmp(usbCoverId_, coverId.c_str()) != 0 || usbCoverTotal_ != static_cast<std::size_t>(total) ||
         usbCoverWritten_ != static_cast<std::size_t>(offset) || !usbCoverFile_) {
+      trace("transfer_failed", state_->media.cover.requestedId);
       if (state_) markCoverFetchComplete(state_->media.cover, state_->media.cover.requestedId, false);
       resetUsbCoverTransfer();
       return;
     }
     if (!storage_->appendCoverTemp(usbCoverFile_, decoded, decodedLength, usbCoverWritten_)) {
+      trace("transfer_failed", state_->media.cover.requestedId);
       if (state_) markCoverFetchComplete(state_->media.cover, state_->media.cover.requestedId, false);
       resetUsbCoverTransfer();
       return;
@@ -931,7 +1149,7 @@ class AgentClient::Impl {
   void handleCoverComplete(const char* payload, size_t length) {
     if (!storage_ || !state_) return;
     const String coverId = quotedField(payload, length, "coverId");
-    if (!acceptsCoverTransfer(state_->media.cover, coverId.c_str())) return;
+    if (!acceptsCoverTransfer(state_->media.cover, coverId.c_str()) || state_->media.cover.decoding) return;
     if (!isValidCoverId(coverId.c_str()) || std::strcmp(usbCoverId_, coverId.c_str()) != 0 ||
         usbCoverWritten_ != usbCoverTotal_ || !usbCoverFile_) {
       if (state_) markCoverFetchComplete(state_->media.cover, state_->media.cover.requestedId, false);
@@ -940,11 +1158,17 @@ class AgentClient::Impl {
     }
     usbCoverFile_.flush();
     usbCoverFile_.close();
+    trace("transfer_completed", usbCoverId_);
     const bool committed = storage_->commitCoverTemp(usbCoverId_, usbCoverWritten_);
+    trace(committed ? "saved" : "transfer_failed", usbCoverId_);
     const bool isCurrent = state_ && std::strcmp(state_->media.cover.requestedId, usbCoverId_) == 0;
-    const bool rendered = committed && isCurrent && config_.renderCover && config_.renderCover(usbCoverId_, *state_);
-    if (state_ && std::strcmp(state_->media.cover.requestedId, usbCoverId_) == 0) {
-      markCoverFetchComplete(state_->media.cover, usbCoverId_, committed && rendered, rendered);
+    if (committed && isCurrent) {
+      state_->media.cover.inFlight = false;
+      state_->media.cover.decoding = true;
+      state_->media.cover.decodeAfterTransfer = true;
+      serviceCoverDecode();
+    } else if (isCurrent) {
+      markCoverFetchComplete(state_->media.cover, usbCoverId_, false);
     }
     if (intents_) intents_->push({IntentType::RefreshUi, 0});
     sendDeviceInfo();
@@ -1042,6 +1266,11 @@ class AgentClient::Impl {
           const bool wifiAuthorized = authorized_;
           const String wifiHost = host_;
           authorized_ = usbAuthorized_;
+          if (!usbAuthorized_ && httpRunning_) {
+            cancelHttpCover();
+            if (state_->media.cover.status == CoverStatus::Pending)
+              markCoverFetchComplete(state_->media.cover, state_->media.cover.requestedId, false);
+          }
           usbAuthorized_ = true;
           inUsbDispatch_ = true;
           host_ = "usb";
@@ -1061,12 +1290,41 @@ class AgentClient::Impl {
     Serial.println(message);
   }
 
+  void trace(const char* stage, const char* correlation, uint32_t eventAtMs = UINT32_MAX) {
+    if (!diagnostics_ || !canSend()) return;
+    String id = (correlation && correlation[0]) ? correlation : "none";
+    if (isValidCoverId(id.c_str())) id = id.substring(0, 8);
+    String message = "{\"protocol\":1,\"type\":\"diagnostic.event\",\"data\":{\"stage\":\"";
+    message += stage;
+    message += "\",\"correlation\":\"";
+    message += escapeJson(id.c_str());
+    message += "\",\"deviceMs\":";
+    message += eventAtMs == UINT32_MAX ? millis() : eventAtMs;
+    message += " ,\"transport\":\"";
+    message += usbAuthorized_ ? "USB" : "WiFi";
+    message += "\"}}";
+    sendText(message, false);
+  }
+
   void logf(const char* format, const char* arg, uint16_t port, const char* path) {
     if (config_.usbProtocolEnabled) return;
     Serial.printf(format, arg, port, path);
   }
 
   AgentClientConfig config_{};
+  bool diagnostics_ = false;
+  bool metricsWereFresh_ = false;
+  uint32_t lastIntentAtMs_ = 0;
+  char lastDisplayedCover_[kCoverIdLength + 1]{};
+  QueueHandle_t httpQueue_ = nullptr;
+  std::atomic<bool> httpRunning_{false};
+  std::atomic<bool> httpCancel_{false};
+  char httpCoverId_[kCoverIdLength + 1]{};
+  char httpHost_[64]{};
+  uint16_t httpPort_ = 0;
+  File httpFile_;
+  std::size_t httpWritten_ = 0, httpTotal_ = 0;
+  PendingCommands pendingCommands_;
   AppState* state_ = nullptr;
   IntentQueue* intents_ = nullptr;
   storage::SdStorage* storage_ = nullptr;

@@ -321,7 +321,7 @@ int main() {
   assert(findButtonByText(lv_test_root(), "Delete B") == nullptr);
   assert(findButtonByText(lv_test_root(), "No shortcut") != nullptr);
 
-  // PC shows only fresh measurements from Windows, never CYD heap or guessed sensors.
+   // PC shows only fresh measurements from Windows, never CYD heap or guessed sensors.
   state.system.hostLocalMinutes = 14 * 60 + 37;
   state.system.hostTimeSyncedAtSec = state.device.uptimeSeconds;
   state.system.cpuPercent = 34;
@@ -335,15 +335,15 @@ int main() {
   streamdeck::uiSetPage(streamdeck::Page::Pc);
   assert(navLabels[0]->text == "14:37");
   assert(findLabel(pages[2], "Windows PC") != nullptr);
-  assert(findLabel(pages[2], "CPU usage") != nullptr);
-  assert(findLabel(pages[2], "Memory (RAM)") != nullptr);
+  assert(findLabel(pages[2], "CPU") != nullptr);
+  assert(findLabel(pages[2], "RAM") != nullptr);
   assert(findLabel(pages[2], "Source: Windows Agent") != nullptr);
-  assert(findLabel(pages[2], "GPU") == nullptr);
-  assert(findLabel(pages[2], "TEMP") == nullptr);
+  assert(findLabel(pages[2], "GPU") != nullptr);
+  assert(findLabel(pages[2], "TEMP") != nullptr);
   assert(otaStatus == nullptr); // Device OTA diagnostics belong to Settings, not PC.
   assert(findLabel(lv_test_root(), "34%") != nullptr);
   assert(findLabel(lv_test_root(), "62%") != nullptr);
-  assert(pcMetricDetails[1]->text == "10.0 / 16.0 GB used");
+  assert(pcMetricDetails[1]->text == "10.0/16.0 GB");
   for (auto* bar : pcMetricBars) assert(bar->indicator_color == state.appearance.accent);
   lv_test_tick = 4999;
   streamdeck::uiRefresh(state);
@@ -570,5 +570,79 @@ int main() {
   streamdeck::uiSetCoverImage(&nextCover); // While Media widgets are absent.
   streamdeck::uiSetPage(streamdeck::Page::Media);
   assert(coverImage->image_src == &nextCover);
+
+  // Debug mode & Toast layout / visibility verification
+  streamdeck::uiSetPage(streamdeck::Page::Info);
+  lv_test_send_event(findButtonByText(pages[3], "Device"), LV_EVENT_CLICKED);
+  lv_obj_t* debugBtnOff = findButtonByText(pages[3], "Debug: OFF");
+  assert(debugBtnOff != nullptr);
+  assert(findButtonByText(pages[3], "Debug: ON") == nullptr);
+  assert(settingsDebugRow != nullptr);
+  assert(settingsDebugRow->text == "Factory reset: hold for 3 seconds.");
+  assert(debugBtnOff->h >= 44 && debugBtnOff->w >= 64);
+  assert(debugBtnOff->y + debugBtnOff->h <= navBar->y);
+
+  // Command toast on player is hidden by default even if commandFeedback is set
+  std::strcpy(state.commandFeedback, "Done");
+  state.feedbackAtMs = lv_test_tick;
+  streamdeck::uiSetPage(streamdeck::Page::Media);
+  streamdeck::uiRefresh(state);
+  assert(commandToast != nullptr);
+  assert(lv_obj_has_flag(commandToast, LV_OBJ_FLAG_HIDDEN));
+
+  // Switch to Device and click Debug: OFF to toggle it ON
+  streamdeck::uiSetPage(streamdeck::Page::Info);
+  lv_test_send_event(findButtonByText(pages[3], "Device"), LV_EVENT_CLICKED);
+  debugBtnOff = findButtonByText(pages[3], "Debug: OFF");
+  assert(debugBtnOff != nullptr);
+  state.system.freeHeap = 145 * 1024;
+  lv_test_send_event(debugBtnOff, LV_EVENT_CLICKED);
+  assert(state.ui.debugMode == true);
+  assert(intents.pop(intent) && intent.type == streamdeck::IntentType::ToggleDebugMode && intent.value == 1);
+  lv_obj_t* debugBtnOn = findButtonByText(pages[3], "Debug: ON");
+  assert(debugBtnOn != nullptr);
+  assert(findButtonByText(pages[3], "Debug: OFF") == nullptr);
+  assert(debugBtnOn->bg_color == state.appearance.accent);
+  assert(settingsDebugRow->text.find("Done") != std::string::npos);
+  assert(settingsDebugRow->text.find("free") != std::string::npos);
+
+  // With debugMode=true, commandToast on Media page is visible
+  streamdeck::uiSetPage(streamdeck::Page::Media);
+  streamdeck::uiRefresh(state);
+  assert(!lv_obj_has_flag(commandToast, LV_OBJ_FLAG_HIDDEN));
+  assert(commandToast->text == "Done");
+
+  // Light theme verification
+  state.appearance.theme = 1;
+  streamdeck::normalizeAppearance(state.appearance);
+  streamdeck::uiRefresh(state);
+  assert(!lv_obj_has_flag(commandToast, LV_OBJ_FLAG_HIDDEN));
+  assert(commandToast->bg_color == kLightPanel);
+  assert(commandToast->text_color == textColor());
+  streamdeck::uiSetPage(streamdeck::Page::Info);
+  lv_test_send_event(findButtonByText(pages[3], "Device"), LV_EVENT_CLICKED);
+  debugBtnOn = findButtonByText(pages[3], "Debug: ON");
+  assert(debugBtnOn != nullptr);
+  assert(debugBtnOn->bg_color == state.appearance.accent);
+
+  // Toggle debugMode back OFF
+  lv_test_send_event(debugBtnOn, LV_EVENT_CLICKED);
+  assert(state.ui.debugMode == false);
+  assert(intents.pop(intent) && intent.type == streamdeck::IntentType::ToggleDebugMode && intent.value == 0);
+  assert(findButtonByText(pages[3], "Debug: OFF") != nullptr);
+  assert(findButtonByText(pages[3], "Debug: ON") == nullptr);
+  assert(settingsDebugRow->text == "Factory reset: hold for 3 seconds.");
+
+  // Toast must immediately be hidden upon disabling debugMode
+  streamdeck::uiSetPage(streamdeck::Page::Media);
+  streamdeck::uiRefresh(state);
+  assert(lv_obj_has_flag(commandToast, LV_OBJ_FLAG_HIDDEN));
+
+  // Reset theme back
+  state.appearance.theme = 0;
+  streamdeck::normalizeAppearance(state.appearance);
+  state.commandFeedback[0] = '\0';
+  streamdeck::uiRefresh(state);
+
   lv_test_reset();
 }
