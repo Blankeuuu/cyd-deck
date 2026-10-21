@@ -32,7 +32,7 @@ public sealed class SerialPortUsbDuplexStream : IUsbDuplexStream
         {
             try
             {
-                if (!serialPort.IsOpen) return 0;
+                if (!serialPort.IsOpen) throw new IOException("USB serial port is closed.");
                 var available = serialPort.BytesToRead;
                 if (available > 0)
                 {
@@ -56,7 +56,7 @@ public sealed class SerialPortUsbDuplexStream : IUsbDuplexStream
             catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
             {
                 AgentDiagnosticLog.Write($"USB serial read disconnected: {ex.Message}");
-                return 0;
+                throw new IOException($"USB serial read disconnected on {serialPort.PortName}: {ex.Message}", ex);
             }
 
             await Task.Delay(10, cancellationToken).ConfigureAwait(false);

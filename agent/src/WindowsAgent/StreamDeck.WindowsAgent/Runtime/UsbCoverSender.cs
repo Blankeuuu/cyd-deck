@@ -20,6 +20,9 @@ public sealed class UsbCoverSender(string coverCacheDirectory, TimeSpan? chunkDe
         if (!File.Exists(path)) return false;
 
         var bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+        if (bytes.Length == 0 || bytes.Length > 512 * 1024 ||
+            !string.Equals(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), coverId, StringComparison.OrdinalIgnoreCase))
+            return false;
         for (var offset = 0; offset < bytes.Length; offset += MaxRawChunkBytes)
         {
             var count = Math.Min(MaxRawChunkBytes, bytes.Length - offset);

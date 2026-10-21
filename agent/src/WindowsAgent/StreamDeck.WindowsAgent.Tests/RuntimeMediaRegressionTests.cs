@@ -41,6 +41,7 @@ internal static class RuntimeMediaRegressionTests
                 thumbA);
 
             await InvokePublishMediaUpdateAsync(runtime, snapshotA, sink);
+            await runtime.WaitForArtworkIdleAsync();
             var coverIdA = GetCachedCoverId(runtime);
             if (string.IsNullOrWhiteSpace(coverIdA))
             {
@@ -59,6 +60,7 @@ internal static class RuntimeMediaRegressionTests
                 thumbB);
 
             await InvokePublishMediaUpdateAsync(runtime, snapshotB, sink);
+            await runtime.WaitForArtworkIdleAsync();
             var coverIdB = GetCachedCoverId(runtime);
             if (string.IsNullOrWhiteSpace(coverIdB))
             {
@@ -104,6 +106,7 @@ internal static class RuntimeMediaRegressionTests
 
                 await InvokePublishMediaUpdateAsync(runtime, snapshot, sink);
             }
+            await runtime.WaitForArtworkIdleAsync();
 
             if (thumb.OpenReadCount != 1)
             {
@@ -146,6 +149,7 @@ internal static class RuntimeMediaRegressionTests
                 thumb);
 
             await InvokePublishMediaUpdateAsync(runtime, snapshot, sink);
+            await runtime.WaitForArtworkIdleAsync();
 
             if (thumb.OpenReadCount != 2)
             {

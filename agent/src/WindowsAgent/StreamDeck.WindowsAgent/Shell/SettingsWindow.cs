@@ -68,7 +68,7 @@ public sealed partial class SettingsWindow : Form
     internal bool IsConfigurationDirtyForTests => configurationDirty;
     internal string CurrentPageForTests => currentPage;
     internal Task ReconnectAsyncForTests() => ReconnectAsync();
-    internal void SetConfigurationDraftForTests(AgentConfiguration draft) { configurationDraft = draft; configurationDirty = true; RefreshUnifiedToolbar(); }
+    internal void SetConfigurationDraftForTests(AgentConfiguration draft) { configurationDraft = draft; configurationDirty = true; cachedConfiguration = null; cachedDesktopAppearance = null; cachedAppearance = null; RefreshUnifiedToolbar(); }
     internal AgentConfiguration? GetConfigurationDraftForTests() => configurationDraft;
     internal static Action<string, string>? DialogMessageHookForTests;
     private static bool clientLightTheme;
@@ -163,6 +163,11 @@ public sealed partial class SettingsWindow : Form
     private bool shortcutsConfigurationLoadFailed;
     private string shortcutImportSignature = string.Empty;
     private int liveRefreshQueued;
+    private AgentConfiguration? cachedConfiguration;
+    private DesktopAppearanceState? cachedDesktopAppearance;
+    private AppearanceState? cachedAppearance;
+    private Font? navButtonRegularFont;
+    private Font? navButtonBoldFont;
     private bool deviceTelemetryVisible;
     private string? updateDeviceIp;
     private Action? refreshPairingLists;
@@ -237,7 +242,7 @@ public sealed partial class SettingsWindow : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { InvalidatePageCache(); if (ownsUpdateManager) updateManager.Dispose(); desktopViewLifetime?.Cancel(); desktopViewLifetime?.Dispose(); desktopViewLifetime = null; desktopArtwork?.Dispose(); desktopArtwork = null; desktopToolsMenu?.Dispose(); desktopToolsMenu = null; desktopTips.Dispose(); }
+        if (disposing) { navButtonRegularFont?.Dispose(); navButtonBoldFont?.Dispose(); InvalidatePageCache(); if (ownsUpdateManager) updateManager.Dispose(); desktopViewLifetime?.Cancel(); desktopViewLifetime?.Dispose(); desktopViewLifetime = null; desktopArtwork?.Dispose(); desktopArtwork = null; desktopToolsMenu?.Dispose(); desktopToolsMenu = null; desktopTips.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -352,6 +357,9 @@ public sealed partial class SettingsWindow : Form
 
     internal void InvalidatePageCache()
     {
+        cachedConfiguration = null;
+        cachedDesktopAppearance = null;
+        cachedAppearance = null;
         foreach (var cached in pageCache.Values.Distinct().ToArray())
         {
             if (contentPanel is { IsDisposed: false } && contentPanel.Controls.Contains(cached))
@@ -380,15 +388,23 @@ public sealed partial class SettingsWindow : Form
             "Device" or "Pairing" or "Updates" or "Logs" or "Overview" => "Device",
             _ => page
         };
+        navButtonRegularFont ??= new Font(Font.FontFamily, 9.75F, FontStyle.Regular);
+        navButtonBoldFont ??= new Font(Font.FontFamily, 9.75F, FontStyle.Bold);
+
         foreach (var (name, button) in navButtons)
         {
             var selected = string.Equals(name, activeNavKey, StringComparison.Ordinal)
                 || (activeNavKey == "Device" && name is "Device" or "Pairing");
-            button.BackColor = selected ? SurfaceAlt : Surface;
-            button.ForeColor = selected ? TextPrimary : TextMuted;
-            button.Font = new Font(Font.FontFamily, 9.75F, selected ? FontStyle.Bold : FontStyle.Regular);
-            button.FlatAppearance.BorderColor = selected ? Accent : Surface;
-            button.FlatAppearance.BorderSize = 0;
+            var targetFont = selected ? navButtonBoldFont : navButtonRegularFont;
+            var targetBg = selected ? SurfaceAlt : Surface;
+            var targetFg = selected ? TextPrimary : TextMuted;
+            var targetBorder = selected ? Accent : Surface;
+
+            if (!ReferenceEquals(button.Font, targetFont)) button.Font = targetFont;
+            if (button.BackColor != targetBg) button.BackColor = targetBg;
+            if (button.ForeColor != targetFg) button.ForeColor = targetFg;
+            if (button.FlatAppearance.BorderColor != targetBorder) button.FlatAppearance.BorderColor = targetBorder;
+            if (button.FlatAppearance.BorderSize != 0) button.FlatAppearance.BorderSize = 0;
             button.Invalidate();
         }
 
@@ -398,113 +414,112 @@ public sealed partial class SettingsWindow : Form
         var cacheKey = isDeviceRoute ? "Device" : page;
 
         if (IsCacheableDesktopPage(page))
-        {
-            foreach (Control control in contentPanel.Controls.Cast<Control>().ToArray())
             {
-                if (!pageCache.ContainsValue(control))
+                foreach (Control control in contentPanel.Controls.Cast<Control>().ToArray())
                 {
-                    contentPanel.Controls.Remove(control);
-                    control.Dispose();
+                    if (!pageCache.ContainsValue(control))
+                    {
+                        contentPanel.Controls.Remove(control);
+                        control.Dispose();
+                    }
+                    else if (control.Visible && (!pageCache.TryGetValue(cacheKey, out var target) || !ReferenceEquals(control, target)))
+                    {
+                        control.Visible = false;
+                    }
                 }
-                else if (control.Visible && (!pageCache.TryGetValue(cacheKey, out var target) || !ReferenceEquals(control, target)))
-                {
-                    control.Visible = false;
-                }
-            }
 
-            var targetSubTab = page switch
-            {
-                "Pairing" => "Pairing",
-                "Updates" => "Updates",
-                "Logs" => "Logs",
-                "Overview" => "Overview",
-                _ => null
-            };
-
-            if (pageCache.TryGetValue(cacheKey, out var cachedPage) && !cachedPage.IsDisposed)
-            {
-                pageRefreshCache.TryGetValue(cacheKey, out desktopRefresh);
-                if (pageToolbarCache.TryGetValue(cacheKey, out var toolbarRefs))
+                var targetSubTab = page switch
                 {
-                    unifiedSave = toolbarRefs.Save;
-                    unifiedConnection = toolbarRefs.Connection;
-                    unifiedFeedback = toolbarRefs.Feedback;
-                    unifiedProfilePicker = toolbarRefs.ProfilePicker;
+                    "Pairing" => "Pairing",
+                    "Updates" => "Updates",
+                    "Logs" => "Logs",
+                    "Overview" => "Overview",
+                    _ => null
+                };
+
+                if (pageCache.TryGetValue(cacheKey, out var cachedPage) && !cachedPage.IsDisposed)
+                {
+                    pageRefreshCache.TryGetValue(cacheKey, out desktopRefresh);
+                    if (pageToolbarCache.TryGetValue(cacheKey, out var toolbarRefs))
+                    {
+                        unifiedSave = toolbarRefs.Save;
+                        unifiedConnection = toolbarRefs.Connection;
+                        unifiedFeedback = toolbarRefs.Feedback;
+                        unifiedProfilePicker = toolbarRefs.ProfilePicker;
+                    }
+                    UpdateSidebarConnectionPill();
+                    if (!cachedPage.Visible) cachedPage.Visible = true;
+                    cachedPage.BringToFront();
+
+                    if (isDeviceRoute)
+                    {
+                        SelectDeviceSubTab(targetSubTab ?? activeDeviceSubTab);
+                    }
+
+                    desktopRefresh?.Invoke();
+                    UpdateShortcutImportRefreshTimer(page);
+                    return;
                 }
-                UpdateSidebarConnectionPill();
-                if (!cachedPage.Visible) cachedPage.Visible = true;
-                cachedPage.BringToFront();
+
+                desktopRefresh = null;
+                var created = cacheKey switch
+                {
+                    "Shortcuts" => CreateDesktopDeckPage(),
+                    "Appearance" => CreateDesktopSettingsPage(),
+                    "Media" => CreateDesktopMediaPage(),
+                    "Monitor" => CreateDesktopMonitorPage(),
+                    "Device" => CreateDesktopDevicePage(),
+                    _ => CreateDesktopDeckPage()
+                };
+
+                WrapDesktopInputs(created);
+                FitDesktopRows(created);
+                pageCache[cacheKey] = created;
+                pageRefreshCache[cacheKey] = desktopRefresh;
+                pageToolbarCache[cacheKey] = (unifiedSave, unifiedConnection, unifiedFeedback, unifiedProfilePicker);
+                contentPanel.Controls.Add(created);
+                created.BringToFront();
 
                 if (isDeviceRoute)
                 {
                     SelectDeviceSubTab(targetSubTab ?? activeDeviceSubTab);
                 }
 
-                desktopRefresh?.Invoke();
+                UpdateSidebarConnectionPill();
                 FitDesktopRows(contentPanel);
                 UpdateShortcutImportRefreshTimer(page);
                 return;
             }
 
-            desktopRefresh = null;
-            var created = cacheKey switch
+            foreach (Control control in contentPanel.Controls.Cast<Control>().ToArray())
             {
-                "Shortcuts" => CreateDesktopDeckPage(),
-                "Appearance" => CreateDesktopSettingsPage(),
-                "Media" => CreateDesktopMediaPage(),
-                "Monitor" => CreateDesktopMonitorPage(),
-                "Device" => CreateDesktopDevicePage(),
-                _ => CreateDesktopDeckPage()
-            };
-
-            WrapDesktopInputs(created);
-            FitDesktopRows(created);
-            pageCache[cacheKey] = created;
-            pageRefreshCache[cacheKey] = desktopRefresh;
-            pageToolbarCache[cacheKey] = (unifiedSave, unifiedConnection, unifiedFeedback, unifiedProfilePicker);
-            contentPanel.Controls.Add(created);
-            created.BringToFront();
-
-            if (isDeviceRoute)
-            {
-                SelectDeviceSubTab(targetSubTab ?? activeDeviceSubTab);
+                if (pageCache.ContainsValue(control))
+                {
+                    if (control.Visible) control.Visible = false;
+                }
+                else
+                {
+                    contentPanel.Controls.Remove(control);
+                    control.Dispose();
+                }
             }
 
+            infoValueLabels.Clear();
+            refreshOverviewWidgets = null;
+            desktopRefresh = null;
+            var nonCached = page switch
+            {
+                "Overview" => CreateCompactOverviewPage(),
+                "Device" => CreateCompactDevicePage(),
+                "Updates" => CreateUpdatesPage(),
+                "Logs" => CreateLogsPage(),
+                _ => CreateCompactOverviewPage()
+            };
+            contentPanel.Controls.Add(nonCached);
+            nonCached.BringToFront();
             UpdateSidebarConnectionPill();
             FitDesktopRows(contentPanel);
             UpdateShortcutImportRefreshTimer(page);
-            return;
-        }
-
-        foreach (Control control in contentPanel.Controls.Cast<Control>().ToArray())
-        {
-            if (pageCache.ContainsValue(control))
-            {
-                if (control.Visible) control.Visible = false;
-            }
-            else
-            {
-                contentPanel.Controls.Remove(control);
-                control.Dispose();
-            }
-        }
-
-        infoValueLabels.Clear();
-        refreshOverviewWidgets = null;
-        desktopRefresh = null;
-        var nonCached = page switch
-        {
-            "Overview" => CreateCompactOverviewPage(),
-            "Device" => CreateCompactDevicePage(),
-            "Updates" => CreateUpdatesPage(),
-            "Logs" => CreateLogsPage(),
-            _ => CreateCompactOverviewPage()
-        };
-        contentPanel.Controls.Add(nonCached);
-        nonCached.BringToFront();
-        UpdateSidebarConnectionPill();
-        FitDesktopRows(contentPanel);
-        UpdateShortcutImportRefreshTimer(page);
     }
 
     private void UpdateSidebarConnectionPill() => RefreshUnifiedToolbar();
@@ -712,7 +727,7 @@ public sealed partial class SettingsWindow : Form
             return;
         }
 
-        var loadResult = LoadShortcutConfigurationState(() => configurationDraft ?? configurationStore.LoadOrDefault());
+        var loadResult = LoadShortcutConfigurationState(LoadConfiguration);
         var savedIds = (loadResult.Configuration.Shortcuts ?? [])
             .Select(shortcut => shortcut.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -2559,9 +2574,22 @@ public sealed partial class SettingsWindow : Form
 
     private AgentConfiguration LoadConfiguration()
     {
+        if (configurationDraft is not null)
+        {
+            shortcutsConfigurationLoadFailed = false;
+            return configurationDraft;
+        }
+
+        if (cachedConfiguration is not null)
+        {
+            shortcutsConfigurationLoadFailed = false;
+            return cachedConfiguration;
+        }
+
         try
         {
-            var loaded = configurationDraft ?? configurationStore.LoadOrDefault();
+            var loaded = configurationStore.LoadOrDefault();
+            cachedConfiguration = loaded;
             shortcutsConfigurationLoadFailed = false;
             return loaded;
         }
@@ -2860,6 +2888,9 @@ public sealed partial class SettingsWindow : Form
         try
         {
             configurationStore.Save(configuration);
+            cachedConfiguration = configuration;
+            cachedDesktopAppearance = null;
+            cachedAppearance = null;
             AgentDiagnosticLog.Write(logMessage);
             return true;
         }
@@ -2892,10 +2923,14 @@ public sealed partial class SettingsWindow : Form
 
     private DesktopAppearanceState LoadDesktopAppearanceConfiguration()
     {
+        if (pendingDesktopAppearance is not null) return pendingDesktopAppearance;
+        if (cachedDesktopAppearance is not null) return cachedDesktopAppearance;
         var defaults = DesktopAppearanceState.Default;
         try
         {
-            return DesktopAppearanceState.FromConfiguration(LoadConfiguration().DesktopAppearance ?? new DesktopAppearanceConfiguration());
+            var loaded = DesktopAppearanceState.FromConfiguration(LoadConfiguration().DesktopAppearance ?? new DesktopAppearanceConfiguration());
+            cachedDesktopAppearance = loaded;
+            return loaded;
         }
         catch (Exception exception)
         {
@@ -2948,10 +2983,14 @@ public sealed partial class SettingsWindow : Form
 
     private AppearanceState LoadAppearanceConfiguration()
     {
+        if (pendingAppearance is not null) return pendingAppearance;
+        if (cachedAppearance is not null) return cachedAppearance;
         var defaults = AppearanceState.Default;
         try
         {
-            return AppearanceState.FromConfiguration(LoadConfiguration().Appearance ?? new AppearanceConfiguration()).EnsureForcedPagesVisible();
+            var loaded = AppearanceState.FromConfiguration(LoadConfiguration().Appearance ?? new AppearanceConfiguration()).EnsureForcedPagesVisible();
+            cachedAppearance = loaded;
+            return loaded;
         }
         catch (Exception exception)
         {

@@ -122,7 +122,8 @@ public sealed class WindowsAgentWebSocketServer(
         var remoteAddress = FormatRemoteAddress(context);
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
         var sink = new TrackingProtocolSink(webSocket, new WebSocketProtocolSink(webSocket), state, remoteAddress, SetActiveSink);
-        var session = new DeviceProtocolSession(dispatcher, pairingService, sink, context.Request.Query["token"], remoteAddress, appearance ?? new AppearanceConfiguration(), shortcuts ?? new DeviceShortcutConfiguration([]), (info, token) => { state.UpdateDeviceInfoForSession(sink.SessionId, info); return ValueTask.CompletedTask; }, initialAudioProvider, shortcutsReportHandler, shortcutsProvider, appearanceProvider, initialMediaSender);
+        var session = new DeviceProtocolSession(dispatcher, pairingService, sink, context.Request.Query["token"], remoteAddress, appearance ?? new AppearanceConfiguration(), shortcuts ?? new DeviceShortcutConfiguration([]), (info, token) => { state.UpdateDeviceInfoForSession(sink.SessionId, info); return ValueTask.CompletedTask; }, initialAudioProvider, shortcutsReportHandler, shortcutsProvider, appearanceProvider, initialMediaSender,
+            sessionErrorHandler: message => AgentDiagnosticLog.Write("WebSocket protocol frame rejected: " + message));
 
         try
         {

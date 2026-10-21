@@ -178,11 +178,13 @@ public sealed class UsbDeviceRuntime(
                 UsbLineProtocolTransport? transport = null;
                 var connectedSink = new ActiveUsbSink(state, coverCacheDirectory, message => transport!.SendFrameAsync(message, cancellationToken), SetActiveSink, port, (message, token) => transport!.SendFrameAsync(message, token));
                 setCurrentSink(connectedSink);
-                var session = new DeviceProtocolSession(dispatcher, pairingService, connectedSink, null, "USB", appearance, shortcuts, (info, token) => { state.UpdateDeviceInfoForSession(connectedSink.SessionId, info); return ValueTask.CompletedTask; }, initialAudioProvider, shortcutsReportHandler, shortcutsProvider, appearanceProvider, initialMediaSender, connectedSink.SendRequestedCoverAsync);
+                var session = new DeviceProtocolSession(dispatcher, pairingService, connectedSink, null, "USB", appearance, shortcuts, (info, token) => { state.UpdateDeviceInfoForSession(connectedSink.SessionId, info); return ValueTask.CompletedTask; }, initialAudioProvider, shortcutsReportHandler, shortcutsProvider, appearanceProvider, initialMediaSender, connectedSink.QueueRequestedCoverAsync,
+                    message => AgentDiagnosticLog.Write("USB protocol frame rejected: " + message));
                 transport = new UsbLineProtocolTransport(stream, session, connectedSink);
                 connectedSink.TrackIncoming(helloFrame);
                 await session.HandleTextMessageAsync(helloFrame, cancellationToken).ConfigureAwait(false);
-                await transport.RunAsync(cancellationToken).ConfigureAwait(false);
+                try { await transport.RunAsync(cancellationToken).ConfigureAwait(false); }
+                finally { await connectedSink.StopCoverAsync().ConfigureAwait(false); }
         }
     }
 
@@ -378,13 +380,50 @@ public sealed class UsbDeviceRuntime(
         private string? sentCoverId;
         private string? currentCoverId;
         private bool requestsCachedCovers;
+        private CancellationTokenSource? coverCancellation;
+        private Task coverTask = Task.CompletedTask;
+        private bool stoppingCover;
+
+        // The receive loop must remain available for commands while artwork is sent.
+        public ValueTask QueueRequestedCoverAsync(CoverRequestMessage request, CancellationToken token = default)
+        {
+            lock (gate)
+            {
+                if (stoppingCover || !requestsCachedCovers || request.CoverId != currentCoverId || !coverTask.IsCompleted)
+                    return ValueTask.CompletedTask;
+                coverCancellation?.Dispose();
+                coverCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+                var transferToken = coverCancellation.Token;
+                coverTask = Task.Run(async () =>
+                {
+                    try { await SendRequestedCoverAsync(request, transferToken).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (transferToken.IsCancellationRequested) { }
+                    catch (Exception error) { AgentDiagnosticLog.Write($"cover={request.CoverId[..8]} transfer_failed error={error.GetType().Name}"); }
+                }, CancellationToken.None);
+            }
+            return ValueTask.CompletedTask;
+        }
+
+        public async Task StopCoverAsync(string? nextCoverId = null)
+        {
+            Task pending;
+            lock (gate) { stoppingCover = true; currentCoverId = nextCoverId; coverCancellation?.Cancel(); pending = coverTask; }
+            await pending.ConfigureAwait(false);
+            lock (gate) { coverCancellation?.Dispose(); coverCancellation = null; stoppingCover = false; }
+        }
 
         public string SessionId { get; } = Guid.NewGuid().ToString("N");
         public string? DeviceId => hello?.DeviceId;
 
         public async ValueTask SendTextAsync(string message, CancellationToken cancellationToken = default)
         {
-            if (ProtocolSerializer.Parse(message).Envelope?.Type == ProtocolConstants.MessageTypes.ShortcutsUpdate) MarkAuthorizedConnection();
+            var type = ProtocolSerializer.Parse(message).Envelope?.Type;
+            if (type == ProtocolConstants.MessageTypes.ShortcutsUpdate) MarkAuthorizedConnection();
+            // Hydration publishes through IProtocolSink, not SendUpdateAsync.
+            if (type == ProtocolConstants.MessageTypes.MediaUpdate) {
+                var next = TryReadMediaCoverId(message);
+                if (next != currentCoverId) await StopCoverAsync(next).ConfigureAwait(false);
+            }
             await initialSync.SendAsync(message, () => sendWithCancellation is null ? send(message) : sendWithCancellation(message, cancellationToken), state.IsActiveDeviceSession(SessionId)).ConfigureAwait(false);
             TrackOutgoing(message);
         }
@@ -399,7 +438,9 @@ public sealed class UsbDeviceRuntime(
             await mediaFrameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                currentCoverId = TryReadMediaCoverId(message);
+                var nextCoverId = TryReadMediaCoverId(message);
+                if (nextCoverId != currentCoverId)
+                    await StopCoverAsync(nextCoverId).ConfigureAwait(false);
                 await SendTextAsync(message, cancellationToken).ConfigureAwait(false);
                 if (!requestsCachedCovers)
                     await TrySendCoverForMediaUpdateAsync(message, cancellationToken).ConfigureAwait(false);
@@ -411,21 +452,21 @@ public sealed class UsbDeviceRuntime(
         {
             if (!requestsCachedCovers || request.CoverId != currentCoverId) return ValueTask.CompletedTask;
             return TrySendCoverForMediaUpdateAsync(ProtocolSerializer.Serialize(ProtocolConstants.MessageTypes.MediaUpdate, null,
-                new MediaUpdateMessage(null, null, null, false, 0, 0, request.CoverId, null)), cancellationToken);
+                new MediaUpdateMessage(null, null, null, false, 0, 0, request.CoverId, null)), cancellationToken, force: true);
         }
 
-        public async ValueTask TrySendCoverForMediaUpdateAsync(string message, CancellationToken cancellationToken = default)
+        public async ValueTask TrySendCoverForMediaUpdateAsync(string message, CancellationToken cancellationToken = default, bool force = false)
         {
             var coverId = TryReadMediaCoverId(message);
             if (string.IsNullOrWhiteSpace(coverId)) return;
             await coverTransferGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                if (coverId == sentCoverId) return;
+                if (!force && coverId == sentCoverId) return;
                 if (await coverSender.SendCoverAsync(coverId, this, cancellationToken).ConfigureAwait(false))
                 {
                     sentCoverId = coverId;
-                    AgentDiagnosticLog.Write("USB artwork transfer completed");
+                    AgentDiagnosticLog.Write($"cover={coverId[..8]} transfer_completed transport=USB rendered=unconfirmed");
                 }
             }
             finally { coverTransferGate.Release(); }
@@ -450,6 +491,8 @@ public sealed class UsbDeviceRuntime(
             else if (parseResult.Envelope?.Type == Protocol.ProtocolConstants.MessageTypes.DeviceInfo)
             {
                 var info = Protocol.ProtocolSerializer.DeserializeData<DeviceInfoMessage>(parseResult.Envelope);
+                if (info.Cover?.CoverId is { Length: 64 } id)
+                    AgentDiagnosticLog.Trace($"cover={id[..8]} stage=device_report rendered={info.Cover.Rendered} status={info.Cover.Status} transport=USB");
                 if (info.Cover is not null && info.Cover.Status == 0)
                 {
                     sentCoverId = null;

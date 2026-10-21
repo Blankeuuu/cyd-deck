@@ -38,9 +38,14 @@ internal static class DesktopBugRegressionTests
     private static void TestMenu()
     {
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
-        Directory.CreateDirectory("artifacts/ui-review"); var store = new AgentConfigurationStore(Path.GetFullPath("artifacts/ui-review/menu-regression.json")); store.Save(AgentConfiguration.CreateDefault());
-        var state = new AgentState(); var pairing = new PairingApprovalService(Path.GetFullPath("artifacts/ui-review/menu-pairing.json")); var runtime = new WindowsAgentRuntime(state, pairing, new AgentOptions(true), listenPortOverride: 0);
+        var isolatedFolder = Path.Combine(Path.GetTempPath(), "cyd-menu-regression-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(isolatedFolder);
+        var store = new AgentConfigurationStore(Path.Combine(isolatedFolder, "configuration.json")); store.Save(AgentConfiguration.CreateDefault());
+        var state = new AgentState(); var pairing = new PairingApprovalService(Path.Combine(isolatedFolder, "pairing.json")); var runtime = new WindowsAgentRuntime(state, pairing, new AgentOptions(true), listenPortOverride: 0, configurationStore: store);
         using var icon = AppIconFactory.CreateIcon(); using var window = new SettingsWindow(state, runtime, new WindowsStartupService(new AgentOptions(true)), pairing, icon, store);
+        var previousDialogHook = SettingsWindow.DialogMessageHookForTests;
+        SettingsWindow.DialogMessageHookForTests = (title, message) => throw new InvalidOperationException(title + ": " + message);
+        try {
         window.StartPosition = FormStartPosition.Manual; window.Location = new Point(-2500, -2500); window.ShowInTaskbar = false; window.Show(); Application.DoEvents();
         var deviceNav = All(window).OfType<Button>().Single(b => b.AccessibleName is "Device" or "Urządzenie" || b.Text is "Device" or "Urządzenie");
         for (var i = 0; i < 8; ++i) {
@@ -50,10 +55,20 @@ internal static class DesktopBugRegressionTests
             // verified device navigation
             All(window).OfType<Button>().Single(b => b.Text is "Settings" or "Ustawienia" || b.AccessibleName is "Settings" or "Ustawienia").PerformClick(); Application.DoEvents();
             All(window).OfType<RadioButton>().Single(b => b.Visible && b.Text == (i % 2 == 0 ? "Light" : "Dark")).PerformClick();
-            if (!window.SaveConfigurationDraftAsync().GetAwaiter().GetResult()) throw new InvalidOperationException("Theme save failed during menu regression");
+            var save = window.SaveConfigurationDraftAsync();
+            var deadline = System.Diagnostics.Stopwatch.StartNew();
+            while (!save.IsCompleted && deadline.Elapsed < TimeSpan.FromSeconds(10)) { Application.DoEvents(); Thread.Yield(); }
+            if (!save.IsCompleted) throw new TimeoutException("Theme save did not complete in isolated test.");
+            if (!save.GetAwaiter().GetResult()) throw new InvalidOperationException("Theme save failed during menu regression");
             All(window).OfType<Button>().Single(b => b.Text is "Deck Builder" or "Edytor Deck" || b.AccessibleName is "Deck Builder" or "Edytor Deck").PerformClick(); Application.DoEvents();
         }
-        window.CloseForExit(); SynchronizationContext.SetSynchronizationContext(null); runtime.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        window.CloseForExit();
+        } finally {
+            SettingsWindow.DialogMessageHookForTests = previousDialogHook;
+            SynchronizationContext.SetSynchronizationContext(null);
+            runtime.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            Directory.Delete(isolatedFolder, recursive: true);
+        }
     }
     private static IEnumerable<Control> All(Control root) { foreach (Control child in root.Controls) { yield return child; foreach (var item in All(child)) yield return item; } }
 }

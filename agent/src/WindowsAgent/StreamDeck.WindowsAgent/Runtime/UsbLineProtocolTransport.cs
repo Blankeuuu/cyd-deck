@@ -1,5 +1,7 @@
 using System.Text;
+using System.Text.Json;
 using StreamDeck.Host;
+using StreamDeck.Protocol;
 
 namespace StreamDeck.WindowsAgent.Runtime;
 
@@ -33,9 +35,10 @@ public sealed class UsbLineProtocolTransport(
             var read = await stream.ReadAsync(readBuffer, cancellationToken).ConfigureAwait(false);
             if (read == 0)
             {
-                await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-                continue;
+                AgentDiagnosticLog.Trace("usb_rx_eof stage=stream_eof");
+                break;
             }
+
             for (var index = 0; index < read; index++)
             {
                 var value = readBuffer[index];
@@ -51,7 +54,12 @@ public sealed class UsbLineProtocolTransport(
                 {
                     frame.SetLength(0);
                     drainingOverflow = true;
-                    await sink.SendTextAsync(ProtocolStateMapper.CreateConnectionState("degraded", "USB frame is too large."), cancellationToken).ConfigureAwait(false);
+                    AgentDiagnosticLog.Trace($"usb_rx_error stage=frame_overflow maxBytes={maxFrameBytes}");
+                    AgentDiagnosticLog.Write("USB frame rejected: frame exceeds byte limit.");
+                    if (!session.IsAuthorized)
+                    {
+                        await sink.SendTextAsync(ProtocolStateMapper.CreateConnectionState("degraded", "USB frame is too large."), cancellationToken).ConfigureAwait(false);
+                    }
                     continue;
                 }
 
@@ -68,6 +76,7 @@ public sealed class UsbLineProtocolTransport(
         try
         {
             await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+            TraceSendFrame(message, bytes.Length);
         }
         finally
         {
@@ -92,10 +101,18 @@ public sealed class UsbLineProtocolTransport(
         catch (DecoderFallbackException)
         {
             frame.SetLength(0);
-            await sink.SendTextAsync(ProtocolStateMapper.CreateConnectionState("degraded", "USB frame is not valid UTF-8."), cancellationToken).ConfigureAwait(false);
+            AgentDiagnosticLog.Trace("usb_rx_error stage=utf8_decode error=invalid_utf8");
+            AgentDiagnosticLog.Write("USB frame rejected: invalid UTF-8.");
+            if (!session.IsAuthorized)
+            {
+                await sink.SendTextAsync(ProtocolStateMapper.CreateConnectionState("degraded", "USB frame is not valid UTF-8."), cancellationToken).ConfigureAwait(false);
+            }
             return;
         }
         frame.SetLength(0);
+
+        TraceIncomingFrame(message);
+
         if (sink is IUsbIncomingObserver observer)
         {
             observer.TrackIncoming(message);
@@ -103,6 +120,81 @@ public sealed class UsbLineProtocolTransport(
 
         await session.HandleTextMessageAsync(message, cancellationToken).ConfigureAwait(false);
     }
+
+    private static void TraceSendFrame(string message, int byteCount)
+    {
+        if (Environment.GetEnvironmentVariable("CYD_DECK_DIAGNOSTICS") != "1") return;
+
+        string? frameType = null;
+        string? requestId = null;
+        string? state = null;
+        string? detail = null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(message);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("type", out var typeProp) && typeProp.ValueKind == JsonValueKind.String)
+            {
+                frameType = typeProp.GetString();
+            }
+            if (root.TryGetProperty("requestId", out var reqProp) && reqProp.ValueKind == JsonValueKind.String)
+            {
+                requestId = reqProp.GetString();
+            }
+            if (frameType == "connection.state" && root.TryGetProperty("data", out var dataProp) && dataProp.ValueKind == JsonValueKind.Object)
+            {
+                if (dataProp.TryGetProperty("state", out var stateProp) && stateProp.ValueKind == JsonValueKind.String)
+                {
+                    state = stateProp.GetString();
+                }
+                if (dataProp.TryGetProperty("detail", out var detailProp) && detailProp.ValueKind == JsonValueKind.String)
+                {
+                    detail = detailProp.GetString();
+                }
+                else if (dataProp.TryGetProperty("reason", out var reasonProp) && reasonProp.ValueKind == JsonValueKind.String)
+                {
+                    detail = reasonProp.GetString();
+                }
+                else if (dataProp.TryGetProperty("message", out var msgProp) && msgProp.ValueKind == JsonValueKind.String)
+                {
+                    detail = msgProp.GetString();
+                }
+            }
+        }
+        catch
+        {
+            frameType = "parse_error";
+        }
+
+        if (frameType == "connection.state")
+        {
+            AgentDiagnosticLog.Trace($"usb_tx type={Sanitize(frameType)} bytes={byteCount} req={Sanitize(requestId)} state={Sanitize(state)} detail={Sanitize(detail)}");
+        }
+        else
+        {
+            AgentDiagnosticLog.Trace($"usb_tx type={Sanitize(frameType)} bytes={byteCount} req={Sanitize(requestId)}");
+        }
+    }
+
+    private static void TraceIncomingFrame(string message)
+    {
+        if (Environment.GetEnvironmentVariable("CYD_DECK_DIAGNOSTICS") != "1") return;
+
+        var parseResult = ProtocolSerializer.Parse(message);
+        if (!parseResult.IsSuccess)
+        {
+            AgentDiagnosticLog.Trace($"usb_rx_error stage=protocol_parse error={Sanitize(parseResult.ErrorMessage)} bytes={message.Length}");
+        }
+        else
+        {
+            var envelope = parseResult.Envelope;
+            AgentDiagnosticLog.Trace($"usb_rx type={Sanitize(envelope?.Type)} bytes={message.Length} req={Sanitize(envelope?.RequestId)}");
+        }
+    }
+
+    private static string Sanitize(string? input) =>
+        string.IsNullOrEmpty(input) ? "none" : new string(input.Where(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or ' ').Take(64).ToArray());
 
     public async ValueTask DisposeAsync()
     {

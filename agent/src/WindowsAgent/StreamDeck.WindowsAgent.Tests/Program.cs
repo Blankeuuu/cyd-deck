@@ -26,6 +26,8 @@ if (args.Contains("--live-system")) {
     return;
 }
 
+if (args.Contains("--usb-recovery-regression")) { await UsbTransportRecoveryTests.RunAsync(); return; }
+if (args.Contains("--metrics-recovery-regression")) { await StreamDeck.WindowsAgent.Tests.MetricsRecoveryTests.RunAsync(); return; }
 if (args.Contains("--bug-repro")) { DesktopBugRegressionTests.Run(); return; }
 
 if (args.Contains("--desktop-review")) { DesktopViewportTests.Run(); return; }
@@ -38,6 +40,7 @@ if (args.Contains("--tray-updates-regression"))
 }
 
 if (args.Contains("--runtime-media-regression")) { await RuntimeMediaRegressionTests.RunAsync(); return; }
+if (args.Contains("--artwork-decoupling-regression")) { await MediaArtworkDecouplingTests.RunAsync(); return; }
 
 // Icon previews use the same glyph masks as the CYD; URL images round-trip to RGB565A8.
 AssertEqual(21, ShortcutIconCatalog.All.Count, "all supported icons are visible in picker");
@@ -263,6 +266,8 @@ AssertTrue(WindowsAgentApplicationContext.ShouldTriggerPairingNotification("conn
 AssertTrue(!WindowsAgentApplicationContext.ShouldTriggerPairingNotification("pairing pending", "connected"), "Connected transition does not trigger pairing notification");
 
 AssertEqual("COM7", WindowsAgentRuntime.ResolveUsbPortCandidates(usbOptions).Single(), "explicit USB override is a hard single candidate");
+await UsbTransportRecoveryTests.RunAsync();
+await StreamDeck.WindowsAgent.Tests.MetricsRecoveryTests.RunAsync();
 await TestUsbLineProtocolTransportAsync();
 await TestUsbCoverSenderAsync();
 await TestUsbRuntimeAdvancesFromSilentCandidateToValidEsp32HelloAsync();
@@ -932,6 +937,7 @@ await using (var runtime = new WindowsAgentRuntime(
 await TestArduinoOtaUploadSuccessAsync();
 await TestArduinoOtaUploadRejectsWrongPasswordAsync();
 await TestArduinoOtaValidationFailuresAsync();
+await MediaArtworkDecouplingTests.RunAsync();
 
 Console.WriteLine("PASS StreamDeck.WindowsAgent smoke tests");
 
@@ -1047,9 +1053,9 @@ static async Task TestUsbLineProtocolTransportAsync()
 static async Task TestUsbCoverSenderAsync()
 {
     var coverCacheDirectory = Path.Combine(Path.GetTempPath(), $"streamdeck-usb-covers-{Guid.NewGuid():N}");
-    var coverId = new string('c', 64);
     Directory.CreateDirectory(Path.Combine(coverCacheDirectory, "covers"));
     var coverBytes = Enumerable.Range(0, UsbCoverSender.MaxRawChunkBytes + 17).Select(index => (byte)(index % 251)).ToArray();
+    var coverId = Convert.ToHexString(SHA256.HashData(coverBytes)).ToLowerInvariant();
     await File.WriteAllBytesAsync(Path.Combine(coverCacheDirectory, "covers", $"{coverId}.jpg"), coverBytes);
     var sink = new MemoryProtocolSink();
     var sender = new UsbCoverSender(coverCacheDirectory, TimeSpan.Zero);
@@ -1085,9 +1091,41 @@ static async Task TestUsbCoverSenderAsync()
     AssertEqual(0, cacheFrames.Count(message => message.Contains("cover.complete", StringComparison.Ordinal)), "stale cache request cannot transfer unrelated artwork");
     await cachedSink.SendRequestedCoverAsync(new CoverRequestMessage(coverId));
     await cachedSink.SendRequestedCoverAsync(new CoverRequestMessage(coverId));
-    AssertEqual(1, cacheFrames.Count(message => message.Contains("cover.complete", StringComparison.Ordinal)), "cache miss requests one transfer and duplicate requests are deduplicated");
+    AssertEqual(2, cacheFrames.Count(message => message.Contains("cover.complete", StringComparison.Ordinal)), "explicit cache miss retries same cover even after sender completed");
     await cachedSink.SendUpdateAsync(update);
-    AssertEqual(1, cacheFrames.Count(message => message.Contains("cover.complete", StringComparison.Ordinal)), "metadata after cached artwork does not retransmit it");
+    AssertEqual(2, cacheFrames.Count(message => message.Contains("cover.complete", StringComparison.Ordinal)), "metadata after cached artwork does not retransmit it");
+    var traffic = new System.Collections.Concurrent.ConcurrentQueue<string>();
+    var chunkStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var releaseChunk = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var responsiveSink = new UsbDeviceRuntime.ActiveUsbSink(new AgentState(), coverCacheDirectory,
+        _ => ValueTask.CompletedTask, _ => { }, sendWithCancellation: async (message, token) =>
+        {
+            if (message.Contains("cover.chunk", StringComparison.Ordinal)) {
+                chunkStarted.TrySetResult();
+                await releaseChunk.Task.WaitAsync(token);
+            }
+            traffic.Enqueue(message);
+        });
+    responsiveSink.TrackIncoming(ProtocolSerializer.Serialize(ProtocolConstants.MessageTypes.Hello, null,
+        new HelloMessage("stress-device", "CYD", "esp32", ["cover-cache-request"])));
+    await responsiveSink.SendUpdateAsync(update);
+    using var stressTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    await responsiveSink.QueueRequestedCoverAsync(new CoverRequestMessage(coverId), stressTimeout.Token);
+    await chunkStarted.Task.WaitAsync(stressTimeout.Token);
+    await responsiveSink.SendTextAsync(ProtocolSerializer.SerializeAck("media-during-cover", true), stressTimeout.Token);
+    AssertTrue(traffic.Any(frame => frame.Contains("media-during-cover", StringComparison.Ordinal)), "control ACK progresses while artwork is blocked");
+    Console.WriteLine($"SIMULATED control during blocked artwork: {watch.Elapsed.TotalMilliseconds:F2} ms (not physical latency)");
+    releaseChunk.SetResult();
+    await WaitUntilAsync(() => traffic.Any(frame => frame.Contains("cover.complete", StringComparison.Ordinal)), stressTimeout.Token);
+    await responsiveSink.StopCoverAsync();
+    var rejectedSink = new MemoryProtocolSink();
+    AssertTrue(!await sender.SendCoverAsync(new string('d', 64), rejectedSink), "cache miss has no complete frame");
+    await File.WriteAllBytesAsync(Path.Combine(coverCacheDirectory, "covers", $"{coverId}.jpg"), [1, 2, 3]);
+    AssertTrue(!await sender.SendCoverAsync(coverId, rejectedSink), "corrupt host cache fails SHA256 before transfer");
+    await File.WriteAllBytesAsync(Path.Combine(coverCacheDirectory, "covers", $"{coverId}.jpg"), []);
+    AssertTrue(!await sender.SendCoverAsync(coverId, rejectedSink), "empty artwork cannot emit complete");
+    AssertEqual(0, rejectedSink.Messages.Count, "rejected transfers publish no chunks or complete");
     Directory.Delete(coverCacheDirectory, recursive: true);
 }
 

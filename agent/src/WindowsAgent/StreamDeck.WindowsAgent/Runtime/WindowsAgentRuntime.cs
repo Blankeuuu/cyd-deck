@@ -37,8 +37,14 @@ public sealed class WindowsAgentRuntime(
     private string? cachedAccent;
     private IMediaThumbnailReference? lastThumbnailRef;
     private readonly SemaphoreSlim mediaPublishGate = new(1, 1);
+    private MediaArtworkCoordinator? artworkCoordinator;
+    private MediaArtworkCoordinator ArtworkCoordinator => artworkCoordinator ??= new MediaArtworkCoordinator(
+        () => coverProcessor,
+        OnCoverReadyAsync,
+        AgentDiagnosticLog.Write);
     private UsbDeviceRuntime? usbRuntime;
     private WindowsSystemMetricsProvider? systemMetricsProvider;
+    private volatile SystemMetrics? lastSampledMetrics;
     private Task? systemMetricsTask;
     private readonly PendingShortcutImportStore pendingShortcutImports = new();
     private int port;
@@ -46,6 +52,7 @@ public sealed class WindowsAgentRuntime(
     public int Port => port;
     internal int ReconnectCount => reconnectCount;
     internal string? EffectiveUsbPort => options.UsbPort ?? configurationStore.LoadOrDefault().Server?.UsbPort;
+    internal Task WaitForArtworkIdleAsync(TimeSpan? timeout = null) => ArtworkCoordinator.WaitForArtworkIdleAsync(timeout);
 
     public async Task StartAsync()
     {
@@ -90,7 +97,7 @@ public sealed class WindowsAgentRuntime(
                 HandleShortcutsReportAsync,
                 shortcutsProvider: () => BuildDeviceShortcuts(shortcutCatalog!.DeviceConfiguration, deviceSlots),
                 appearanceProvider: () => ResolveAssignedLayout(configurationStore.LoadOrDefault().Appearance ?? new AppearanceConfiguration(), deviceSlots),
-                initialMediaSender: (sink, token) => new ValueTask(PublishMediaUpdateAsync(mediaMonitor?.CurrentSnapshot, token, sink)));
+                initialMediaSender: (sink, token) => HydrateInitialDeviceStateAsync(sink, token));
 
             var effectiveUsbPort = options.UsbPort ?? configuration.Server?.UsbPort;
             if (!options.MockMode && (configuration.Server?.UsbAutoConnect != false || effectiveUsbPort is not null))
@@ -112,7 +119,7 @@ public sealed class WindowsAgentRuntime(
                     HandleShortcutsReportAsync,
                 shortcutsProvider: () => BuildDeviceShortcuts(shortcutCatalog!.DeviceConfiguration, deviceSlots),
                 appearanceProvider: () => ResolveAssignedLayout(configurationStore.LoadOrDefault().Appearance ?? new AppearanceConfiguration(), deviceSlots),
-                initialMediaSender: (sink, token) => new ValueTask(PublishMediaUpdateAsync(mediaMonitor?.CurrentSnapshot, token, sink)));
+                initialMediaSender: (sink, token) => HydrateInitialDeviceStateAsync(sink, token));
                 await usbRuntime.StartAsync(cancellation.Token).ConfigureAwait(false);
             }
 
@@ -158,7 +165,7 @@ public sealed class WindowsAgentRuntime(
         state.UpdateHostMedia(mediaMonitor.CurrentSnapshot);
 
         systemMetricsProvider = new WindowsSystemMetricsProvider();
-        systemMetricsTask = Task.Run(() => SampleSystemMetricsAsync(systemMetricsProvider, monitoringInterval, cancellationToken), CancellationToken.None);
+        systemMetricsTask = Task.Run(() => RunSystemMetricsPublisherAsync(systemMetricsProvider, monitoringInterval, cancellationToken), CancellationToken.None);
 
         var shortcuts = shortcutCatalog ?? throw new InvalidOperationException("Shortcut catalog is not initialized.");
         var shortcutExecutor = new ShortcutExecutor(
@@ -173,7 +180,7 @@ public sealed class WindowsAgentRuntime(
             new MediaSessionMonitorController(mediaMonitor),
             new MasterVolumeController(volumeService),
             new ShortcutExecutorController(shortcutExecutor),
-            new RejectingSystemCommandExecutor());
+            new RejectingSystemCommandExecutor(), diagnostics: AgentDiagnosticLog.Trace);
     }
 
     private static bool ToggleDefaultMicrophoneMute()
@@ -338,6 +345,10 @@ public sealed class WindowsAgentRuntime(
     public async ValueTask DisposeAsync()
     {
         await StopAsync().ConfigureAwait(false);
+        if (artworkCoordinator is not null)
+        {
+            await artworkCoordinator.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private async Task StopAsync()
@@ -381,6 +392,7 @@ public sealed class WindowsAgentRuntime(
         }
 
         systemMetricsProvider?.Dispose(); systemMetricsProvider = null;
+        lastSampledMetrics = null;
         if (mediaMonitor is not null)
         {
             mediaMonitor.SnapshotChanged -= HandleMediaSnapshotChanged;
@@ -389,6 +401,7 @@ public sealed class WindowsAgentRuntime(
             mediaMonitor = null;
         }
 
+        artworkCoordinator?.Reset();
         coverProcessor = null;
         cachedCoverId = null;
         cachedAccent = null;
@@ -510,29 +523,51 @@ public sealed class WindowsAgentRuntime(
 
     private async Task PublishMediaUpdateAsync(MediaSnapshot? snapshot, CancellationToken cancellationToken, IProtocolSink? target = null)
     {
+        if (target is not null) {
+            var enabled = Environment.GetEnvironmentVariable("CYD_DECK_DIAGNOSTICS") == "1" ? "true" : "false";
+            await target.SendTextAsync("{\"protocol\":1,\"type\":\"diagnostics.configure\",\"data\":{\"enabled\":" + enabled + "}}", cancellationToken).ConfigureAwait(false);
+        }
+
+        var (coverId, accent, _) = ArtworkCoordinator.Update(snapshot, target);
+        cachedCoverId = coverId;
+        cachedAccent = accent;
+
+        await PublishMediaUpdateCoreAsync(snapshot, coverId, accent, cancellationToken, target).ConfigureAwait(false);
+    }
+
+    private async Task OnCoverReadyAsync(long generation, MediaSnapshot? snapshot, string coverId, string? accent, IProtocolSink? target)
+    {
+        if (!ArtworkCoordinator.IsCurrentGeneration(generation))
+        {
+            return;
+        }
+
+        cachedCoverId = coverId;
+        cachedAccent = accent;
+
+        var currentSnapshot = mediaMonitor?.CurrentSnapshot ?? snapshot;
+        await PublishMediaUpdateCoreAsync(currentSnapshot, coverId, accent, CancellationToken.None, target).ConfigureAwait(false);
+    }
+
+    private async Task PublishMediaUpdateCoreAsync(
+        MediaSnapshot? snapshot,
+        string? coverId,
+        string? accent,
+        CancellationToken cancellationToken,
+        IProtocolSink? target = null)
+    {
         await mediaPublishGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var trackKey = $"{snapshot?.SourceAppUserModelId}|{snapshot?.Title}|{snapshot?.Artist}|{snapshot?.AlbumTitle}";
+            AgentDiagnosticLog.Trace("stage=media_state_updated");
             var thumbnailChanged = !ReferenceEquals(snapshot?.Thumbnail, lastThumbnailRef);
             if (trackKey != lastTrackKey || thumbnailChanged)
             {
                 lastTrackKey = trackKey;
                 lastThumbnailRef = snapshot?.Thumbnail;
-                cachedCoverId = null;
-                cachedAccent = null;
                 lastTrackAndPlayState = null;
             }
-
-            if (cachedCoverId is null && snapshot?.Thumbnail is not null && coverProcessor is not null)
-            {
-                var cover = await TryProcessCoverWithRetryAsync(snapshot.Thumbnail, cancellationToken).ConfigureAwait(false);
-                cachedCoverId = cover?.CoverId;
-                cachedAccent = cover?.AccentHex;
-            }
-
-            var coverId = cachedCoverId;
-            var accent = cachedAccent;
 
             if (volumeService?.CurrentSnapshot is { } audioSnapshot)
             {
@@ -589,48 +624,6 @@ public sealed class WindowsAgentRuntime(
         finally { mediaPublishGate.Release(); }
     }
 
-    private async Task<CoverProcessResult?> TryProcessCoverWithRetryAsync(
-        IMediaThumbnailReference thumbnail,
-        CancellationToken cancellationToken)
-    {
-        const int maxAttempts = 3;
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            try
-            {
-                await using var thumbnailStream = await thumbnail.OpenReadAsync(cancellationToken).ConfigureAwait(false);
-                if (thumbnailStream is null || (thumbnailStream.CanSeek && thumbnailStream.Length == 0))
-                {
-                    if (attempt < maxAttempts)
-                    {
-                        await Task.Delay(100 * attempt, cancellationToken).ConfigureAwait(false);
-                        continue;
-                    }
-                    return null;
-                }
-
-                var cover = await coverProcessor!.ProcessAsync(thumbnailStream, cancellationToken).ConfigureAwait(false);
-                if (cover is not null)
-                {
-                    return cover;
-                }
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                if (attempt < maxAttempts)
-                {
-                    AgentDiagnosticLog.Write($"Artwork attempt {attempt} failed ({exception.GetType().Name}), retrying in {100 * attempt}ms...");
-                    await Task.Delay(100 * attempt, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                AgentDiagnosticLog.Write($"Artwork processing failed after {maxAttempts} attempts: {exception.GetType().Name}; publishing track metadata.");
-            }
-        }
-
-        return null;
-    }
-
     private static string GetCoverCacheDirectory()
     {
         var basePath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -658,43 +651,100 @@ public sealed class WindowsAgentRuntime(
         }
     }
 
-    private async Task SampleSystemMetricsAsync(
+    private async ValueTask HydrateInitialDeviceStateAsync(IProtocolSink sink, CancellationToken cancellationToken)
+    {
+        var metrics = lastSampledMetrics;
+        if (metrics is null && systemMetricsProvider is not null)
+        {
+            try
+            {
+                metrics = systemMetricsProvider.GetSnapshot();
+                if (metrics is not null)
+                {
+                    lastSampledMetrics = metrics;
+                    state.UpdateSystemMetrics(metrics);
+                }
+            }
+            catch (Exception ex)
+            {
+                AgentDiagnosticLog.Write($"Initial hydration metrics sample failed: {ex.GetType().Name}");
+            }
+        }
+
+        if (metrics is not null)
+        {
+            try
+            {
+                var statsMessage = ProtocolStateMapper.CreateSystemStats(metrics);
+                await sink.SendTextAsync(statsMessage, cancellationToken).ConfigureAwait(false);
+                AgentDiagnosticLog.Trace("stage=stats_sent");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                AgentDiagnosticLog.Write($"Initial hydration system stats send failed: {ex.GetType().Name}");
+            }
+        }
+        // Clock/PC hydration must not wait for artwork processing.
+        await PublishMediaUpdateAsync(mediaMonitor?.CurrentSnapshot, cancellationToken, sink).ConfigureAwait(false);
+    }
+
+    private Task SampleSystemMetricsAsync(
+        ISystemMetricsProvider provider,
+        TimeSpan interval,
+        CancellationToken cancellationToken) =>
+        RunSystemMetricsPublisherAsync(provider, interval, cancellationToken);
+
+    private Task RunSystemMetricsPublisherAsync(
         ISystemMetricsProvider provider,
         TimeSpan interval,
         CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(interval);
-        var initial = provider.GetSnapshot();
-        state.UpdateSystemMetrics(initial);
-
-        while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
-        {
-            var metrics = provider.GetSnapshot();
-            state.UpdateSystemMetrics(metrics);
-            if (state.Snapshot().HostStatus == "connected")
+        return SystemMetricsPublisher.RunAsync(
+            provider,
+            interval,
+            metrics =>
             {
-                try
-                {
-                    await SendDeviceCommandAsync(ProtocolStateMapper.CreateSystemStats(metrics), cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception exception) when (exception is not OperationCanceledException)
-                {
-                    AgentDiagnosticLog.Write($"System stats publish failed: {exception.GetType().Name}");
-                }
-            }
-
-            if (mediaMonitor is not null)
+                lastSampledMetrics = metrics;
+                state.UpdateSystemMetrics(metrics);
+            },
+            async (metrics, token) =>
             {
-                try
+                AgentDiagnosticLog.Trace("stage=snapshot_sampled source=WindowsSystemMetricsProvider");
+                if (usbRuntime?.IsReady == true || state.Snapshot().HostStatus == "connected")
                 {
-                    mediaMonitor.TryRefreshTimeline();
+                    try
+                    {
+                        var sent = await SendDeviceCommandAsync(ProtocolStateMapper.CreateSystemStats(metrics), token).ConfigureAwait(false);
+                        if (sent)
+                        {
+                            AgentDiagnosticLog.Trace("stage=stats_sent");
+                        }
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        AgentDiagnosticLog.Write($"System stats publish failed: {exception.GetType().Name}");
+                    }
                 }
-                catch (Exception exception) when (exception is not OperationCanceledException)
+            },
+            error =>
+            {
+                AgentDiagnosticLog.Write($"System metrics sampling failed: {error.GetType().Name}");
+            },
+            cancellationToken,
+            onTick: () =>
+            {
+                if (mediaMonitor is not null)
                 {
-                    AgentDiagnosticLog.Write($"Media timeline poll failed: {exception.GetType().Name}");
+                    try
+                    {
+                        mediaMonitor.TryRefreshTimeline();
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        AgentDiagnosticLog.Write($"Media timeline poll failed: {exception.GetType().Name}");
+                    }
                 }
-            }
-        }
+            });
     }
 }
 

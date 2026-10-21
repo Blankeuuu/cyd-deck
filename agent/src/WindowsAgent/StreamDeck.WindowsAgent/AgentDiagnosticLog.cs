@@ -4,6 +4,10 @@ namespace StreamDeck.WindowsAgent;
 
 internal static class AgentDiagnosticLog
 {
+    public static void Trace(string message)
+    {
+        if (Environment.GetEnvironmentVariable("CYD_DECK_DIAGNOSTICS") == "1") Write(message);
+    }
     private static readonly Regex SecretField = new("(\"(?:bearerToken|token|password)\"\\s*:\\s*\")(?:\\\\.|[^\"\\\\])*(?:\"|$)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     internal static string RedactSecrets(string value) => SecretField.Replace(value, match => match.Groups[1].Value + "***REDACTED***\"");
     private static readonly object Gate = new();
