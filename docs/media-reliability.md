@@ -8,6 +8,19 @@ status: active
 
 # Niezawodność multimediów i synchronizacja osi czasu w CYD-DECK
 
+## Uzupełnienie firmware i transportu — 2026-10-20
+
+Na gałęzi `fix/firmware-e2e-reliability` dodano ograniczone ponawianie tego samego
+coverId po Failed, ponowne transfery na jawny cache miss, odblokowanie odbiornika
+USB podczas artwork, sieciowy worker HTTP, worker SD read/decode i kontrolę SHA-256. Raport rendered
+odróżnia dekodowanie od zakończenia ramki TFT. Audio ma lokalny stan pending,
+korelowaną odpowiedź i opcjonalną revision. Nie zmieniono envelope protocol:1.
+
+Poniższe wcześniejsze wpisy „Firmware UNCHANGED” dotyczą poprzedniego etapu hosta,
+nie tej gałęzi. Nie wgrano zmian na fizyczny CYD ani nie scalono ich do main.
+Szczegóły, rzeczywiste wyniki oraz jawne braki w pokryciu sprzętowym i SD:
+[raport QA](firmware-reliability-qa.md), [aktualizacja protokołu](protocol.md).
+
 Dokument opisuje architekturę obsługi sesji multimedialnych Windows (WinRT GSMTC), mechanizmy stabilizacji osi czasu odtwarzacza, procedury odzyskiwania miniatur okładek albumów oraz zasady współbieżności w **CYD-DECK**.
 
 ---
