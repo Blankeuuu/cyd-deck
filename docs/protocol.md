@@ -67,6 +67,11 @@ powoduje `cover.request` po USB albo pobranie HTTP po Wi-Fi. Jawny request może
 ponownie przesłać ten sam coverId, nawet jeśli Agent wcześniej wysłał complete.
 Jednoczesne requesty podczas tego samego transferu są łączone.
 
+Pusty lub niepoprawny `coverId` zachowuje poprzednią okładkę, jeśli tytuł,
+artysta i album po normalizacji do buforów firmware nie zmieniły się. Zmiana
+któregokolwiek z tych pól przy pustym ID czyści okładkę. Reguła obejmuje długie
+nazwy obcięte do pojemności bufora; format JSON i `protocol: 1` pozostają bez zmian.
+
 USB zachowuje `cover.chunk` z `coverId`, `offset`, `total`, `data` oraz końcowe
 `cover.complete`. Odrzucane są stare identyfikatory, złe offsety, nieprawidłowy
 Base64, niezgodne rozmiary, niepełny transfer, zły SHA-256 i nieprawidłowe znaczniki
@@ -87,8 +92,11 @@ wizualnej poprawności fizycznego panelu. Dekodowanie i przypisanie obrazu są
 osobnymi etapami. Samo `USB transfer_completed` nigdy nie dowodzi wyświetlenia.
 
 HTTP pracuje w osobnym zadaniu FreeRTOS z kolejką czterech bloków po 512 B.
-Zapis konsumuje jeden blok na wywołanie wątku aplikacji. Odczyt cache, sprawdzenie
-SHA-256 zapisanych bajtów i dekodowanie JPEG pracują w osobnym, pojedynczym zadaniu.
+Zapis konsumuje jeden blok na wywołanie wątku aplikacji. Odczyt cache i dekodowanie
+JPEG pracują w osobnym, pojedynczym zadaniu. SHA-256 strumienia jest sprawdzany
+przed commitem; render nie hashuje ponownie całego pliku. Sprawdza jego rozmiar,
+nagłówek JPEG i wynik dekodowania, więc nie wykrywa każdej zmiany bajtów
+pozostawiającej plik poprawnym JPEG.
 Worker nie wywołuje LVGL ani nie modyfikuje widocznego bufora. Wątek UI odbiera
 gotowy wynik, odrzuca nieaktualny coverId i podmienia descriptor. Szczytowo potrzebne
 są dwa bufory RGB565 po 32 KiB oraz stos workera; błąd alokacji ma ograniczone retry.

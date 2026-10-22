@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
-
 namespace streamdeck {
 
 constexpr std::size_t kCoverIdLength = 64;
@@ -110,6 +109,45 @@ inline CoverTransition updateCoverFetch(CoverFetchState& state, const char* cove
   state.decodeAfterTransfer = false;
   state.cacheChecked = false;
   return CoverTransition::Requested;
+}
+
+template <std::size_t N>
+inline void copyMediaText(char (&target)[N], const char* value, const char* fallback = "") {
+  const char* source = value && value[0] ? value : fallback;
+  std::strncpy(target, source, N - 1);
+  target[N - 1] = '\0';
+}
+
+template <std::size_t N>
+inline bool mediaTextMatches(const char (&current)[N], const char* incoming,
+                             const char* fallback = "") {
+  char normalized[N]{};
+  copyMediaText(normalized, incoming, fallback);
+  return std::strcmp(current, normalized) == 0;
+}
+
+template <std::size_t TitleSize, std::size_t ArtistSize, std::size_t AlbumSize,
+          std::size_t CoverIdSize>
+inline CoverTransition updateMediaArtwork(CoverFetchState& cover,
+                                          char (&title)[TitleSize],
+                                          char (&artist)[ArtistSize],
+                                          char (&album)[AlbumSize],
+                                          char (&coverId)[CoverIdSize],
+                                          const char* nextTitle,
+                                          const char* nextArtist,
+                                          const char* nextAlbum,
+                                          const char* nextCoverId,
+                                          uint32_t nowMs = 0) {
+  const bool sameTrack = mediaTextMatches(title, nextTitle, "No track") &&
+      mediaTextMatches(artist, nextArtist, "Unknown artist") &&
+      mediaTextMatches(album, nextAlbum);
+  if (sameTrack && !isValidCoverId(nextCoverId)) return CoverTransition::Unchanged;
+
+  copyMediaText(title, nextTitle, "No track");
+  copyMediaText(artist, nextArtist, "Unknown artist");
+  copyMediaText(album, nextAlbum);
+  copyMediaText(coverId, nextCoverId);
+  return updateCoverFetch(cover, coverId, nowMs);
 }
 
 inline CoverTransition markCoverFetchComplete(CoverFetchState& state, const char* coverId, bool ok, bool rendered = true) {

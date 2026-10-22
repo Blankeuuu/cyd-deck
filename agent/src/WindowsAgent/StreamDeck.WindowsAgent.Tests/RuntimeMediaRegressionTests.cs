@@ -13,13 +13,13 @@ internal static class RuntimeMediaRegressionTests
     public static async Task RunAsync()
     {
         Console.WriteLine("Running RuntimeMediaRegressionTests...");
-        await TestSameTrackNewThumbnailInvalidatesCacheAsync();
+        await TestSameTrackNewThumbnailReferenceKeepsCoverIdAsync();
         await TestTimelinePollsDoNotTriggerAdditionalImageReadsAsync();
         await TestTransientOpenReadFailureRetriesAndSucceedsAsync();
         Console.WriteLine("PASS: All RuntimeMediaRegressionTests passed successfully.");
     }
 
-    private static async Task TestSameTrackNewThumbnailInvalidatesCacheAsync()
+    private static async Task TestSameTrackNewThumbnailReferenceKeepsCoverIdAsync()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"streamdeck-runtime-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
@@ -76,7 +76,7 @@ internal static class RuntimeMediaRegressionTests
                 throw new InvalidOperationException($"Expected different cover IDs for red vs blue thumbnails, but both were {coverIdA}.");
             }
 
-            Console.WriteLine("  PASS: TestSameTrackNewThumbnailInvalidatesCache");
+            Console.WriteLine("  PASS: TestSameTrackNewThumbnailReferenceKeepsCoverId");
         }
         finally
         {

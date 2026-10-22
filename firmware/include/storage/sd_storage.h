@@ -37,6 +37,10 @@ class SdStorage {
   File openCoverReadOnly(const char* coverId);
   bool removeCover(const char* coverId);
 
+#ifdef SD_STORAGE_HOST_TEST
+  void setFileSystemForTest(FS* fs) { fs_ = fs; status_.mounted = true; status_.ready = true; }
+#endif
+
  private:
   struct CoverIndexEntry {
     char id[kMaxCoverIdLength + 1] = {};

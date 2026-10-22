@@ -538,8 +538,21 @@ bool SdStorage::ensureCoverSlot(const char* coverId) {
   if (!isSafeAssetId(coverId)) return false;
   if (findCover(coverId) >= 0) return true;
   if (entryCount_ >= kMaxIndexEntries) {
-    status_.message = "cover index full";
-    return false;
+    std::size_t oldest = 0;
+    for (std::size_t i = 1; i < entryCount_; ++i) {
+      if (entries_[i].lastUse < entries_[oldest].lastUse) oldest = i;
+    }
+    char path[kMaxCoverPathLength]{};
+    if (!makeCoverPath(entries_[oldest].id, path, sizeof(path)) ||
+        (fs_->exists(path) && !fs_->remove(path))) {
+      status_.message = "cover eviction failed";
+      return false;
+    }
+    eraseIndexEntry(oldest);
+    uint64_t total = 0;
+    for (std::size_t i = 0; i < entryCount_; ++i) total += entries_[i].size;
+    status_.coverCacheBytes = total;
+    status_.coverIndexEntries = static_cast<uint16_t>(entryCount_);
   }
   if (!entries_.ensure(entryCount_)) {
     status_.message = "cover index allocation failed";

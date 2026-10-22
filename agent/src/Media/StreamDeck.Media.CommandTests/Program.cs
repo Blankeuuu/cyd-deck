@@ -7,6 +7,9 @@ var failures = 0;
 foreach (var (name, test) in new (string, Func<Task>)[]
 {
     ("Pause refreshes observed playback without a native event", PauseWithoutEvent),
+    ("Metadata refreshes while paused without native events or commands", PollsMetadataWithoutEvents),
+    ("Polling coalesces blocked refreshes and stops on dispose", PollingIsBoundedAndDisposed),
+    ("Fallback normalizes thumbnail churn but events and track changes pass through", ThumbnailNormalization),
     ("False result is a failed protocol1 ACK and keeps playing", RejectedPause),
     ("Current session changes without a sessions-list event", ChangedCurrentSession),
     ("Repeated click reads actual playback, not predicted state", RepeatedClick),
@@ -45,6 +48,81 @@ static async Task PauseWithoutEvent()
     Check(await Send(monitor, MediaCommand.Pause), "command rejected");
     await WaitForSnapshotAsync(monitor, s => s?.PlaybackState == session.State);
     Check(monitor.CurrentSnapshot?.PlaybackState == session.State, "snapshot still playing after real pause");
+}
+
+static async Task PollsMetadataWithoutEvents()
+{
+    var session = new Session();
+    await using var monitor = new MediaSessionMonitor(new Source(session));
+    await monitor.StartAsync();
+    session.Title = "Changed while paused";
+    session.State = MediaPlaybackState.Paused;
+    await WaitForSnapshotAsync(monitor, s => s?.Title == "Changed while paused", TimeSpan.FromSeconds(2));
+    Check(monitor.CurrentSnapshot?.Title == "Changed while paused", "metadata remained stale without an event");
+    Check(monitor.CurrentSnapshot?.PlaybackState == MediaPlaybackState.Paused, "paused playback was not preserved");
+}
+
+static async Task PollingIsBoundedAndDisposed()
+{
+    var session = new Session();
+    var monitor = new MediaSessionMonitor(new Source(session));
+    await monitor.StartAsync();
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var calls = 0;
+    session.OnGetMediaProperties = async () =>
+    {
+        Interlocked.Increment(ref calls);
+        entered.TrySetResult();
+        await release.Task;
+        return new NativeMediaProperties(session.Title, null, null, null);
+    };
+    try
+    {
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(1100);
+        Check(calls == 1, "poll created overlapping or backlogged metadata reads");
+    }
+    finally
+    {
+        release.TrySetResult();
+        await monitor.DisposeAsync();
+    }
+    var callsAtDispose = calls;
+    await Task.Delay(650);
+    Check(calls == callsAtDispose, "poll performed work after dispose");
+}
+
+static async Task ThumbnailNormalization()
+{
+    var session = new Session();
+    var monitor = new MediaSessionMonitor(new Source(session));
+    await monitor.StartAsync();
+    var changes = 0;
+    monitor.SnapshotChanged += (_, _) => Interlocked.Increment(ref changes);
+    var first = new Thumbnail();
+    session.Thumbnail = first;
+    await WaitForSnapshotAsync(monitor, s => ReferenceEquals(s?.Thumbnail, first));
+    Check(ReferenceEquals(monitor.CurrentSnapshot?.Thumbnail, first), "fallback did not publish null-to-thumbnail");
+    var countWithFirst = Volatile.Read(ref changes);
+
+    session.Thumbnail = new Thumbnail();
+    await Task.Delay(650);
+    Check(ReferenceEquals(monitor.CurrentSnapshot?.Thumbnail, first), "fallback replaced stable thumbnail reference");
+    Check(Volatile.Read(ref changes) == countWithFirst, "fallback emitted a redundant snapshot event for thumbnail churn");
+
+    var eventThumbnail = new Thumbnail();
+    session.Thumbnail = eventThumbnail;
+    session.RaiseMediaPropertiesChanged();
+    await WaitForSnapshotAsync(monitor, s => ReferenceEquals(s?.Thumbnail, eventThumbnail));
+    Check(ReferenceEquals(monitor.CurrentSnapshot?.Thumbnail, eventThumbnail), "native event thumbnail was normalized");
+
+    var changedTrackThumbnail = new Thumbnail();
+    session.Title = "Next track";
+    session.Thumbnail = changedTrackThumbnail;
+    await WaitForSnapshotAsync(monitor, s => s?.Title == "Next track");
+    Check(ReferenceEquals(monitor.CurrentSnapshot?.Thumbnail, changedTrackThumbnail), "track change thumbnail was normalized");
+    await monitor.DisposeAsync();
 }
 
 static async Task RejectedPause()
@@ -114,6 +192,7 @@ static async Task SwitchWhilePending()
     release.SetResult();
     Check(await command.WaitAsync(TimeSpan.FromSeconds(2)), "pending command rejected");
     Check(active.State == MediaPlaybackState.Playing, "command replayed on a different session");
+    await WaitForSnapshotAsync(monitor, snapshot => snapshot?.SourceAppUserModelId == active.SourceAppUserModelId);
     Check(monitor.CurrentSnapshot?.SourceAppUserModelId == active.SourceAppUserModelId &&
         monitor.CurrentSnapshot.PlaybackState == MediaPlaybackState.Playing, "old result replaced new session state");
 }
@@ -211,11 +290,13 @@ sealed class Source(Session session) : IWindowsMediaSessionSource
 
 sealed class Session : IWindowsMediaSession
 {
-    public event EventHandler? MediaPropertiesChanged { add { } remove { } }
+    public event EventHandler? MediaPropertiesChanged;
     public event EventHandler? PlaybackInfoChanged { add { } remove { } }
     public event EventHandler? TimelinePropertiesChanged { add { } remove { } }
     public string SourceAppUserModelId { get; } = Guid.NewGuid().ToString("N");
-    public MediaPlaybackState State { get; private set; } = MediaPlaybackState.Playing;
+    public MediaPlaybackState State { get; set; } = MediaPlaybackState.Playing;
+    public string Title { get; set; } = "Track";
+    public IMediaThumbnailReference? Thumbnail { get; set; }
     public bool Accept { get; init; } = true;
     public bool Apply { get; init; } = true;
     public Func<Task>? BeforeCommand { get; init; }
@@ -226,7 +307,7 @@ sealed class Session : IWindowsMediaSession
         ? OnGetMediaProperties()
         : FailMetadata
             ? throw new InvalidOperationException("fake metadata failure")
-            : Task.FromResult(new NativeMediaProperties("Track", null, null, null));
+            : Task.FromResult(new NativeMediaProperties(Title, null, null, Thumbnail));
     public NativePlaybackInfo GetPlaybackInfo() => new(State);
     public NativeTimelineProperties GetTimelineProperties() => new(TimeSpan.Zero, TimeSpan.FromMinutes(3), Position, TimeSpan.Zero, TimeSpan.FromMinutes(3));
     public Task<bool> TryPlayAsync(CancellationToken ct = default) => Set(MediaPlaybackState.Playing);
@@ -241,4 +322,10 @@ sealed class Session : IWindowsMediaSession
         return Accept;
     }
     public void Dispose() { }
+    public void RaiseMediaPropertiesChanged() => MediaPropertiesChanged?.Invoke(this, EventArgs.Empty);
+}
+
+sealed class Thumbnail : IMediaThumbnailReference
+{
+    public ValueTask<Stream?> OpenReadAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult<Stream?>(null);
 }

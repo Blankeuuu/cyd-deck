@@ -1,4 +1,4 @@
-using System.Drawing;
+﻿using System.Drawing;
 using System.Drawing.Imaging;
 using System.Reflection;
 using System.Text.Json;
@@ -18,6 +18,9 @@ internal static class MediaArtworkDecouplingTests
         await TestBlockedThumbnailDoesNotDelayPlaybackOrTimelineUpdateAsync();
         await TestTrackChangeWithSlowArtworkRejectsStaleCoverAsync();
         await TestSameTrackNewThumbnailDecoupledAsync();
+        await TestSameTrackNewThumbnailReferenceNeverPublishesNullCoverAsync();
+        await TestSameTrackTransientNullThumbnailKeepsCoverIdAsync();
+        await TestReturnToPreviousTrackUsesCoverCacheWithoutOpenReadAsync();
         Console.WriteLine("PASS: All MediaArtworkDecouplingTests passed successfully.");
     }
 
@@ -299,6 +302,136 @@ internal static class MediaArtworkDecouplingTests
         }
     }
 
+    private static MediaSnapshot MakeSnapshot(string title, MediaPlaybackState state, IMediaThumbnailReference? thumb, int seconds = 1) =>
+        new("Spotify.exe", title, "Artist", "Album", state,
+            new MediaTimeline(TimeSpan.Zero, TimeSpan.FromMinutes(3), TimeSpan.FromSeconds(seconds), TimeSpan.Zero, TimeSpan.FromMinutes(3)),
+            thumb);
+
+    private static string? LastCoverId(MemoryProtocolSink sink)
+    {
+        var last = sink.Messages.ToArray().LastOrDefault();
+        if (last is null) throw new InvalidOperationException("No message in sink.");
+        using var doc = JsonDocument.Parse(last);
+        return doc.RootElement.GetProperty("data").TryGetProperty("coverId", out var c) ? c.GetString() : null;
+    }
+
+    private static async Task<string> WaitForCoverIdAsync(MemoryProtocolSink sink)
+    {
+        string? id = null;
+        var ok = await WaitForMessageAsync(sink, msg =>
+        {
+            using var doc = JsonDocument.Parse(msg);
+            if (doc.RootElement.TryGetProperty("data", out var d) && d.TryGetProperty("coverId", out var c) && !string.IsNullOrWhiteSpace(c.GetString()))
+            {
+                id = c.GetString();
+                return true;
+            }
+            return false;
+        }, timeoutMs: 3000);
+        if (!ok || id is null) throw new TimeoutException("Cover was not published.");
+        return id;
+    }
+
+    public static async Task TestSameTrackNewThumbnailReferenceNeverPublishesNullCoverAsync()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"streamdeck-decoupling-ref-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var (runtime, sink) = CreateIsolatedRuntime(tempDir);
+            await using var _ = runtime;
+            var bytes = CreateSampleImageBytes(Color.Red);
+            IMediaThumbnailReference NewRef() => new BlockingThumbnailReference(() => Task.FromResult<Stream?>(new MemoryStream(bytes)));
+
+            await InvokePublishMediaUpdateAsync(runtime, MakeSnapshot("Same", MediaPlaybackState.Playing, NewRef()), sink);
+            var coverId = await WaitForCoverIdAsync(sink);
+            var before = sink.Messages.Count();
+
+            for (var i = 0; i < 5; i++)
+            {
+                await InvokePublishMediaUpdateAsync(runtime, MakeSnapshot("Same", i % 2 == 0 ? MediaPlaybackState.Paused : MediaPlaybackState.Playing, NewRef(), 2 + i), sink);
+                if (LastCoverId(sink) != coverId)
+                    throw new InvalidOperationException("Nowa referencja miniatury dla tego samego utworu wyczyściła coverId (RED).");
+            }
+            await Task.Delay(400);
+            foreach (var msg in sink.Messages.ToArray().Skip(before))
+            {
+                using var doc = JsonDocument.Parse(msg);
+                if (doc.RootElement.GetProperty("type").GetString() == ProtocolConstants.MessageTypes.MediaUpdate &&
+                    (!doc.RootElement.GetProperty("data").TryGetProperty("coverId", out var c) || c.GetString() != coverId))
+                    throw new InvalidOperationException("media.update z coverId != znany dla tego samego utworu.");
+            }
+            Console.WriteLine("  PASS: TestSameTrackNewThumbnailReferenceNeverPublishesNullCover");
+        }
+        finally { try { Directory.Delete(tempDir, recursive: true); } catch { } }
+    }
+
+    public static async Task TestSameTrackTransientNullThumbnailKeepsCoverIdAsync()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"streamdeck-decoupling-null-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var (runtime, sink) = CreateIsolatedRuntime(tempDir);
+            await using var _ = runtime;
+            var bytes = CreateSampleImageBytes(Color.Green);
+            await InvokePublishMediaUpdateAsync(runtime, MakeSnapshot("Same", MediaPlaybackState.Playing,
+                new BlockingThumbnailReference(() => Task.FromResult<Stream?>(new MemoryStream(bytes)))), sink);
+            var coverId = await WaitForCoverIdAsync(sink);
+
+            await InvokePublishMediaUpdateAsync(runtime, MakeSnapshot("Same", MediaPlaybackState.Paused, null, 3), sink);
+            if (LastCoverId(sink) != coverId)
+                throw new InvalidOperationException("Chwilowo null Thumbnail wyczyścił coverId (RED).");
+
+            var failing = new BlockingThumbnailReference(() => throw new IOException("OpenRead failed"));
+            await InvokePublishMediaUpdateAsync(runtime, MakeSnapshot("Same", MediaPlaybackState.Playing, failing, 4), sink);
+            await Task.Delay(800);
+            await InvokePublishMediaUpdateAsync(runtime, MakeSnapshot("Same", MediaPlaybackState.Playing, null, 5), sink);
+            if (LastCoverId(sink) != coverId)
+                throw new InvalidOperationException("Porażka OpenRead wyczyściła coverId.");
+
+            // Realna zmiana utworu bez okładki => null.
+            await InvokePublishMediaUpdateAsync(runtime, MakeSnapshot("Other", MediaPlaybackState.Playing, null), sink);
+            if (LastCoverId(sink) is not null)
+                throw new InvalidOperationException("Stary coverId przeżył zmianę utworu.");
+            Console.WriteLine("  PASS: TestSameTrackTransientNullThumbnailKeepsCoverId");
+        }
+        finally { try { Directory.Delete(tempDir, recursive: true); } catch { } }
+    }
+
+    public static async Task TestReturnToPreviousTrackUsesCoverCacheWithoutOpenReadAsync()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"streamdeck-decoupling-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var (runtime, sink) = CreateIsolatedRuntime(tempDir);
+            await using var _ = runtime;
+            var bytesA = CreateSampleImageBytes(Color.Red);
+            var bytesB = CreateSampleImageBytes(Color.Blue);
+            await InvokePublishMediaUpdateAsync(runtime, MakeSnapshot("A", MediaPlaybackState.Playing,
+                new BlockingThumbnailReference(() => Task.FromResult<Stream?>(new MemoryStream(bytesA)))), sink);
+            var idA = await WaitForCoverIdAsync(sink);
+            await runtime.WaitForArtworkIdleAsync();
+
+            await InvokePublishMediaUpdateAsync(runtime, MakeSnapshot("B", MediaPlaybackState.Playing,
+                new BlockingThumbnailReference(() => Task.FromResult<Stream?>(new MemoryStream(bytesB)))), sink);
+            await Task.Delay(100);
+            await runtime.WaitForArtworkIdleAsync();
+            var idB = LastCoverId(sink);
+            if (idB == idA) throw new InvalidOperationException("Cover B == cover A.");
+
+            var opens = 0;
+            await InvokePublishMediaUpdateAsync(runtime, MakeSnapshot("A", MediaPlaybackState.Playing,
+                new BlockingThumbnailReference(() => { Interlocked.Increment(ref opens); return Task.FromResult<Stream?>(new MemoryStream(bytesA)); })), sink);
+            if (LastCoverId(sink) != idA)
+                throw new InvalidOperationException("Powrót do utworu A nie użył cache coverId (RED).");
+            if (Volatile.Read(ref opens) != 0)
+                throw new InvalidOperationException("Powrót do utworu A wywołał OpenRead mimo cache.");
+            Console.WriteLine("  PASS: TestReturnToPreviousTrackUsesCoverCacheWithoutOpenRead");
+        }
+        finally { try { Directory.Delete(tempDir, recursive: true); } catch { } }
+    }
     private static (WindowsAgentRuntime Runtime, MemoryProtocolSink Sink) CreateIsolatedRuntime(string tempDir)
     {
         var configPath = Path.Combine(tempDir, "config.json");

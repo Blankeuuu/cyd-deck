@@ -26,6 +26,7 @@
 #include "storage/sd_storage.h"
 #include "touch/xpt2046.h"
 #include "ui/app_state.h"
+#include "ui/cover_pixel_buffers.h"
 #include "ui/gesture_recognizer.h"
 #include "ui/lvgl_port.h"
 #include "ui/onboarding.h"
@@ -104,6 +105,7 @@ constexpr bool kUsbProtocolEnabled = false;
 #else
 constexpr bool kUsbProtocolEnabled = true;
 #endif
+ui::CoverPixelBuffers<128 * 128> coverPixelBuffers;
 uint16_t* coverPixels = nullptr;
 lv_image_dsc_t coverImageDsc{};
 uint32_t lastUserInputAt = 0;
@@ -121,9 +123,9 @@ lv_obj_t* setupStatusLabel = nullptr;
 CoverRenderResult renderCachedCover(const char* coverId, AppState& appState);
 struct CoverDecodeJob {
   std::atomic<bool> running{false};
-  char id[kCoverIdLength + 1]{};
-  uint16_t* pixels = nullptr;
+  ui::CoverPixelBuffers<128 * 128>::Ticket ticket{};
   bool decoded = false;
+  ui::CoverPixelBuffers<128 * 128>::Ticket taskTicket{};
 } coverDecodeJob;
 #if defined(WOKWI_SIMULATOR)
 void renderWokwiCoverDiagnostic(AppState& appState);
@@ -514,6 +516,9 @@ void startAppUi() {
     uiBegin(state, intents);
     appUiStarted = true;
   }
+  // Reserve the two persistent decode slots before cover requests can arrive.
+  // renderCachedCover retries if transient heap pressure caused this to fail.
+  if (!coverPixelBuffers.reserve()) appLogLine("Cover pixel buffer reservation failed");
   if (!agentClientStarted) {
     AgentClientConfig config;
     config.deviceId = makeDeviceId();
@@ -540,66 +545,55 @@ void markUserInput() {
 
 CoverRenderResult renderCachedCover(const char* coverId, AppState& appState) {
   if (!isValidCoverId(coverId) || !sdMounted || !appUiStarted) return CoverRenderResult::Failed;
+  if (!coverPixelBuffers.reserve()) return CoverRenderResult::Failed;
   auto& job = coverDecodeJob;
   if (job.running.load()) return CoverRenderResult::Pending;
-  if (job.id[0]) {
-    const bool current = std::strcmp(job.id, coverId) == 0;
-    const bool decoded = job.decoded;
-    uint16_t* prepared = job.pixels;
-    job.id[0] = '\0'; job.pixels = nullptr;
-    if (!current || !decoded) {
-      std::free(prepared);
+  if (job.ticket) {
+    const bool current = std::strcmp(job.ticket.id, coverId) == 0;
+    const bool published = coverPixelBuffers.publish(job.ticket, coverId, job.decoded);
+    job.ticket = {};
+    job.decoded = false;
+    if (!published) {
       if (current) return CoverRenderResult::Failed;
     } else {
-      uint16_t* previous = coverPixels;
+      coverPixels = coverPixelBuffers.visible();
       lv_image_cache_drop(&coverImageDsc);
-      coverPixels = prepared;
       coverImageDsc.data = reinterpret_cast<const uint8_t*>(coverPixels);
-      std::free(previous);
-      // Descriptor and widgets are only touched on the LVGL thread below.
       goto publishCover;
     }
   }
-  std::strncpy(job.id, coverId, sizeof(job.id) - 1);
+  job.ticket = coverPixelBuffers.begin(coverId);
+  if (!job.ticket) return CoverRenderResult::Failed;
   job.decoded = false;
+  job.taskTicket = job.ticket;
   job.running.store(true);
-  if (xTaskCreate([](void*) {
+  if (xTaskCreate([](void* context) {
       auto& work = coverDecodeJob;
-      File jpeg = sdStorage.openCoverReadOnly(work.id);
-      if (jpeg && jpeg.size() > 0 && jpeg.size() <= storage::kMaxCoverBytes) {
-        mbedtls_sha256_context digest;
-        mbedtls_sha256_init(&digest);
-        mbedtls_sha256_starts_ret(&digest, 0);
-        uint8_t bytes[512], hash[32]{};
-        std::size_t received = 0;
-        while (jpeg.available()) {
-          const int length = jpeg.read(bytes, sizeof(bytes));
-          if (length <= 0) break;
-          mbedtls_sha256_update_ret(&digest, bytes, length);
-          received += length;
-          vTaskDelay(1);
+      const auto ticket = *static_cast<ui::CoverPixelBuffers<128 * 128>::Ticket*>(context);
+      work.decoded = false;
+      {
+        File jpeg = sdStorage.openCoverReadOnly(ticket.id);
+        if (jpeg && jpeg.size() >= 2 && jpeg.size() <= storage::kMaxCoverBytes) {
+          const bool jpegHeader = jpeg.read() == 0xff && jpeg.read() == 0xd8 && jpeg.seek(0);
+          uint16_t* pixels = jpegHeader ? coverPixelBuffers.writable(ticket) : nullptr;
+          if (pixels) {
+            lgfx::LGFX_FILESYSTEM_Support<lgfx::LGFX_Sprite> sprite;
+            sprite.setColorDepth(16);
+            sprite.setBuffer(pixels, kCoverImageSize, kCoverImageSize, 16);
+            sprite.fillScreen(0x0000);
+            work.decoded = sprite.drawJpg(&jpeg, 0, 0, kCoverImageSize, kCoverImageSize, 0, 0, 1.0f);
+            if (work.decoded) convertDisplayOrderRgb565ToLvgl(pixels, kCoverImageSize * kCoverImageSize);
+          }
         }
-        mbedtls_sha256_finish_ret(&digest, hash);
-        mbedtls_sha256_free(&digest);
-        char hashId[65]{};
-        for (unsigned i = 0; i < 32; ++i) std::snprintf(hashId + i * 2, 3, "%02x", hash[i]);
-        const bool intact = received == jpeg.size() && strcasecmp(hashId, work.id) == 0 && jpeg.seek(0);
-        if (intact)
-        work.pixels = static_cast<uint16_t*>(std::calloc(kCoverImageSize * kCoverImageSize, sizeof(uint16_t)));
-        if (work.pixels) {
-          lgfx::LGFX_FILESYSTEM_Support<lgfx::LGFX_Sprite> sprite;
-          sprite.setColorDepth(16);
-          sprite.setBuffer(work.pixels, kCoverImageSize, kCoverImageSize, 16);
-          sprite.fillScreen(0x0000);
-          work.decoded = sprite.drawJpg(&jpeg, 0, 0, kCoverImageSize, kCoverImageSize, 0, 0, 1.0f);
-          if (work.decoded) convertDisplayOrderRgb565ToLvgl(work.pixels, kCoverImageSize * kCoverImageSize);
-        }
+        if (jpeg) jpeg.close();
       }
-      if (jpeg) jpeg.close();
+      if (!coverPixelBuffers.isActive(ticket)) work.decoded = false;
       work.running.store(false);
       vTaskDelete(nullptr);
-    }, "cover-decode", 6144, nullptr, 1, nullptr) != pdPASS) {
-    job.id[0] = '\0'; job.running.store(false);
+    }, "cover-decode", 6144, &job.taskTicket, 1, nullptr) != pdPASS) {
+    coverPixelBuffers.abandon(job.ticket);
+    job.ticket = {};
+    job.running.store(false);
     return CoverRenderResult::Failed;
   }
   return CoverRenderResult::Pending;
@@ -621,13 +615,13 @@ publishCover:
 #if defined(WOKWI_SIMULATOR)
 void renderWokwiCoverDiagnostic(AppState& appState) {
   if (!appUiStarted) return;
-  if (!coverPixels) {
-    coverPixels = static_cast<uint16_t*>(std::calloc(kCoverImageSize * kCoverImageSize, sizeof(uint16_t)));
-    if (!coverPixels) {
-      appLogLine("[WOKWI] COVER_RGB_DIAG_ALLOC_FAILED");
-      return;
-    }
+  if (!coverPixelBuffers.reserve()) {
+    appLogLine("[WOKWI] COVER_RGB_DIAG_ALLOC_FAILED");
+    return;
   }
+  const auto diagnosticTicket = coverPixelBuffers.begin("wokwi-diagnostic");
+  if (!diagnosticTicket) return;
+  coverPixels = coverPixelBuffers.writable(diagnosticTicket);
 
   lgfx::LGFX_Sprite sprite;
   sprite.setColorDepth(16);
@@ -636,6 +630,7 @@ void renderWokwiCoverDiagnostic(AppState& appState) {
   const bool decoded = sprite.drawJpg(kWokwiCoverRgbJpeg, kWokwiCoverRgbJpegLength,
       0, 0, kCoverImageSize, kCoverImageSize, 0, 0, 1.0f);
   if (!decoded) {
+    coverPixelBuffers.abandon(diagnosticTicket);
     appLogLine("[WOKWI] COVER_RGB_DIAG_DECODE_FAILED");
     return;
   }
@@ -649,6 +644,7 @@ void renderWokwiCoverDiagnostic(AppState& appState) {
   coverImageDsc.header.stride = kCoverImageSize * sizeof(uint16_t);
   coverImageDsc.data_size = kCoverImageSize * kCoverImageSize * sizeof(uint16_t);
   coverImageDsc.data = reinterpret_cast<const uint8_t*>(coverPixels);
+  coverPixelBuffers.publish(diagnosticTicket, "wokwi-diagnostic", true);
   uiSetCoverImage(&coverImageDsc);
   appState.media.cover.status = CoverStatus::Available;
   appState.media.cover.rendered = true;

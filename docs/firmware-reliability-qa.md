@@ -2,11 +2,179 @@
 title: CYD-DECK — naprawy niezawodności i plan akceptacji fizycznej
 tags: [cyd-deck, firmware, reliability, qa, recovery, shortcuts]
 aliases: [CYD end-to-end recovery, Firmware reliability QA]
-updated: 2026-10-21
+updated: 2026-10-22
 status: active
 ---
 
 # Zakres i status
+
+## Opóźnienie Spotify — pomiar 2026-10-22
+
+### Uzupełnienie: potwierdzony Spotifast i RED
+
+Użytkownik potwierdził Spotifast, a rzeczywiste źródło GSMTC ma ID
+`spotifast.exe` (zainstalowana wersja 0.13.3). Wcześniejszy filtr diagnostyczny
+`Contains("spotify")` błędnie pomijał ten odtwarzacz; wynik no_spotify_session
+nie oznaczał braku aktywnej muzyki. Hipoteza Brave nie potwierdziła się.
+Harness używa teraz produkcyjnego `DefaultMediaSessionSelector`.
+
+Bez restartu Agenta: pierwsza rzeczywista komenda Next → nowy snapshot
+10809,2 ms (FAIL); Agent wysłał zmianę około 14 ms po zdarzeniu. Druga próba
+z odczytem RAW co 200 ms: docelowy hash metadanych był gotowy po 617,4 ms,
+`monitor.snapshot` po 10045,0 ms, `Media sent` po 10056,6 ms. Dane były
+dostępne przed opóźnionym eventem Spotifast. Plik dowodowy:
+`artifacts/spotifast-latency-evidence-2026-10-22.json`.
+
+Naprawa w toku: bounded fallback odczytu metadanych co 500 ms, również przy
+pauzie, z regresją braku eventu i ochroną przed kolejką/churnem artwork.
+Nie deklaruje się jeszcze wdrożonej poprawki ani wyniku GREEN.
+
+### Wcześniejszy pomiar i jego ograniczenia
+
+Użytkownik zgłosił około 10 s od zmiany utworu w Spotify do zmiany na CYD.
+Pomiar `artifacts/measure-cover-usb-latency.py` wykonał prawdziwe ramki na COM5
+bez resetu ESP32: pięć odpowiedzi `device.info` 47–63 ms, pięć różnych
+`media.update` ze znanymi okładkami SD do `cache_hit` 265–297 ms. Próg 2000 ms,
+10/10 prób PASS. Wynik: `artifacts/cover-usb-latency-2026-10-22.json`.
+To nie jest pomiar Spotify→TFT ani test cache miss/transferu nowego obrazu.
+Zatrzymanie Agenta do zwolnienia COM5 mogło usunąć wcześniejszy backlog Agenta;
+wynik nie wyklucza narastającego opóźnienia przed takim restartem.
+
+Uruchomiono także standalone `artifacts/latency-native-probe/`, używający
+produkcyjnego źródła GSMTC/MediaSessionMonitor, UTC/monotonicznych znaczników
+i hashy metadanych bez tytułów. Read-only baseline działał, ale nie uchwycił
+zmiany utworu. Próba `--seconds 25 --skip-next` została zatrzymana przez guard
+`BLOCKED reason=no_spotify_session count=0`; nie wysłano komendy do odtwarzacza.
+Nie odtworzono 10 s i nie przypisano przyczyny konkretnemu modułowi.
+Użytkownik nie mógł w tym czasie wykonać kontrolowanych zmian ręcznie.
+
+Kod produkcyjny oraz firmware pozostały bez zmian w tym etapie; nie flashowano
+ani nie resetowano ESP32. Tymczasową diagnostykę procesową Agenta wyłączono,
+normalny Agent przywrócono (PID36644, Responding=true w chwili kontroli).
+Hash konfiguracji nadal
+`0DEBE79EF38379EA12A8E0064CCD319B800855FFB06BA7F5FB9E01E8025FAAAA`.
+Następny pomiar musi uchwycić aktywną sesję Spotify: source event→snapshot→
+`usb_tx media.update`→decode/render. Nie deklaruje się naprawy opóźnienia.
+
+## Trwałe No artwork i fragmentacja — 2026-10-22
+
+Użytkownik zgłosił utratę wszystkich okładek po kolejnych zmianach, także tych
+wcześniej zapisanych na SD oraz po zmianie aplikacji muzycznej. Log Agenta nadal
+pokazywał `artwork=True` i wielokrotne transfery tych samych ID. Odczyt fizycznego
+CYD bez resetowania (DTR/RTS false), uptime 670 s: SD mounted/ready, cover Failed,
+rendered=false, heap free 124760 B, minimum 75848 B, największy blok 32756 B.
+Pojedynczy obraz 128×128 RGB565 wymaga 32768 B. Restart samego Agenta nie pomógł;
+urządzenie nadal raportowało Failed, a stats/audio działały. Pomiar silnie wskazuje
+brak ciągłego bloku na kolejną okładkę, ale nie ustala źródła całej fragmentacji.
+Nie zarejestrowano bezpośredniego śladu nieudanej alokacji wewnątrz dekodera.
+
+Kandydat zastępuje powtarzany `calloc/free` dwoma trwale rezerwowanymi slotami w
+`ui/cover_pixel_buffers.h`, używanymi w `renderCachedCover`. Worker dostaje ticket
+z ID i generacją, dekoduje do slotu roboczego, a UI publikuje tylko aktualny,
+poprawny wynik. Widoczny slot nie jest nadpisywany; błąd/stary wynik zwalnia slot
+roboczy do ponownego użycia. Oba obrazy zajmują 65536 B na stercie, rezerwowane
+jednorazowo przed startem AgentClient; zmiany okładek nie wykonują kolejnych
+alokacji. Pierwsza rezerwacja może się nie udać i jest ponawiana; błąd drugiego
+bufora zwalnia pierwszy. Wstępny wariant statyczny zastąpiono tym rozwiązaniem
+po sprawdzeniu banku `.dram0_0_seg` (124580 B) w linkerze frameworka ESP32.
+Mały obiekt poola ma 176 B na hoście x64; rozmiar i budżet firmware potwierdza
+build, a heap po starcie wymaga testu urządzenia.
+File/sprite opuszczają zakres przed `vTaskDelete`. Stack taska i dekoder JPEG nadal
+mogą wymagać innych alokacji; nie deklaruje się usunięcia każdej przyczyny braku RAM.
+
+Koordynator: `scripts/test-cover-pixel-buffers.ps1` PASS (160 zmian, decode failure,
+stale result, zachowanie widocznego obrazu i ponowne `cached-A`, błędy pierwszej
+i drugiej rezerwacji z rollbackiem oraz retry),
+`scripts/test-ui-logic.ps1` PASS. Porównanie starej strategii to kontrolowany model
+odmowy dużej alokacji w pierwszym harnessie nie było uruchomieniem starego
+JPEG/FreeRTOS na sprzęcie. Końcowy test nowej strategii używa produkcyjnego
+modułu i wstrzykniętego allocatora: dokładnie 2 rzeczywiste wywołania przed
+160 zmianami i żadnych kolejnych mimo ustawienia odmowy alokacji. Bez SD/TFT.
+Pomiar: `artifacts/cover-fragmentation-observation-2026-10-22.json`; raport:
+`artifacts/cover-persistent-failure-2026-10-22.md`.
+Końcowy `platformio run -e cyd28_st7789_app -j 1` PASS (91,23 s): RAM statyczny
+85936 B / 327680 B, flash 1717621 B / 2031616 B. Symbol poola w ELF ma 160 B
+na ESP32 (`nm`, rozmiar 0xa0). Pierwszy, zastąpiony wariant statyczny faktycznie
+przekroczył region DRAM o 26880 B. Obraz końcowy:
+`artifacts/cover-pool-ST7789-2026-10-22.bin`, 1724192 B,
+SHA256 `513272AC18892C635B230A77973F5C2B30E16CE7442EA02851D71D744483E5AF`.
+Wgrano wyłącznie aplikację na COM5/0x10000: esptool `Hash of data verified`,
+restart po flashu. SD/NVS i konfiguracji nie czyszczono. Pierwszy hello po starcie:
+SD mounted/ready, wolny heap 94436 B, największy blok 47092 B. Po połączeniu
+Agenta, przy uptime 143 s: cover status=2/rendered=true, freeHeap=92212 B,
+minHeap=72392 B, largestBlock=45044 B. Zapis bezpiecznych pól:
+`artifacts/cover-pool-postflash-2026-10-22.json`. To potwierdza pojedynczy render,
+nie wielogodzinną stabilność ani serię różnych utworów.
+Pierwsza dodatkowa sonda z role=agent nie otrzymała odpowiedzi (protokół
+celowo nie odpowiada na taką rolę, aby zapobiec pętli hello); poprawne discovery
+z pustą rolą dało powyższy wynik bez resetu. Zwykły Agent ponownie działał jako
+PID37368, Responding=true; konfiguracja zachowała SHA256
+`0DEBE79EF38379EA12A8E0064CCD319B800855FFB06BA7F5FB9E01E8025FAAAA`.
+
+Play/Pause: użytkownik doprecyzował ikonę `Ⅱ` podczas grania. To prawidłowa
+następna akcja Pause, nie napis o stanie Paused. Zakończono diagnozę bez zmian
+produkcyjnych i wycofano tymczasowe modyfikacje harnessu Media. Zwykły Agent
+przywrócono po diagnostyce (PID 34124 w chwili kontroli); hash config.json pozostał
+identyczny jak przed sesją. Pomiary diagnozy wykonano przed wgraniem nowego obrazu.
+
+## Okładki i cache SD — kontynuacja 2026-10-21
+
+Przejęto ORCA Run `run_74e90ec96345`. Na polecenie użytkownika dalsze zadania
+wykonują workery Codex `gpt-6-luna`, effort `low`; wcześniejszy wymóg Antigravity
+dotyczył poprzedniego etapu. Przejęte poprawki Agenta i firmware zweryfikowano
+ponownie, bez zmniejszania cache SD.
+
+- Agent zachowuje `coverId` dla tego samego utworu przy nowej referencji lub
+  chwilowym braku miniatury. LRU 32 identyfikatorów przyspiesza powrót do utworu.
+- Render SD nie przelicza całego SHA-256 z opóźnieniem na każdy blok 512 B.
+  Strumień nadal weryfikuje hash przed commitem; render sprawdza rozmiar,
+  nagłówek JPEG i powodzenie dekodowania. Poprawny JPEG z innymi bajtami nie
+  jest już odrzucany wyłącznie na podstawie niezgodności hasha przy renderze.
+- Pełny indeks 512 wpisów usuwa teraz pojedynczy najmniej używany plik zamiast
+  odrzucać nowe okładki. Test produkcyjnego `SdStorage` z kontrolowanym FS
+  potwierdza 513. zapis, ochronę dotkniętego wpisu, trafienie istniejącego ID
+  i zachowanie danych przy błędzie usunięcia. Stub SHA w tym harnessie nie
+  testuje kryptografii ani streamingu.
+- Porównanie tego samego utworu w firmware uwzględnia title, artist i album
+  po normalizacji do buforów, także dla długich nazw. Regresje wykonują
+  produkcyjne przejścia stanów. Raporty: `artifacts/cover-sd-capacity-fix.md`
+  i `artifacts/cover-track-boundary-review.md`.
+
+Niezależna weryfikacja: regresje artwork 6/6, runtime media 3/3, Covers 15/15
+oraz `scripts/test-ui-logic.ps1` PASS; Agent Release 0 ostrzeżeń i 0 błędów.
+Pełny `WindowsAgent.Tests` poza sandboxem zatrzymał się na budżecie wydajności
+`DesktopViewportTests`: warm `ShowPage(Shortcuts)` p50 103,92 ms przy wymaganiu
+poniżej 50 ms. Nie jest to pełny PASS; nie ustalono przyczyny tego przekroczenia
+w ramach naprawy okładek. Testy kontrolowane nie mierzą czasu wyświetlenia TFT.
+
+Powtórzenie pełnego smoke po zakończeniu kompilacji: **PASS**, exit 0,
+`PASS StreamDeck.WindowsAgent smoke tests`; hash rzeczywistego config.json
+przed/po identyczny. Log: `artifacts/cover-smoke-final.log`. Pierwsze przekroczenie
+budżetu pozostaje wynikiem wcześniejszego przebiegu, a nie końcowym statusem suite.
+
+Końcowy `scripts/test-sd-storage-cache.ps1` PASS po poprawce wykrywania Ziga;
+`scripts/test-ui-logic.ps1` PASS po wszystkich zmianach logiki. Build ST7789
+SUCCESS (788,58 s): RAM 85712/327680 B, flash 1716533/2031616 B.
+Obraz `artifacts/cover-cache-ST7789-2026-10-21.bin`: 1723104 B, SHA-256
+`5A9573366DDFB672BC5A8A4CCB3C7B67A075F2B723C774D5B34B5DF999BA027E`.
+
+Nowy Agent uruchomiony z `artifacts/reliability-cover-agent/CYD-DECK.exe`
+z `--usb-port COM5`; PID 30244 odpowiadał w chwili kontroli. Hash konfiguracji
+przed i po zmianie instancji był identyczny. Nie zastąpiono instalacji ani
+autostartu. Pierwsza próba flashowania została zablokowana przez automatyczny
+przegląd bezpieczeństwa; użytkownik następnie jawnie zatwierdził wdrożenie.
+
+**Wdrożenie 2026-10-21:** zapisano zatwierdzony obraz 1723104 B wyłącznie pod
+`0x10000` na COM5. Esptool 4.9.0 potwierdził `Hash of data verified`, exit 0,
+i wykonał restart RTS. Nie kasowano NVS ani nie formatowano SD. Odczyt hello
+bez dodatkowego resetu: CYD-40C86C, firmwareVersion 1.4.0, SD mounted=true,
+ready=true. Heap przy hello: free 161524 B, minimum 150968 B, largest 110580 B.
+Agent ponownie uruchomiony, PID 5172 Responding true; hash config.json nadal
+`0DEBE79EF38379EA12A8E0064CCD319B800855FFB06BA7F5FB9E01E8025FAAAA`.
+Odczyt hello przed uruchomieniem Agenta miał cover status=0/rendered=false,
+co nie jest wynikiem testu wyświetlenia okładki po połączeniu.
+Fizyczna ocena braku migotania, cache hit i czasu wyświetlenia TFT pozostaje
+do potwierdzenia przez użytkownika. Bez merge, push i release.
 
 ## Regresja fizyczna i dalsza naprawa — 2026-10-21
 
@@ -229,8 +397,9 @@ jest rozwijane (`/v:off`). Skrypty nie dostają obejścia ExecutionPolicy.
   karcie użytkownika i w razie przekroczeń rozszerzyć właściciela zapisu SD.
 - Wi-Fi discovery i WebSockets korzystają z dotychczasowych bibliotek; nie
   wykazano ich maksymalnej latencji na fizycznym ESP32.
-- SD checksum potwierdza odebrane bajty przed commitem, a worker ponownie weryfikuje
-  zapisane bajty przed dekodowaniem, także przy cache hit.
+- SD checksum potwierdza odebrane bajty strumienia przed commitem. W kandydacie
+  okładek z 2026-10-21 worker nie hashuje ponownie pliku przy każdym cache hit;
+  sprawdza rozmiar, nagłówek JPEG i wynik dekodowania.
   Prawdziwe błędy zapisu/rename i utrata zasilania nie były wstrzykiwane.
 - Starszy Agent bez revision ma słabszą ochronę kolejności audio.
 - Długi Shortcut może skończyć się po 5-sekundowym timeoutcie CYD. Wynik jest

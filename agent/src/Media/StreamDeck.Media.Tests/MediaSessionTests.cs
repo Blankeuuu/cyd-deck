@@ -54,17 +54,20 @@ public sealed class MediaSessionTests
     }
 
     [Fact]
-    public async Task MonitorRefreshesOnlyFromStartAndEvents()
+    public async Task MonitorRefreshesFromStartAndScheduledEvents()
     {
         var session = new FakeSession("player", MediaPlaybackState.Playing);
         var source = new FakeSessionSource(session);
         var mapper = new CountingMapper();
-        var monitor = new MediaSessionMonitor(source, mapper: mapper);
+        await using var monitor = new MediaSessionMonitor(source, mapper: mapper);
         var snapshots = new List<MediaSnapshot?>();
         monitor.SnapshotChanged += (_, snapshot) => snapshots.Add(snapshot);
 
         await monitor.StartAsync(TestContext.Current.CancellationToken);
         session.RaisePlaybackInfoChanged();
+
+        await mapper.SecondMapStarted.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+        await monitor.DisposeAsync();
 
         Assert.Equal(2, mapper.MapCount);
         Assert.Single(snapshots);
@@ -156,12 +159,12 @@ public sealed class MediaSessionTests
     }
 
     [Fact]
-    public async Task MonitorKeepsConcurrentFailureOperationLabelsIsolated()
+    public async Task MonitorKeepsQueuedFailureOperationLabelsIsolated()
     {
         var session = new FakeSession("player", MediaPlaybackState.Playing);
         var source = new FakeSessionSource(session);
         var mapper = new CountingMapper();
-        var monitor = new MediaSessionMonitor(source, mapper: mapper);
+        await using var monitor = new MediaSessionMonitor(source, mapper: mapper);
         var failures = new List<MediaSessionRefreshFailedEventArgs>();
         var firstFailure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondFailure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -191,10 +194,11 @@ public sealed class MediaSessionTests
 
         source.ThrowOnGetSessions = nameof(ArgumentException);
         source.RaiseSessionsChanged();
+        mapper.ReleaseMapFailure.TrySetResult();
         await firstFailure.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
 
-        mapper.ReleaseMapFailure.SetResult();
         await secondFailure.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+        await monitor.DisposeAsync();
 
         Assert.Contains(failures, failure => failure.Operation == "GetSessions" && failure.ExceptionType == nameof(ArgumentException));
         Assert.Contains(failures, failure => failure.Operation == "MapSession" && failure.ExceptionType == nameof(InvalidOperationException));
@@ -206,13 +210,20 @@ public sealed class MediaSessionTests
     {
         var session = new FakeSession("player", MediaPlaybackState.Playing);
         var source = new FakeSessionSource(session);
-        var monitor = new MediaSessionMonitor(source);
+        await using var monitor = new MediaSessionMonitor(source);
         var snapshots = new List<MediaSnapshot?>();
-        monitor.SnapshotChanged += (_, snapshot) => snapshots.Add(snapshot);
+        var cleared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        monitor.SnapshotChanged += (_, snapshot) =>
+        {
+            snapshots.Add(snapshot);
+            if (snapshot is null) cleared.TrySetResult();
+        };
 
         await monitor.StartAsync(TestContext.Current.CancellationToken);
         source.ReplaceSessions();
         source.ReplaceSessions();
+        await cleared.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+        await monitor.DisposeAsync();
 
         Assert.Equal(2, snapshots.Count);
         Assert.NotNull(snapshots[0]);
@@ -243,6 +254,7 @@ public sealed class MediaSessionTests
     private sealed class CountingMapper : IMediaSessionMapper
     {
         public int MapCount { get; private set; }
+        public TaskCompletionSource SecondMapStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool ThrowOnMap { get; set; }
 
         public bool HoldMapFailure { get; set; }
@@ -254,6 +266,7 @@ public sealed class MediaSessionTests
         public async Task<MediaSnapshot> MapAsync(IWindowsMediaSession session, CancellationToken cancellationToken = default)
         {
             MapCount++;
+            if (MapCount == 2) SecondMapStarted.TrySetResult();
             if (ThrowOnMap)
             {
                 if (HoldMapFailure)

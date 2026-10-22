@@ -59,7 +59,9 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly HashSet<IWindowsMediaSession> _subscribedSessions = [];
     private Task? _backgroundRefreshTask;
+    private Task? _pollTask;
     private bool _refreshQueued;
+    private bool _normalizeThumbnailOnRefresh;
     private IWindowsMediaSession? _selectedSession;
     private IWindowsMediaSession? _currentSnapshotSession;
     private bool _started;
@@ -97,6 +99,7 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
         _source.SessionsChanged += HandleSessionsChanged;
         _started = true;
         await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        _pollTask = Task.Run(PollMetadataAsync, CancellationToken.None);
     }
 
     public Task<bool> PreviousAsync(CancellationToken cancellationToken = default)
@@ -206,6 +209,7 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Task? backgroundRefreshTask;
+        Task? pollTask;
         lock (_gate)
         {
             if (_disposed)
@@ -221,6 +225,13 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
         {
             _refreshQueued = false;
             backgroundRefreshTask = _backgroundRefreshTask;
+            pollTask = _pollTask;
+        }
+
+        if (pollTask is not null)
+        {
+            try { await pollTask.ConfigureAwait(false); }
+            catch { }
         }
 
         if (backgroundRefreshTask is not null)
@@ -289,7 +300,7 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
         }
     }
 
-    private void ScheduleRefresh()
+    private void ScheduleRefresh(bool normalizeThumbnail = false)
     {
         lock (_refreshScheduleGate)
         {
@@ -304,11 +315,13 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
             if (_backgroundRefreshTask is not null && !_backgroundRefreshTask.IsCompleted)
             {
                 _refreshQueued = true;
+                _normalizeThumbnailOnRefresh &= normalizeThumbnail;
                 return;
             }
 
             // Async methods may do synchronous COM/stream work before their first
             // await. Keep that work off the command/transport caller as well.
+            _normalizeThumbnailOnRefresh = normalizeThumbnail;
             _backgroundRefreshTask = Task.Run(ProcessQueuedRefreshesAsync, CancellationToken.None);
         }
     }
@@ -330,7 +343,9 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
 
             try
             {
-                await RefreshSafelyAsync(ct).ConfigureAwait(false);
+                bool normalizeThumbnail;
+                lock (_refreshScheduleGate) normalizeThumbnail = _normalizeThumbnailOnRefresh;
+                await RefreshSafelyAsync(ct, normalizeThumbnail).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -355,20 +370,33 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
 
     private void HandleSessionsChanged(object? sender, EventArgs args)
     {
-        _ = RefreshSafelyAsync(CancellationToken.None);
+        ScheduleRefresh();
     }
 
     private void HandleSessionChanged(object? sender, EventArgs args)
     {
-        _ = RefreshSafelyAsync(CancellationToken.None);
+        ScheduleRefresh();
     }
 
-    private async Task RefreshSafelyAsync(CancellationToken cancellationToken)
+    private async Task PollMetadataAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_cts.Token).ConfigureAwait(false))
+            {
+                ScheduleRefresh(normalizeThumbnail: true);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task RefreshSafelyAsync(CancellationToken cancellationToken, bool normalizeThumbnail = false)
     {
         var context = new MediaSessionRefreshContext();
         try
         {
-            await RefreshAsync(cancellationToken, context).ConfigureAwait(false);
+            await RefreshAsync(cancellationToken, context, normalizeThumbnail).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -379,7 +407,7 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
         }
     }
 
-    private async Task RefreshAsync(CancellationToken cancellationToken, MediaSessionRefreshContext? context = null)
+    private async Task RefreshAsync(CancellationToken cancellationToken, MediaSessionRefreshContext? context = null, bool normalizeThumbnail = false)
     {
         CancellationToken effectiveCt;
         long sequence;
@@ -440,7 +468,7 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
                 }
             }
 
-            SetCurrentSnapshot(snapshot, sequence, selectedSession);
+            SetCurrentSnapshot(snapshot, sequence, selectedSession, normalizeThumbnail);
         }
         finally
         {
@@ -468,7 +496,7 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
         public string Operation { get; set; } = "Refresh";
     }
 
-    private void SetCurrentSnapshot(MediaSnapshot? snapshot, long sequence, IWindowsMediaSession? session)
+    private void SetCurrentSnapshot(MediaSnapshot? snapshot, long sequence, IWindowsMediaSession? session, bool normalizeThumbnail = false)
     {
         long version;
         lock (_gate)
@@ -485,6 +513,14 @@ public sealed class MediaSessionMonitor : IAsyncDisposable
 
             _lastAppliedSequence = sequence;
             _currentSnapshotSession = session;
+
+            if (normalizeThumbnail && snapshot is not null && CurrentSnapshot is { Thumbnail: not null } previous &&
+                previous.SourceAppUserModelId == snapshot.SourceAppUserModelId &&
+                previous.Title == snapshot.Title && previous.Artist == snapshot.Artist && previous.AlbumTitle == snapshot.AlbumTitle &&
+                snapshot.Thumbnail is not null)
+            {
+                snapshot = snapshot with { Thumbnail = previous.Thumbnail };
+            }
 
             if (Equals(CurrentSnapshot, snapshot))
             {

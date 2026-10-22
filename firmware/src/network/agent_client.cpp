@@ -640,11 +640,10 @@ class AgentClient::Impl {
     const String artist = quotedField(payload, length, "artist");
     const String album = quotedField(payload, length, "album");
     const String coverId = quotedField(payload, length, "coverId");
-    copyText(state_->media.title, sizeof(state_->media.title), title.c_str(), "No track");
-    copyText(state_->media.artist, sizeof(state_->media.artist), artist.c_str(), "Unknown artist");
-    copyText(state_->media.album, sizeof(state_->media.album), album.c_str(), "");
-    copyText(state_->media.coverId, sizeof(state_->media.coverId), coverId.c_str(), "");
-    const CoverTransition transition = updateCoverFetch(state_->media.cover, state_->media.coverId, millis());
+    const CoverTransition transition = updateMediaArtwork(
+        state_->media.cover, state_->media.title, state_->media.artist,
+        state_->media.album, state_->media.coverId, title.c_str(), artist.c_str(),
+        album.c_str(), coverId.c_str(), millis());
     if (transition == CoverTransition::Requested || transition == CoverTransition::Cleared) {
       cancelHttpCover();
       resetUsbCoverTransfer();

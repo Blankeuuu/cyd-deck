@@ -26,6 +26,14 @@ internal sealed class MediaArtworkCoordinator : IAsyncDisposable
     private IProtocolSink? _lastSink;
     private CancellationTokenSource? _activeItemCts;
     private TaskCompletionSource<bool>? _idleTcs;
+    private long _lastRefreshTick = long.MinValue / 2;
+
+    private const int CoverCacheCapacity = 32;
+    private const long RefreshMinIntervalMs = 30_000;
+    private readonly Dictionary<string, LinkedListNode<(string Key, CoverCacheEntry Entry)>> _coverCache = new();
+    private readonly LinkedList<(string Key, CoverCacheEntry Entry)> _coverCacheOrder = new();
+
+    private readonly record struct CoverCacheEntry(string CoverId, string? AccentHex);
 
     public MediaArtworkCoordinator(
         Func<CoverProcessor?> processorProvider,
@@ -82,28 +90,54 @@ internal sealed class MediaArtworkCoordinator : IAsyncDisposable
             _latestSnapshot = snapshot;
 
             var trackKey = $"{snapshot?.SourceAppUserModelId}|{snapshot?.Title}|{snapshot?.Artist}|{snapshot?.AlbumTitle}";
-            var thumbnailChanged = !ReferenceEquals(snapshot?.Thumbnail, _currentThumbnailRef);
+            var thumbnail = snapshot?.Thumbnail;
+            var refChanged = false;
 
-            if (trackKey != _currentTrackKey || thumbnailChanged)
+            var trackChanged = trackKey != _currentTrackKey;
+            if (trackChanged)
             {
+                // Realna zmiana utworu: stary coverId nie może przeżyć.
                 _currentGeneration++;
                 _currentTrackKey = trackKey;
-                _currentThumbnailRef = snapshot?.Thumbnail;
+                _currentThumbnailRef = thumbnail;
                 _cachedCoverId = null;
                 _cachedAccent = null;
                 _isFailed = false;
                 _isQueuedOrProcessing = false;
 
                 try { _activeItemCts?.Cancel(); } catch { }
+
+                if (TryGetFromCoverCacheLocked(trackKey, out var hit))
+                {
+                    _cachedCoverId = hit.CoverId;
+                    _cachedAccent = hit.AccentHex;
+                }
+            }
+            else if (thumbnail is not null && !ReferenceEquals(thumbnail, _currentThumbnailRef))
+            {
+                // Ten sam utwór, nowa referencja miniatury: NIE kasujemy coverId.
+                _currentThumbnailRef = thumbnail;
+                _isFailed = false;
+                refChanged = true;
             }
 
-            if (snapshot?.Thumbnail is null)
+            if (thumbnail is null)
             {
-                return (null, null, true);
+                // Chwilowy brak miniatury dla tego samego utworu zachowuje ostatni znany coverId.
+                return (_cachedCoverId, _cachedAccent, true);
             }
 
             if (_cachedCoverId is not null)
             {
+                if (refChanged && Environment.TickCount64 - _lastRefreshTick >= RefreshMinIntervalMs)
+                {
+                    var refreshProcessor = _processorProvider();
+                    if (refreshProcessor is not null)
+                    {
+                        _lastRefreshTick = Environment.TickCount64;
+                        EnqueueLocked(thumbnail, refreshProcessor, isRefresh: true);
+                    }
+                }
                 return (_cachedCoverId, _cachedAccent, true);
             }
 
@@ -118,17 +152,50 @@ internal sealed class MediaArtworkCoordinator : IAsyncDisposable
                 return (null, null, true);
             }
 
-            if (!_isQueuedOrProcessing)
-            {
-                _isQueuedOrProcessing = true;
-                var item = new ArtworkWorkItem(_currentGeneration, snapshot.Thumbnail, processor);
-                _channel.Writer.TryWrite(item);
-            }
-
+            EnqueueLocked(thumbnail, processor, isRefresh: _cachedCoverId is not null);
             return (null, null, false);
         }
     }
 
+    private void EnqueueLocked(IMediaThumbnailReference thumbnail, CoverProcessor processor, bool isRefresh = false)
+    {
+        if (_isQueuedOrProcessing)
+        {
+            return;
+        }
+
+        _isQueuedOrProcessing = true;
+        _channel.Writer.TryWrite(new ArtworkWorkItem(_currentGeneration, thumbnail, processor, isRefresh));
+    }
+
+    private bool TryGetFromCoverCacheLocked(string trackKey, out CoverCacheEntry entry)
+    {
+        if (_coverCache.TryGetValue(trackKey, out var node))
+        {
+            _coverCacheOrder.Remove(node);
+            _coverCacheOrder.AddFirst(node);
+            entry = node.Value.Entry;
+            return true;
+        }
+        entry = default;
+        return false;
+    }
+
+    private void StoreInCoverCacheLocked(string trackKey, string coverId, string? accent)
+    {
+        if (_coverCache.TryGetValue(trackKey, out var existing))
+        {
+            _coverCacheOrder.Remove(existing);
+            _coverCache.Remove(trackKey);
+        }
+        var node = _coverCacheOrder.AddFirst((trackKey, new CoverCacheEntry(coverId, accent)));
+        _coverCache[trackKey] = node;
+        while (_coverCache.Count > CoverCacheCapacity && _coverCacheOrder.Last is { } last)
+        {
+            _coverCache.Remove(last.Value.Key);
+            _coverCacheOrder.RemoveLast();
+        }
+    }
     public void Reset()
     {
         lock (_lock)
@@ -232,6 +299,7 @@ internal sealed class MediaArtworkCoordinator : IAsyncDisposable
             }
 
             bool isCurrent;
+            var coverChanged = false;
             MediaSnapshot? latest;
             IProtocolSink? sink;
             lock (_lock)
@@ -244,11 +312,18 @@ internal sealed class MediaArtworkCoordinator : IAsyncDisposable
                 {
                     if (coverResult is not null)
                     {
+                        coverChanged = !string.Equals(_cachedCoverId, coverResult.CoverId, StringComparison.Ordinal);
                         _cachedCoverId = coverResult.CoverId;
                         _cachedAccent = coverResult.AccentHex;
+                        _isFailed = false;
+                        if (_currentTrackKey is not null)
+                        {
+                            StoreInCoverCacheLocked(_currentTrackKey, coverResult.CoverId, coverResult.AccentHex);
+                        }
                     }
-                    else
+                    else if (_cachedCoverId is null && !item.IsRefresh)
                     {
+                        // Ten sam utwór z już znanym coverId zachowuje go mimo porażki OpenRead.
                         _isFailed = true;
                     }
                 }
@@ -258,7 +333,7 @@ internal sealed class MediaArtworkCoordinator : IAsyncDisposable
                 }
             }
 
-            if (isCurrent && coverResult is not null)
+            if (isCurrent && coverResult is not null && coverChanged)
             {
                 try
                 {
@@ -366,5 +441,6 @@ internal sealed class MediaArtworkCoordinator : IAsyncDisposable
     private sealed record ArtworkWorkItem(
         long Generation,
         IMediaThumbnailReference Thumbnail,
-        CoverProcessor Processor);
+        CoverProcessor Processor,
+        bool IsRefresh = false);
 }

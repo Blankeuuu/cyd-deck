@@ -267,6 +267,51 @@ int main() {
   assert(updateCoverFetch(cover, "") == CoverTransition::Cleared);
   assert(cover.status == CoverStatus::NoCover);
 
+  // A transient empty coverId for the same track preserves its cached artwork.
+  MediaState media;
+  std::strcpy(media.title, "Track");
+  std::strcpy(media.artist, "Artist");
+  std::strcpy(media.album, "Album");
+  std::strcpy(media.coverId, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+  media.cover.status = CoverStatus::Available;
+  std::strcpy(media.cover.requestedId, media.coverId);
+  std::strcpy(media.cover.availableId, media.coverId);
+  assert(updateMediaArtwork(media.cover, media.title, media.artist, media.album, media.coverId,
+      "Track", "Artist", "Album", "") == CoverTransition::Unchanged);
+  assert(media.cover.status == CoverStatus::Available);
+  assert(std::strcmp(media.coverId, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") == 0);
+  assert(updateMediaArtwork(media.cover, media.title, media.artist, media.album, media.coverId,
+      "Track", "Artist", "Different album", "") == CoverTransition::Cleared);
+  assert(media.cover.status == CoverStatus::NoCover);
+
+  MediaState longTrack;
+  const char* longTitle = "A very long title that exceeds the forty seven byte media title buffer and still identifies this track";
+  const char* longArtist = "An artist name that exceeds the forty seven byte media artist buffer as well";
+  std::strncpy(longTrack.title, longTitle, sizeof(longTrack.title) - 1);
+  std::strncpy(longTrack.artist, longArtist, sizeof(longTrack.artist) - 1);
+  std::strcpy(longTrack.album, "Original album");
+  std::strcpy(longTrack.coverId, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+  longTrack.cover.status = CoverStatus::Available;
+  std::strcpy(longTrack.cover.requestedId, longTrack.coverId);
+  std::strcpy(longTrack.cover.availableId, longTrack.coverId);
+  assert(updateMediaArtwork(longTrack.cover, longTrack.title, longTrack.artist, longTrack.album, longTrack.coverId,
+      longTitle, longArtist, "Original album", "") == CoverTransition::Unchanged);
+  assert(longTrack.cover.status == CoverStatus::Available);
+  assert(updateMediaArtwork(longTrack.cover, longTrack.title, longTrack.artist, longTrack.album, longTrack.coverId,
+      longTitle, longArtist, "New album", "") == CoverTransition::Cleared);
+  assert(longTrack.cover.status == CoverStatus::NoCover);
+
+  MediaState flicker;
+  assert(updateCoverFetch(flicker.cover, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") == CoverTransition::Requested);
+  std::strcpy(flicker.title, "Track");
+  std::strcpy(flicker.artist, "Artist");
+  std::strcpy(flicker.album, "Album");
+  std::strcpy(flicker.coverId, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+  assert(updateMediaArtwork(flicker.cover, flicker.title, flicker.artist, flicker.album, flicker.coverId,
+      "Track", "Artist", "Album", "") == CoverTransition::Unchanged);
+  assert(flicker.cover.status == CoverStatus::Pending);
+  assert(updateCoverFetch(flicker.cover, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") == CoverTransition::Unchanged);
+
   AppState defaultState;
   assert(std::strcmp(defaultState.shortcuts.ids[0], "") == 0);
   assert(std::strcmp(defaultState.shortcuts.names[0], "No shortcut") == 0);
